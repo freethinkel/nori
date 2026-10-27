@@ -128,7 +128,8 @@ func layout(immediate: Bool) {
 }
 
 // inactive-opacity: the strip's unfocused windows are translucent, the focused one opaque, so the focus shows.
-// Alpha is set in WindowServer ("A"), the app never knows. A window that left the strip gets its alpha back.
+// Alpha is set in WindowServer, the app never knows: the payload fades it ("E"), quitting sets it back at once ("A").
+// A window that left the strip gets its alpha back.
 // ponytail: a window the app itself made translucent is set back to 1 when focused.
 var alphaSet: [UInt32: Float] = [:]
 
@@ -137,10 +138,11 @@ func dimUnfocused(_ wins: [Win]) {
     var wanted = Dictionary(wins.map { ($0.id, $0.id == focused ? 1 : inactiveOpacity) }, uniquingKeysWith: { a, _ in a })
     let elsewhere = Set(savedStrips.values.flatMap(\.columns))
     for (id, alpha) in alphaSet where alpha != 1 && wanted[id] == nil && !elsewhere.contains(id) { wanted[id] = 1 }
-    let changes = wanted.filter { alphaSet[$0.key] ?? 1 != $0.value }
+    // While it is on, a window nori hasn't set yet gets its alpha once too: after a crash it may still be dimmed.
+    let changes = wanted.filter { alphaSet[$0.key] ?? (inactiveOpacity < 1 ? nil : 1) != $0.value }
     guard !changes.isEmpty else { return }
+    send(changes.map { "E \($0.key) \(alphaSet[$0.key] ?? 1) \($0.value)" })  // the payload fades on vsync
     alphaSet.merge(changes) { _, new in new }
-    send(changes.map { "A \($0.key) \($0.value)" })
 }
 
 // offset: where the strip comes to rest, if not where center-focused-column puts column `index` (a gesture's snap).
