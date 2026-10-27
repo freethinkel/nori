@@ -1,7 +1,7 @@
-# Every push and PR: test and build Nori.app and Nori.dmg, ad-hoc signed, as a workflow artifact.
+# Every push and PR: test and build Nori.dmg, ad-hoc signed, as a workflow artifact.
 # A push to main whose app/Info.plist version has no release yet: the app and the dmg are signed with Developer ID,
-# notarized, stapled, tagged v<version> and published as Nori.dmg, for people, and Nori.zip, which the app's updater
-# looks for: bump the version to release (/make-new-release).
+# notarized, stapled, tagged v<version> and published as Nori.dmg, which people install from and the app's updater
+# downloads: bump the version to release (/make-new-release).
 name: build
 
 on:
@@ -64,7 +64,7 @@ jobs:
           fi
           codesign --verify --deep --strict --verbose=2 build/Nori.app
 
-      # The dmg's ticket covers the app inside too, so one submission staples both.
+      # The dmg's ticket covers the app inside too.
       - name: Notarize
         if: env.RELEASE == 'true'
         env:
@@ -76,19 +76,12 @@ jobs:
           xcrun notarytool submit build/Nori.dmg --key $RUNNER_TEMP/notary.p8 \
             --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" --wait
           xcrun stapler staple build/Nori.dmg
-          xcrun stapler staple build/Nori.app
           rm $RUNNER_TEMP/notary.p8
-
-      - run: |
-          ditto -c -k --keepParent build/Nori.app Nori.zip
-          mv build/Nori.dmg Nori.dmg
 
       - uses: actions/upload-artifact@v4
         with:
           name: Nori
-          path: |
-            Nori.dmg
-            Nori.zip
+          path: build/Nori.dmg
 
       - name: Release
         if: env.RELEASE == 'true'
@@ -100,4 +93,4 @@ jobs:
             git log --no-merges --format='- %s' ${prev:+"$prev"..}HEAD | grep -vE '^- (docs|release):' || true
             [ -n "$prev" ] && printf '\n**Full Changelog**: %s/compare/%s...%s\n' "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "$prev" "$tag"
           } > "$RUNNER_TEMP/notes.md"
-          gh release create "$tag" Nori.dmg Nori.zip --target "$GITHUB_SHA" --title "$tag" --notes-file "$RUNNER_TEMP/notes.md"
+          gh release create "$tag" build/Nori.dmg --target "$GITHUB_SHA" --title "$tag" --notes-file "$RUNNER_TEMP/notes.md"

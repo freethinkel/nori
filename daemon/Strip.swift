@@ -94,6 +94,7 @@ func layout(immediate: Bool) {
     })
     guard !immediate else { return }
     saveStrips()
+    publishSoon()
     var resized = false
     for win in wins where sizedTo[win.id] != height {
         sizedTo[win.id] = height

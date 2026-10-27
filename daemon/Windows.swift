@@ -31,29 +31,51 @@ func listWindows(_ options: CGWindowListOption) -> [Listed] {
     }
 }
 
-// On-screen windows of one Space that belong in the strip: floating rules keep theirs out.
+// On-screen windows of one Space that belong in the strip: floating rules and non-standard windows keep theirs out.
 // The Space check matters during a Space switch, when both Spaces' windows are on screen.
 func windows(on space: UInt64) -> [Win] {
     let current = rules
-    return listWindows(.optionOnScreenOnly).filter { $0.spaces.contains(space) && rule(for: $0.win.pid, in: current)?.floating != true }.map(\.win)
+    return listWindows(.optionOnScreenOnly)
+        .filter { $0.spaces.contains(space) && rule(for: $0.win.pid, in: current)?.floating != true && isStandard($0.win) }
+        .map(\.win)
+}
+
+// Only an app's standard windows go in the strip, as in OmniWM: dialogs, floating panels, and what isn't among the
+// app's windows at all (sheets, browser popups and bubbles, permission prompts) stay where the app puts them.
+// Asked once per window. An app that doesn't answer keeps its windows in, so a hung app doesn't lose its columns.
+// ponytail: the cache keeps one entry per window ever seen; prune by the live list if that ever shows.
+private var standardWindows: [UInt32: Bool] = [:]
+
+func isStandard(_ win: Win) -> Bool {
+    if let known = standardWindows[win.id] { return known }
+    guard let axWindows = axWindows(win.pid) else { return true }
+    guard let element = axWindows.first(where: { axID($0) == win.id }) else { return false }  // asked again while it lasts
+    var subrole: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, kAXSubroleAttribute as CFString, &subrole) == .success else { return true }
+    let standard = [kAXStandardWindowSubrole, "AXFullScreenWindow"].contains(subrole as? String)
+    standardWindows[win.id] = standard
+    return standard
 }
 
 // Resize goes through Accessibility: SLS in Dock can move a window, but an app only relayouts when it resizes itself.
 @_silgen_name("_AXUIElementGetWindow")
 func axWindowID(_ element: AXUIElement, _ id: inout CGWindowID) -> AXError
 
-// Apps list only their windows of the current Space here.
-func axElement(_ win: Win) -> AXUIElement? {
-    let app = AXUIElementCreateApplication(win.pid)
+// Apps list only their windows of the current Space here, and no sheets or child windows.
+func axWindows(_ pid: pid_t) -> [AXUIElement]? {
+    let app = AXUIElementCreateApplication(pid)
     AXUIElementSetMessagingTimeout(app, 0.25)  // a hung app must not stall the daemon
     var value: CFTypeRef?
-    guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value) == .success,
-          let axWindows = value as? [AXUIElement] else { return nil }
-    return axWindows.first { element in
-        var id: CGWindowID = 0
-        return axWindowID(element, &id) == .success && id == win.id
-    }
+    guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value) == .success else { return nil }
+    return value as? [AXUIElement]
 }
+
+func axID(_ element: AXUIElement) -> CGWindowID? {
+    var id: CGWindowID = 0
+    return axWindowID(element, &id) == .success ? id : nil
+}
+
+func axElement(_ win: Win) -> AXUIElement? { axWindows(win.pid)?.first { axID($0) == win.id } }
 
 func setHeight(_ win: Win, _ height: CGFloat) {
     guard let element = axElement(win) else { return }
@@ -75,4 +97,15 @@ func axTitle(_ win: Win) -> String? {
     guard let element = axElement(win),
           AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &value) == .success else { return nil }
     return value as? String
+}
+
+// The focused window of the frontmost app. A non-activating panel (Raycast, Spotlight) leaves it as it was.
+func focusedWindowID() -> UInt32? {
+    guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier else { return nil }
+    let app = AXUIElementCreateApplication(pid)
+    AXUIElementSetMessagingTimeout(app, 0.25)
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &value) == .success,
+          let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+    return axID(value as! AXUIElement)
 }

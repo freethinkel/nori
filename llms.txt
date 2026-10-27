@@ -1,0 +1,92 @@
+# nori
+
+> nori is a scrolling window manager for macOS, modeled on niri. Windows stand side by side as columns on a horizontal strip, one strip per Space. This file tells an assistant how to help someone configure it. Everything nori can be configured with is listed here; if a setting isn't here, it doesn't exist, so say so instead of inventing one.
+
+## How to help
+
+1. Ask what the person wants to change, or read their current `~/.config/nori/config.toml` if they paste it.
+2. Give back the whole edited file, or only the lines to add, with a comment on each changed line.
+3. Tell them to save it and choose "Reload Config" (⌘R) in nori's menu bar item. Mistakes don't crash nori: it prints a warning to stderr, skips that line and applies the rest.
+
+The menu item "Open Config" opens the file, and creates it with every setting and its default if it's missing.
+
+## The file
+
+TOML, read by nori's own small parser. It knows comments, plain keys, `"strings"`, `'literal strings'`, numbers, `true`, `false`, `[tables]` and `[[arrays of tables]]`. It skips dotted or quoted keys, arrays, inline tables, multi-line strings and dates. So write every rule as its own `[[rule]]` table, never `rules = [...]` or `{ app = ... }`.
+
+```toml
+gap = 16                  # between windows, in points
+padding-top = 40          # from the menu bar
+padding-bottom = 0        # from the Dock or the bottom of the screen
+padding-left = 24
+padding-right = 24
+resize-step = 10          # Opt+= / Opt+- width step, % of screen width
+launch-at-login = false   # add Nori.app to Login Items (only the app bundle, move it to /Applications first)
+
+[bindings]
+overview = "option+o"
+grow-width = "option+="
+shrink-width = "option+-"
+move-left = "option+shift+h"        # move the focused window one column left
+move-right = "option+shift+l"
+move-to-space-1 = "option+shift+1"  # send the focused window to Desktop 1; move-to-space-1 … move-to-space-9
+
+[[rule]]
+app = "Telegram"
+space = 3
+```
+
+Top-level keys are only `gap`, `padding-top`, `padding-bottom`, `padding-left`, `padding-right`, `resize-step` (numbers) and `launch-at-login` (true/false). A missing number is 0, except `resize-step`, which is 10.
+
+## Bindings
+
+The only bindable actions are `overview`, `grow-width`, `shrink-width`, `move-left`, `move-right` and `move-to-space-1` … `move-to-space-9`. A missing one keeps its default.
+
+A binding is modifiers and one key joined by `+`, like `"ctrl+shift+1"`. Modifiers: `option` (or `alt`, `opt`), `ctrl` (or `control`), `cmd` (or `command`), `shift`. The key is one letter `a`–`z`, a digit `0`–`9`, `-` or `=`. No arrows, function keys, space, return or punctuation other than `-` and `=`. Keys are physical keys on the US layout, so a binding stays put when the person switches keyboard layouts.
+
+These keys are fixed and can't be rebound in the config:
+
+- Opt+H / Opt+L and Ctrl+Opt+← / → focus the column to the left / right.
+- Opt+J / Opt+K go to the Space below / above.
+- Opt+1…5 are macOS's own "Switch to Desktop N" shortcuts. Change them in System Settings → Keyboard → Keyboard Shortcuts → Mission Control. nori needs those shortcuts on.
+- Opt + left drag moves a window, Opt + right drag resizes it.
+- Trackpad: three fingers sideways scroll the strip, three fingers up/down switch Spaces, four fingers open the overview.
+
+## App rules
+
+One `[[rule]]` table per app. `app` is the app's name or bundle id, in any case. The first matching rule wins, and one rule can combine actions. A rule needs `app` and at least one action, or nori skips it.
+
+```toml
+[[rule]]
+app = "Telegram"
+space = 3              # new Telegram windows go to Desktop 3
+
+[[rule]]
+app = "com.apple.finder"
+floating = true        # windows stay out of the strip; nori doesn't move or resize them
+
+[[rule]]
+app = "Raycast"
+ignore = true          # nori neither moves nor lists the app's windows
+```
+
+- `space = N`, a whole number from 1. Desktops count from 1 across all displays, like the system shortcuts. nori moves each window once, the first time it sees it, including windows already open at start. Moved back by hand, it stays.
+- `floating = true` suits apps whose main windows shouldn't be columns: calculators, color pickers, small utilities. Dialogs, panels, sheets and browser popups already stay out of the strip without a rule.
+- `ignore = true` suits launchers, menu bar apps and overlays.
+- On reload, changed `floating` and `ignore` rules apply to open windows at once. A new `space` rule only affects windows nori hasn't seen yet.
+
+To find an app's exact name or bundle id, the person can run (with the `nori` CLI linked onto PATH, `ln -s /Applications/Nori.app/Contents/MacOS/nori /opt/homebrew/bin/nori`):
+
+```sh
+nori query windows | jq -r '.[] | "\(.app)\t\(.bundleId)"' | sort -u
+```
+
+or `osascript -e 'id of app "AppName"'`.
+
+## Not configurable
+
+Animation speed and curves, gestures, the number of fingers, column widths other than through `resize-step`, multiple displays (nori uses the main one), several windows per column. Don't offer settings for these.
+
+## More
+
+README: https://github.com/freethinkel/nori#readme. It also covers setup (SIP, boot argument, Accessibility), the CLI and limitations.

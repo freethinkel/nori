@@ -36,12 +36,10 @@ func statusIcon() -> NSImage? {
     return image
 }
 
-final class MenuActions: NSObject {
+final class MenuActions: NSObject, NSMenuDelegate {
     @objc func openConfig() {
-        let path = configPath
-        try? FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
-        if !FileManager.default.fileExists(atPath: path) { FileManager.default.createFile(atPath: path, contents: nil) }
-        _ = shell("/usr/bin/open", ["-t", path])
+        writeDefaultConfig()
+        _ = shell("/usr/bin/open", ["-t", configPath])
     }
 
     @objc func reloadConfig() {
@@ -52,25 +50,38 @@ final class MenuActions: NSObject {
 
     @objc func reloadPayload() { loadPayload() }
 
+    // Whether the payload answers in Dock, under the item that reloads it; a socket connect, so read on each open.
+    func menuWillOpen(_ menu: NSMenu) {
+        let loaded = payloadAlive()
+        if #available(macOS 14.4, *) {
+            payloadItem.subtitle = loaded ? "Payload is running in Dock" : "Payload is not running in Dock"
+        } else {
+            payloadItem.state = loaded ? .on : .off
+        }
+    }
+
     @objc func quit() {
         resetOverview()
         exit(0)
     }
 }
 let menuActions = MenuActions()
+let payloadItem = NSMenuItem(title: "Restart Dock and Reload Payload", action: #selector(MenuActions.reloadPayload), keyEquivalent: "")
 
 func menu() -> NSMenu {
     let menu = NSMenu()
+    menu.delegate = menuActions
     menu.addItem(withTitle: "nori", action: nil, keyEquivalent: "")
     menu.addItem(updateItem)
     menu.addItem(.separator())
     for (title, action, key) in [
         ("Open Config", #selector(MenuActions.openConfig), ","),
         ("Reload Config", #selector(MenuActions.reloadConfig), "r"),
-        ("Restart Dock and Reload Payload", #selector(MenuActions.reloadPayload), ""),
     ] {
         menu.addItem(withTitle: title, action: action, keyEquivalent: key).target = menuActions
     }
+    payloadItem.target = menuActions
+    menu.addItem(payloadItem)
     menu.addItem(.separator())
     menu.addItem(withTitle: "Quit nori", action: #selector(MenuActions.quit), keyEquivalent: "q").target = menuActions
     return menu

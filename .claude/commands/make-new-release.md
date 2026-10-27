@@ -5,7 +5,7 @@ argument-hint: "[patch|minor|major|X.Y.Z]"
 
 Release a new nori version. Pushing a new `CFBundleShortVersionString` in `app/Info.plist` to `main` is the whole
 release: `.github/workflows/build.yml` then signs the app with Developer ID, notarizes it, tags `v<version>` and
-publishes `Nori.zip` (what the app's updater in `daemon/Update.swift` downloads), with the commits since the last tag
+publishes `Nori.dmg` (what people install from and the app's updater in `daemon/Update.swift` downloads), with the commits since the last tag
 as the notes (`docs:` and `release:` commits left out).
 
 Argument: `$ARGUMENTS`. Empty means `patch`; `minor` and `major` bump that part; `X.Y.Z` is the exact version.

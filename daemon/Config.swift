@@ -12,8 +12,49 @@ let bindingDefaults = ["overview": "option+o", "grow-width": "option+=", "shrink
     .merging((1...9).map { ("move-to-space-\($0)", "option+shift+\($0)") }) { a, _ in a }
 let configPath = NSHomeDirectory() + "/.config/nori/config.toml"
 
+// Written where there is no config yet (first launch, "Open Config"), so every setting is there to edit.
+let defaultConfig = """
+# nori, see "Config" in the README
+gap = 16                  # between windows, in points
+padding-top = 40          # from the menu bar
+padding-bottom = 0        # from the Dock or the bottom of the screen
+padding-left = 24
+padding-right = 24
+resize-step = 10          # width step, % of screen width
+launch-at-login = false   # start Nori.app at login
+
+[bindings]
+overview = "option+o"
+grow-width = "option+="
+shrink-width = "option+-"
+move-left = "option+shift+h"
+move-right = "option+shift+l"
+\((1...9).map { "move-to-space-\($0) = \"option+shift+\($0)\"" }.joined(separator: "\n"))
+
+# App rules: app is a name or bundle id; the first matching rule wins.
+# [[rule]]
+# app = "Telegram"
+# space = 3              # new windows go to Desktop 3
+#
+# [[rule]]
+# app = "com.apple.finder"
+# floating = true        # windows stay out of the strip
+#
+# [[rule]]
+# app = "Raycast"
+# ignore = true          # nori doesn't move or list its windows
+
+"""
+
+func writeDefaultConfig() {
+    guard !FileManager.default.fileExists(atPath: configPath) else { return }
+    try? FileManager.default.createDirectory(atPath: (configPath as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+    try? defaultConfig.write(toFile: configPath, atomically: true, encoding: .utf8)
+}
+
 // Numbers, flags and bindings as strings by key; the rules in file order.
 func readConfig() -> (values: [String: String], rules: [Rule]) {
+    writeDefaultConfig()
     guard let text = try? String(contentsOfFile: configPath, encoding: .utf8) else { return ([:], []) }
     let report = { (line: Int, message: String) in _ = fputs("config.toml:\(line): \(message)\n", stderr) }
     var values: [String: String] = [:]

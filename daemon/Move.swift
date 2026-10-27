@@ -27,5 +27,6 @@ func moveFocused(toDesktop number: Int) {
     movedAway.insert(moving)
     focusColumn(at: i)
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { send(["X \(moving) \(sid)"]) }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { publishSoon() }  // the window on its new Space, for subscribers
     DispatchQueue.main.asyncAfter(deadline: .now() + 1) { movedAway.remove(moving) }
 }

@@ -136,6 +136,7 @@ layout(immediate: false)
 // Runs on every app / window / Space event (Events.swift), and once a second for whatever those miss.
 var lastFront: UInt32?
 func poll() {
+    defer { publishSoon() }  // subscribers, Control.swift: a Space switch or a window on another Space counts too
     guard !gestureActive, !spaceLayoutBusy else { return }
     let before = columns
     let sync = syncColumns()

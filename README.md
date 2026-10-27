@@ -1,6 +1,4 @@
-<img src="assets/icon.svg" width="128" alt="">
-
-# nori
+<h1 align="center"><img src="docs/icon.png" width="48" height="48" align="absmiddle" alt=""> nori</h1>
 
 nori is a scrolling window manager for macOS, modeled on [niri](https://github.com/YaLTeR/niri). Windows stand side by side as columns on a horizontal strip, and the focused one sits in the middle of the screen.
 
@@ -54,9 +52,10 @@ After that nori lives in the menu bar.
 
 | Menu item | What it does |
 |---|---|
-| Open Config | opens `~/.config/nori/config.toml` in your text editor, creating it if needed |
+| Check for Updates… | asks GitHub for a newer release; becomes "Update to vX" once one is found. Only in a released (Developer ID) app |
+| Open Config | opens `~/.config/nori/config.toml` in your text editor, creating it with every setting if needed |
 | Reload Config, ⌘R | reads the config again and lays the windows out with it |
-| Restart Dock and Reload Payload | use it after a rebuild, so Dock runs the new payload |
+| Restart Dock and Reload Payload | use it after a rebuild, so Dock runs the new payload. The line under it says whether the payload is running in Dock |
 | Quit nori, ⌘Q | puts Spaces back and quits. The payload stays in Dock and does nothing |
 
 ### 3. macOS settings
@@ -87,7 +86,7 @@ Ctrl+C stops it. If you only changed the daemon, Dock needs no restart. Press Ct
 
 ### Releases
 
-CI (`.github/workflows/build.yml`) builds an ad-hoc signed app on every push. When a push to main carries a version in `app/Info.plist` (`make version`) that has no release yet, CI signs the app with Developer ID, notarizes it, tags `v<version>` and attaches `Nori.dmg` (to install from) and `Nori.zip` (for the updater) to a GitHub release. `make dmg` builds the dmg locally (needs pipx); its background is `assets/dmg-background.png`, the layout `assets/dmg.py`. So a release is a version bump: `/make-new-release [patch|minor|major|X.Y.Z]` in Claude Code does it. CI needs these repository secrets:
+CI (`.github/workflows/build.yml`) builds an ad-hoc signed app on every push. When a push to main carries a version in `app/Info.plist` (`make version`) that has no release yet, CI signs the app with Developer ID, notarizes it, tags `v<version>` and attaches `Nori.dmg` to a GitHub release. People install from it, and the app's updater downloads it. `make dmg` builds the dmg locally (needs pipx); its background is `assets/dmg-background.png`, the layout `assets/dmg.py`. So a release is a version bump: `/make-new-release [patch|minor|major|X.Y.Z]` in Claude Code does it. CI needs these repository secrets:
 
 | Secret | Value |
 |---|---|
@@ -126,7 +125,9 @@ A repair at Apple or an authorized service provider may turn SIP back on too. Th
 
 ## Config
 
-nori reads `~/.config/nori/config.toml`, a [TOML](https://toml.io) file, at start and on "Reload Config". If it meets a key it doesn't know or a value of the wrong kind, it prints a warning to stderr, skips that line and applies the rest.
+To have an assistant write it for you, give it [llms.txt](llms.txt) (raw: `https://raw.githubusercontent.com/freethinkel/nori/main/llms.txt`) and say what you want.
+
+nori reads `~/.config/nori/config.toml`, a [TOML](https://toml.io) file, at start and on "Reload Config". If the file doesn't exist, nori writes it first with every setting and its default. If it meets a key it doesn't know or a value of the wrong kind, it prints a warning to stderr, skips that line and applies the rest.
 
 ```toml
 gap = 16                  # between windows, in points
@@ -157,6 +158,8 @@ Missing numbers are 0, except `resize-step`. A missing binding keeps the default
 The TOML reader is nori's own and only knows what this file needs. That's comments, plain keys, `"strings"`, `'literal strings'`, numbers, `true`, `false`, `[tables]` and `[[arrays of tables]]`. It skips lines with dotted or quoted keys, arrays, inline tables, multi-line strings or dates, and says so.
 
 ### App rules
+
+Only standard windows join the strip. Dialogs, floating panels, sheets and browser popups (permission prompts, save bubbles, file pickers) stay where their app puts them, with no rule needed.
 
 Each app gets one `[[rule]]` table. `app` is the app's name or bundle id, in any case. The first matching rule wins, and one rule can do several things.
 
@@ -196,11 +199,19 @@ nori focus left|right                   # column to the left / right
 nori focus column N                     # column N on the current Space, counting from 1
 nori focus space N                      # Desktop N, through "Switch to Desktop N"
 nori focus window WID                   # a window by id, switching Spaces if needed
+nori subscribe                          # one line of `query spaces` JSON now and on every change
 nori help
 
 nori query windows --space 2 | jq -r '.[].app'
 nori focus window "$(nori query windows --app Telegram | jq '.[0].id')"
+nori subscribe | jq -c --unbuffered '.[] | select(.isFocused) | .number'
 ```
+
+A Space has `id`, `number`, `display`, `type`, `isFocused`, `isVisible`, `windows`, `columns`, `focusedWindow` and `apps`. `isFocused` marks the one Space that has focus. It moves as soon as nori starts a switch (a Desktop shortcut, Opt+J/K, a swipe, the overview, `nori focus space`), before the slide ends. `isVisible` marks the Space each display shows. `columns` is the strip left to right. On a Space nori hasn't shown yet it is the order the strip will get there. `focusedWindow` is the focused window on the focused Space, from Accessibility, and on other Spaces the window that had focus there last.
+
+`nori subscribe` writes the whole `query spaces` array as one compact line, at once and then on every change: a Space switch, a window opening, closing or moving to another Space, focus, a column moving. A line only goes out when it differs from the last one. When nori quits, `subscribe` exits with 2.
+
+A bar can skip the CLI and talk to the socket `/tmp/nori-ctl_$USER.socket` itself. A request is the CLI's arguments joined by tabs, one line, like `query\tspaces\n` or `subscribe\n`. nori answers and closes the connection, except after `subscribe`. The socket path and this format are public: they change only with a note in the release.
 
 A window has `id`, `pid`, `app`, `bundleId`, `title`, `space`, `spaceId`, `column`, `isFocused`, `isOnScreen`, `isFloating` and `frame`. `space` is the Desktop number. `column` counts from 1 and is missing for windows outside the strip. `--app` matches the app name or bundle id in any case. Desktops count from 1 across all displays, like the system shortcuts. Fullscreen Spaces have no number, and their `type` is `fullscreen`.
 

@@ -30,11 +30,17 @@ func desktopNumber(for event: CGEvent) -> Int? {
     desktopHotkeys.first { matches(event, $0.chord) }?.number
 }
 
+// Every Space switch nori starts goes through here, so subscribers hear of the target before Dock's slide.
 func pressDesktop(_ number: Int) {
     passDesktopHotkeys += 1
     if !switchToSpace(number) {
         passDesktopHotkeys -= 1
         fputs("\"Switch to Desktop \(number)\" shortcut is off; enable it in System Settings → Keyboard → Shortcuts → Mission Control\n", stderr)
+        return
+    }
+    if let sid = spaces().first(where: { $0.number == number })?.id {
+        pendingSpace = (sid, CACurrentMediaTime() + spaceLayoutFallback)
+        publishSoon()
     }
 }
 
