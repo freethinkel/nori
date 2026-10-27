@@ -71,21 +71,22 @@ func cycleWidth(forward: Bool) {
 }
 
 // Option+Shift+F (config: toggle-full-width), OmniWM's Toggle Full Width: the focused window takes the whole usable
-// width, and the next press gives back the width it had. A window that was full width already stays so.
+// width, and the next press gives back the width it had. Full or not is what widthBeforeFull says, not the window's
+// width: an app that sizes in steps (a terminal's cells) stops short of the full width. Any other resize forgets it.
+// A window that was full width already stays so.
 var widthBeforeFull: [UInt32: CGFloat] = [:]
 
 func toggleFullWidth() {
-    resizeFocused { win in
-        guard abs(win.frame.width - usableWidth) < 1 else {
-            widthBeforeFull[win.id] = win.frame.width
-            return usableWidth
-        }
-        return widthBeforeFull.removeValue(forKey: win.id) ?? win.frame.width
-    }
+    let wins = syncColumns().wins, index = focusedIndex()
+    guard wins.indices.contains(index) else { return }
+    let win = wins[index], before = widthBeforeFull[win.id]
+    resizeFocused(win, at: index, to: before ?? usableWidth)
+    if before == nil, abs(win.frame.width - usableWidth) >= 1 { widthBeforeFull[win.id] = win.frame.width }
 }
 
 // The focused window (column `index`) eases to `width`; also driven by Option + right drag, see MouseDrag.swift.
 func resizeFocused(_ win: Win, at index: Int, to width: CGFloat) {
+    widthBeforeFull[win.id] = nil  // toggleFullWidth sets it again after this
     let width = min(max(width, 100), usableWidth)
     guard abs(width - win.frame.width) >= 1 else { return }
     pendingWidths[win.id] = width

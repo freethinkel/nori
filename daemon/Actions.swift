@@ -13,6 +13,7 @@ let actions: [String: () -> Void] = [
     "center-column": centerColumn,
     "overview": toggleOverview,
     "show-floating": showFloating,
+    "toggle-floating": toggleFloating,
     "grow-width": { resizeFocused(by: resizeStep) },
     "shrink-width": { resizeFocused(by: -resizeStep) },
     "cycle-width-forward": { cycleWidth(forward: true) },
@@ -25,7 +26,7 @@ let actions: [String: () -> Void] = [
 ].merging((1...9).map { n in ("move-to-space-\(n)", { moveFocused(toDesktop: n) }) }) { a, _ in a }
 
 // Toggles: a held key must not flip them back and forth.
-let noRepeat: Set<String> = ["overview", "toggle-full-width"]
+let noRepeat: Set<String> = ["overview", "toggle-full-width", "toggle-floating"]
 
 // CLI words to action names. "focus space N", "focus column N", "focus window WID" and "move space N" take a number
 // and are handled in Control.swift.
@@ -35,5 +36,5 @@ let cliActions = [
     "move left": "move-left", "move right": "move-right", "move space down": "move-to-space-down", "move space up": "move-to-space-up",
     "width grow": "grow-width", "width shrink": "shrink-width", "width next": "cycle-width-forward", "width previous": "cycle-width-backward",
     "width toggle-full": "toggle-full-width", "center": "center-column", "overview": "overview",
-    "show floating": "show-floating",
+    "show floating": "show-floating", "toggle floating": "toggle-floating",
 ]

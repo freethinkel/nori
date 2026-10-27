@@ -26,6 +26,7 @@ let usage = """
       nori center
       nori overview
       nori show floating
+      nori toggle floating
       nori reload             read the config again
 
     """
@@ -257,7 +258,7 @@ func spaces() -> [(id: UInt64, number: Int?, display: String, fullscreen: Bool, 
 // yet gets the order its first sync will give it (syncColumns): ascending ids, floating windows left out.
 func strip(of space: UInt64, _ listed: [Listed]) -> [UInt32] {
     let current = rules
-    let here = listed.filter { $0.spaces.contains(space) && rule(for: $0, in: current)?.floating != true }.map(\.win.id)
+    let here = listed.filter { $0.spaces.contains(space) && floatingByHand[$0.win.id] == nil && rule(for: $0, in: current)?.floating != true }.map(\.win.id)
     guard let saved = space == currentSpace ? columns : savedStrips[space]?.columns else { return here.sorted() }
     return saved.filter(here.contains)
 }
@@ -325,7 +326,7 @@ func queryWindows(_ opts: [String: String]) -> [[String: Any]] {
             "id": id, "pid": w.win.pid, "app": appName(w), "bundleId": app?.bundleIdentifier, "title": title,
             "space": numbers[space], "spaceId": space, "column": strips[space]?.firstIndex(of: id).map { $0 + 1 },
             "isFocused": id == focused, "isOnScreen": w.info[kCGWindowIsOnscreen as String] as? Bool ?? false,
-            "isFloating": rule(for: w, in: current)?.floating == true,
+            "isFloating": floatingByHand[id] != nil || rule(for: w, in: current)?.floating == true,
             "frame": ["x": frame.minX, "y": frame.minY, "width": frame.width, "height": frame.height],
         ]
         return fields.compactMapValues { $0 }

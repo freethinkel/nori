@@ -89,14 +89,20 @@ func rubberBand(_ over: CGFloat, _ dimension: CGFloat) -> CGFloat {
 
 var instantMoves = false  // a `--instant` request is being handled: "M" instead of "S", with the usual bookkeeping
 
+// Between the menu bar and the Dock, minus padding. CG y grows down from the top of the main display.
+func stripArea() -> CGRect {
+    let screen = CGDisplayBounds(CGMainDisplayID())
+    let visible = NSScreen.screens.first.map { (top: $0.frame.maxY - $0.visibleFrame.maxY, bottom: $0.visibleFrame.minY - $0.frame.minY) } ?? (0, 0)
+    let top = screen.minY + visible.top + paddingTop
+    return CGRect(x: screen.minX + paddingLeft, y: top, width: screen.width - paddingLeft - paddingRight,
+                  height: screen.maxY - visible.bottom - paddingBottom - top)
+}
+
 // immediate: "M" moves right away (used while the finger is down). Otherwise "S" sets a target and the payload eases there.
 func layout(immediate: Bool) {
     let screen = CGDisplayBounds(CGMainDisplayID())
-    // Between the menu bar and the Dock, minus padding. CG y grows down from the top of the main display.
-    let visible = NSScreen.screens.first.map { (top: $0.frame.maxY - $0.visibleFrame.maxY, bottom: $0.visibleFrame.minY - $0.frame.minY) } ?? (0, 0)
-    let top = screen.minY + visible.top + paddingTop
-    let height = screen.maxY - visible.bottom - paddingBottom - top
-    let centerX = screen.minX + paddingLeft + (screen.width - paddingLeft - paddingRight) / 2
+    let area = stripArea()
+    let top = area.minY, height = area.height, centerX = area.midX
     let wins = syncColumns().wins
     let strip = scroll(wins), bounds = strip.bounds
     columnCenters = strip.centers
@@ -171,6 +177,29 @@ func centerColumn() {
     focusColumn(at: i, offset: scroll(wins).centers[i])
 }
 
+// Option+Shift+V (config: toggle-floating), niri's toggle-window-floating: the focused window leaves the strip, its
+// neighbours close the gap, and it floats in the middle of the screen at 2/3 of the strip's width and height. The next
+// press, on that window, puts it back right of the focused column at the width it had there. Kept in strips.json.
+var floatingByHand: [UInt32: CGFloat] = [:]  // window → its column width
+
+func toggleFloating() {
+    guard let id = focusedWindowID() else { return }
+    if let width = floatingByHand.removeValue(forKey: id) {
+        sizedTo[id] = nil  // the layout stretches it to the strip's height again
+        pendingWidths[id] = width
+        if let i = syncColumns().inserted { focusColumn(at: i) }
+        return
+    }
+    guard let win = syncColumns().wins.first(where: { $0.id == id }) else { return }  // out of the strip already
+    floatingByHand[id] = win.frame.width
+    layout(immediate: false)
+    lastFront = syncColumns().front  // the strip has a new front window, but focus stays on this one: not poll's to follow
+    let area = stripArea()
+    let frame = CGRect(x: area.midX - area.width / 3, y: area.midY - area.height / 3, width: area.width * 2 / 3, height: area.height * 2 / 3)
+    send(["M \(id) \(frame.minX) \(frame.minY)"])  // drops the payload's ease toward its old column
+    axQueue.async { setFrame(win, frame) }
+}
+
 // Quit: strip windows go back to the frames they had before nori. The payload puts every one back in place (and drops
 // its ease); Accessibility reaches only the current Space, so windows on other Spaces keep the size nori gave them.
 func restoreWindows() {
@@ -178,9 +207,6 @@ func restoreWindows() {
     let back = originalFrames.filter { open.contains($0.key) }
     send(back.map { "M \($0.key) \($0.value.minX) \($0.value.minY)" } + alphaSet.filter { $0.value != 1 }.map { "A \($0.key) 1" })
     for (id, frame) in back {
-        guard let win = lastSeen[id], let element = axElement(win) else { continue }
-        var size = frame.size, origin = frame.origin
-        if let value = AXValueCreate(.cgSize, &size) { AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, value) }
-        if let value = AXValueCreate(.cgPoint, &origin) { AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, value) }
+        if let win = lastSeen[id] { setFrame(win, frame) }
     }
 }

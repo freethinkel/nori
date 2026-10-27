@@ -63,7 +63,7 @@ func listWindows(_ options: CGWindowListOption) -> [Listed] {
 func windows(on space: UInt64) -> [Win] {
     let current = rules
     return listWindows(.optionOnScreenOnly)
-        .filter { $0.spaces.contains(space) && rule(for: $0, in: current)?.floating != true && isStandard($0.win) }
+        .filter { $0.spaces.contains(space) && floatingByHand[$0.win.id] == nil && rule(for: $0, in: current)?.floating != true && isStandard($0.win) }
         .map(\.win)
 }
 
@@ -110,6 +110,14 @@ func setSize(_ win: Win, width: CGFloat, height: CGFloat) {
     if let axSize = AXValueCreate(.cgSize, &size) {
         AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, axSize)
     }
+}
+
+// Size first: an app may keep a window on screen by moving it as it grows.
+func setFrame(_ win: Win, _ frame: CGRect) {
+    guard let element = axElement(win) else { return }
+    var size = frame.size, origin = frame.origin
+    if let value = AXValueCreate(.cgSize, &size) { AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, value) }
+    if let value = AXValueCreate(.cgPoint, &origin) { AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, value) }
 }
 
 // Raises this window, then activates its app: activating alone brings up the app's last used window instead.

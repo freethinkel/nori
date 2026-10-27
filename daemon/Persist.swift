@@ -15,6 +15,7 @@ func saveStrips() {
     var object = Dictionary(uniqueKeysWithValues: strips.map { (String($0.key), ["columns": $0.value.columns, "offset": $0.value.offset] as [String: Any]) })
     let open = Set(lastSeen.keys)
     object["frames"] = Dictionary(uniqueKeysWithValues: originalFrames.filter { open.contains($0.key) }.map { (String($0.key), [$0.value.minX, $0.value.minY, $0.value.width, $0.value.height]) })
+    object["floating"] = Dictionary(uniqueKeysWithValues: floatingByHand.map { (String($0.key), $0.value) })
     guard let data = try? JSONSerialization.data(withJSONObject: object, options: .sortedKeys), data != writtenStrips else { return }
     writtenStrips = data
     try? FileManager.default.createDirectory(atPath: (stripsPath as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
@@ -32,6 +33,12 @@ func loadStrips() {
     for (key, value) in object["frames"] ?? [:] {
         guard let id = UInt32(key), let f = (value as? [NSNumber])?.map({ CGFloat($0.doubleValue) }), f.count == 4 else { continue }
         originalFrames[id] = CGRect(x: f[0], y: f[1], width: f[2], height: f[3])
+    }
+    // Only windows open now: after a new login the same ids name other windows.
+    let open = Set(listWindows([]).map(\.win.id))
+    for (key, value) in object["floating"] ?? [:] {
+        guard let id = UInt32(key), open.contains(id), let width = value as? NSNumber else { continue }
+        floatingByHand[id] = CGFloat(width.doubleValue)
     }
     writtenStrips = data
 }

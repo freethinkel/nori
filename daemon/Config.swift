@@ -13,7 +13,8 @@ let modifierKeys = ["mouse-modifier"]  // modifiers joined by "+", at least one
 // Every action has a binding; "none" unbinds one. The actions themselves are in Actions.swift.
 let bindingDefaults = ["focus-left": "option+h", "focus-right": "option+l", "focus-first": "ctrl+option+h", "focus-last": "ctrl+option+l",
                        "focus-space-down": "option+j", "focus-space-up": "option+k", "center-column": "option+c",
-                       "overview": "option+o", "show-floating": "option+f","grow-width": "option+=", "shrink-width": "option+-",
+                       "overview": "option+o", "show-floating": "option+f", "toggle-floating": "option+shift+v",
+                       "grow-width": "option+=", "shrink-width": "option+-",
                        "cycle-width-forward": "option+.", "cycle-width-backward": "option+,", "toggle-full-width": "option+shift+f",
                        "move-left": "option+shift+h", "move-right": "option+shift+l",
                        "move-to-space-down": "option+shift+j", "move-to-space-up": "option+shift+k"]
@@ -71,6 +72,7 @@ focus-space-up = "option+k"
 center-column = "option+c"          # scroll the focused window to the center, once
 overview = "option+o"               # all Spaces of the display, with live windows
 show-floating = "option+f"          # windows outside the strip (floating rules, dialogs, PiP) above it, focus stays
+toggle-floating = "option+shift+v"  # focused window out of the strip, floating in the middle, and back
 grow-width = "option+="             # focused window wider / narrower by resize-step
 shrink-width = "option+-"
 cycle-width-forward = "option+."    # focused window to the next of 1/3, 1/2, 2/3 of the screen

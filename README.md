@@ -133,6 +133,7 @@ Every row with a config name can be rebound in `[bindings]`, or unbound with `"n
 | Opt+1…5 | Space 1…5. These are the system "Switch to Desktop N" shortcuts, and nori animates the switch itself |
 | Opt+O | overview. Click a Space to pick it and the window under the pointer. Drag a window onto another Space to move it there. Esc or Opt+O closes it. Config name `overview` |
 | Opt+F | every window of this Space outside the strip (floating rules, dialogs, panels, PiP) comes above the strip's. Focus stays where it was. Config name `show-floating` |
+| Opt+Shift+V | the focused window leaves the strip and floats in the middle of the screen at 2/3 of its width and height; again on that window puts it back right of the focused column, at its old width. nori remembers it across restarts. Config name `toggle-floating` |
 | in the overview: H/L or ←/→, J/K or ↓/↑, Return | move through the centered Space's columns, bring the Space below or above to the center, pick it |
 | 4 fingers up / down | the overview follows the swipe and settles open or closed on lift. This replaces Mission Control on four fingers |
 
@@ -169,6 +170,7 @@ focus-space-up = "option+k"
 center-column = "option+c"
 overview = "option+o"
 show-floating = "option+f"
+toggle-floating = "option+shift+v"
 grow-width = "option+="
 shrink-width = "option+-"
 cycle-width-forward = "option+."
@@ -261,6 +263,7 @@ nori width toggle-full                  # full width, and back
 nori center                             # scroll the focused window to the center
 nori overview                           # open or close the overview
 nori show floating                      # windows outside the strip above it
+nori toggle floating                    # the focused window out of the strip and back
 nori reload                             # read the config again, like "Reload Config"
 nori subscribe                          # one line of `query spaces` JSON now and on every change
 nori help
