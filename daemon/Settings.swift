@@ -410,9 +410,10 @@ struct NumberRow: View {
         let typed = Binding(get: { draft ?? value }, set: save)
         LabeledContent {
             HStack(spacing: 8) {
-                Slider(value: Binding(get: { draft ?? value }, set: { draft = $0 }), in: range.slider, onEditingChanged: { editing in
+                // No step on the slider, which would draw tick marks; it snaps here instead.
+                Slider(value: Binding(get: { draft ?? value }, set: { draft = snap($0) }), in: range.slider, onEditingChanged: { editing in
                     if !editing, let draft { save(draft) }
-                })  // no step: no tick marks
+                })
                     .labelsHidden()
                     .frame(width: 180)
                 TextField(title, value: typed, format: .number.precision(.fractionLength(0...2)))
@@ -432,9 +433,15 @@ struct NumberRow: View {
         .onChange(of: value) { draft = nil }
     }
 
+    // To the step, and to two decimals so 0.05 steps don't come out as 0.35000000000000003.
+    private func snap(_ value: Double) -> Double {
+        let step = (numberRanges[key] ?? (0...200, 0...500, 1)).step
+        return ((value / step).rounded() * step * 100).rounded() / 100
+    }
+
     private func save(_ new: Double) {
         let range = numberRanges[key] ?? (0...200, 0...500, 1)
-        let new = min(max(((new / range.step).rounded() * range.step * 100).rounded() / 100, range.limits.lowerBound), range.limits.upperBound)
+        let new = min(max(snap(new), range.limits.lowerBound), range.limits.upperBound)
         draft = nil
         if new != settingsModel.number(key) { settingsModel.set(key, to: .number(new)) }
     }
