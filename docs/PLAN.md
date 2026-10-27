@@ -1,39 +1,39 @@
-# nori: план PoC
+# nori: PoC plan
 
-Цель: прототип niri-подобного WM для macOS. Колонки, вертикальные воркспейсы, хоткеи. Анимация через WindowServer transform.
+Goal: a niri-like WM prototype for macOS. Columns, vertical workspaces, hotkeys. Animation through WindowServer transforms.
 
-## Структура
+## Structure
 
-- `loader.m` — копия loader из yabai (MIT, src/osax). В шапке указать источник и лицензию.
-- `payload.m` — свой dylib для Dock. Сокет `/tmp/nori_$USER.socket`. Три команды: батч transform на кадр, move, alpha/order.
-- `main.swift` — демон: колонки, вертикальные воркспейсы, хоткеи через CGEvent tap, CVDisplayLink шлёт transform.
+- `loader.m` — a copy of the yabai loader (MIT, src/osax). Credit the source and license in the header.
+- `payload.m` — our own dylib for Dock. Socket `/tmp/nori_$USER.socket`. Three commands: a batch of transforms per frame, move, alpha/order.
+- `main.swift` — the daemon: columns, vertical workspaces, hotkeys through a CGEvent tap, CVDisplayLink sends transforms.
 
-## Шаги
+## Steps
 
-1. Собрать `payload.m` с `-arch arm64e` в dylib.
-2. Собрать `loader.m`, проверить что он грузит payload в Dock (только когда система настроена, см. ниже).
-3. Написать `main.swift`: модель колонок, раскладка, хоткеи.
-4. Связать демон с payload через сокет.
-5. Проверка: одно окно, потом две колонки, потом переключение воркспейсов.
+1. Build `payload.m` with `-arch arm64e` into a dylib.
+2. Build `loader.m`, check that it loads the payload into Dock (only once the system is set up, see below).
+3. Write `main.swift`: column model, layout, hotkeys.
+4. Connect the daemon to the payload through the socket.
+5. Check: one window, then two columns, then switching workspaces.
 
-## Предусловия (делает пользователь, не агент)
+## Prerequisites (done by the user, not the agent)
 
-- Debugging Restrictions: disabled. Без этого `task_for_pid` на Dock не работает.
+- Debugging Restrictions: disabled. Without it `task_for_pid` on Dock doesn't work.
 - Filesystem Protections: disabled.
-- boot-args `-arm64e_preview_abi`. Без этого Dock (arm64e) не загрузит чужой dylib.
+- boot-args `-arm64e_preview_abi`. Without it Dock (arm64e) won't load a foreign dylib.
 
-Эти шаги меняют защиту системы и требуют Recovery. Агент их не выполняет.
+These steps change system protections and need Recovery. The agent doesn't do them.
 
-## Не делаем
+## Out of scope
 
-- Сигнатурный поиск приватных глобалов Dock (нужен только для нативных Spaces).
-- Замену yabai layout. На время теста: `yabai -m config layout float` или `yabai --stop-service`.
+- Signature scanning for Dock's private globals (needed only for native Spaces).
+- Replacing yabai's layout. While testing: `yabai -m config layout float` or `yabai --stop-service`.
 
-## Откат
+## Rollback
 
-- `sudo yabai --uninstall-sa`, когда собственный payload заработает и не нужен.
+- `sudo yabai --uninstall-sa`, once our own payload works and it is no longer needed.
 
-## Открыто
+## Open
 
-- Вызовы SLS взяты из yabai, сигнатуры нужно проверить на текущей macOS (27).
-- Тестировать только на своей машине, без сторонних окон в критичных задачах.
+- The SLS calls are taken from yabai; their signatures need checking on the current macOS (27).
+- Test only on our own machine, with no third-party windows in critical tasks.

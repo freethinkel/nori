@@ -1,16 +1,16 @@
-# WindowServer / SkyLight: что найдено
+# WindowServer / SkyLight: findings
 
-Заметки по приватным API, которые использует или может использовать nori. Проверено на macOS 27 (Darwin 27.0.0), Apple Silicon.
-«Проверено» = видели своими глазами; «не проверено» = вывод из дизассемблера или догадка.
+Notes on the private APIs nori uses or could use. Checked on macOS 27 (Darwin 27.0.0), Apple Silicon.
+"Verified" = seen with our own eyes; "not verified" = inferred from the disassembler, or a guess.
 
-## Как смотреть
+## How to look
 
-- Логи payload: `/usr/bin/log show --last 1h --predicate 'process == "Dock" AND eventMessage CONTAINS "nori"' --style compact`.
-  В zsh просто `log` — встроенная команда, она молча ничего не покажет. Нужен полный путь `/usr/bin/log`.
-- Экспорты SkyLight (он в shared cache, `nm` не поможет):
-  `dyld_info -exports /System/Library/PrivateFrameworks/SkyLight.framework/SkyLight | awk '{print $NF}' | grep -i <что-то>`
-- Дизассемблер функции SkyLight без Dock: любой свой бинарь, `lldb -b ./bin -o "b main" -o run -o 'expr (void*)dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight",1)' -o "dis -n <Функция>"`.
-- Какие функции Dock вызывает во время действия: подключиться к Dock и поставить автопродолжаемые брейкпоинты (с выключенным Debugging Restrictions это работает без sudo, Dock не падает):
+- Payload logs: `/usr/bin/log show --last 1h --predicate 'process == "Dock" AND eventMessage CONTAINS "nori"' --style compact`.
+  In zsh plain `log` is a builtin and silently shows nothing. Use the full path `/usr/bin/log`.
+- SkyLight exports (it lives in the shared cache, `nm` won't help):
+  `dyld_info -exports /System/Library/PrivateFrameworks/SkyLight.framework/SkyLight | awk '{print $NF}' | grep -i <something>`
+- Disassembling a SkyLight function without Dock: any binary of our own, `lldb -b ./bin -o "b main" -o run -o 'expr (void*)dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight",1)' -o "dis -n <Function>"`.
+- Which functions Dock calls during an action: attach to Dock and set auto-continuing breakpoints (with Debugging Restrictions off this works without sudo, and Dock doesn't crash):
   ```
   breakpoint set -n SLSTransactionSetSpaceShape -n SLSTransactionSetSpaceTransform -G1
   breakpoint command add 1
@@ -19,72 +19,73 @@
   DONE
   process continue
   ```
-  `lldb -p $(pgrep -x Dock) -s file.lldb > out &`, затем действие (например `osascript -e 'tell application "System Events" to key code 19 using {option down}'`), затем `pkill -f "lldb -p"`.
-- Space окна и активный Space из демона: `CGSGetActiveSpace(CGSMainConnectionID())`, `CGSCopySpacesForWindows(cid, 7, [wid])` — экспортируются CoreGraphics, линкуются из Swift через `@_silgen_name` без доп. флагов. Проверено.
+  `lldb -p $(pgrep -x Dock) -s file.lldb > out &`, then the action (e.g. `osascript -e 'tell application "System Events" to key code 19 using {option down}'`), then `pkill -f "lldb -p"`.
+- A window's Space and the active Space from the daemon: `CGSGetActiveSpace(CGSMainConnectionID())`, `CGSCopySpacesForWindows(cid, 7, [wid])` — exported by CoreGraphics, linked from Swift through `@_silgen_name` with no extra flags. Verified.
 
-## Переключение Spaces в Dock
+## Space switching in Dock
 
-Проверено через лог хука и lldb. Переключение (Ctrl/Option+N, свайп) Dock делает сам, кадр за кадром, примерно раз в 16 мс (60 Гц), около 15 кадров на переход:
+Verified with the hook log and lldb. Dock does the switch (Ctrl/Option+N, swipe) itself, frame by frame, about every 16 ms (60 Hz), around 15 frames per switch:
 
 1. `SLSTransactionWillSwitchSpaces`
-2. `SLSTransactionShowSpace` для нового Space
-3. каждый кадр, для старого и нового Space:
-   - `SLSTransactionSetSpaceTransform(transaction, sid, u32 = 4, const CGAffineTransform *)` — чистый сдвиг, `tx` плавно от 0 до ±ширины дисплея в пикселях (3072 на этом экране), соседние Space сдвинуты на ±3072.
-   - `SLSTransactionSetSpaceShape(transaction, sid, CGRegionRef)` — клип Space, новый регион на каждый кадр. Именно он даёт чёрную полосу, если transform сделать вертикальным, а клип оставить горизонтальным.
-   - `SLSTransactionSetSafeApertureSpaceReveal(transaction, sid, d0 = прогресс 0…1, …)` — что-то про область «чёлки» (safe aperture). Не разбирали.
-4. `SLSTransactionSetManagedDisplayCurrentSpace`, `SLSTransactionHideSpace` для старого, `SLSTransactionSetSpaceOrderingWeight`.
+2. `SLSTransactionShowSpace` for the new Space
+3. every frame, for the old and the new Space:
+   - `SLSTransactionSetSpaceTransform(transaction, sid, u32 = 4, const CGAffineTransform *)` — a pure translation, `tx` going smoothly from 0 to ±display width in pixels (3072 on this screen); neighbouring Spaces are offset by ±3072.
+   - `SLSTransactionSetSpaceShape(transaction, sid, CGRegionRef)` — the Space's clip, a new region every frame. This is what gives the black band when the transform is made vertical but the clip stays horizontal.
+   - `SLSTransactionSetSafeApertureSpaceReveal(transaction, sid, d0 = progress 0…1, …)` — something about the notch area (safe aperture). Not explored.
+4. `SLSTransactionSetManagedDisplayCurrentSpace`, `SLSTransactionHideSpace` for the old one, `SLSTransactionSetSpaceOrderingWeight`.
 
-Transform Space только 2D-аффинный: сдвиг и масштаб возможны (так работает Mission Control), перспектива — нет.
-Проверено дизассемблером: `SLSTransactionSetSpaceTransform` читает из указателя ровно 6 double (CGAffineTransform), `u32` кодируется отдельным числом (флаг, смысл не выяснен). `SLSSpaceSetTransform` тоже берёт 2D (два q-регистра = 4 double + tx/ty). Экспортов вида `Space…3D` / `Space…Warp` в SkyLight нет.
-`SLSSetSessionSwitchCubeAnimation(bool)` — только флаг «куб при быстром переключении пользователей», уходит на server root port. Для Spaces не годится.
-Вывод: 3D для Space делается только через окна — `SetWindowTransform3D` каждому окну обоих Space (обои — тоже окна).
+A Space transform is 2D affine only: translation and scale work (that's how Mission Control works), perspective does not.
+Verified with the disassembler: `SLSTransactionSetSpaceTransform` reads exactly 6 doubles from the pointer (CGAffineTransform); the `u32` is passed as a separate number (a flag, meaning unknown). `SLSSpaceSetTransform` also takes 2D (two q registers = 4 doubles + tx/ty). SkyLight has no exports like `Space…3D` / `Space…Warp`.
+`SLSSetSessionSwitchCubeAnimation(bool)` — only the "cube on fast user switching" flag, sent to the server root port. Useless for Spaces.
+Conclusion: 3D for a Space only works through its windows — `SetWindowTransform3D` on every window of both Spaces (wallpapers are windows too).
 
-Хук в `payload/payload.m` (`hook`) патчит первые 16 байт функции в копии SkyLight внутри Dock (переход на свой stub, stub подменяет аргумент и выполняет вытесненный пролог). Проверено для `SLSTransactionSetSpaceTransform`: горизонтальный сдвиг превращается в вертикальный, в логе `… hooked (kr=0)`.
-Прологи на macOS 27 (оба без PC-зависимых инструкций, поэтому их можно копировать в stub):
+The hook in `payload/payload.m` (`hook`) patches the first 16 bytes of the function in Dock's copy of SkyLight (a jump to our stub; the stub swaps the argument and runs the displaced prologue). Verified for `SLSTransactionSetSpaceTransform`: the horizontal shift becomes vertical, the log says `… hooked (kr=0)`.
+Prologues on macOS 27 (both free of PC-relative instructions, so they can be copied into the stub):
 - `SLSTransactionSetSpaceTransform`: `pacibsp; stp d9,d8,[sp,#-0x40]!; stp x22,x21,[sp,#0x10]; stp x20,x19,[sp,#0x20]`
 - `SLSTransactionSetSpaceShape`: `pacibsp; sub sp,sp,#0x50; stp x22,x21,[sp,#0x20]; stp x20,x19,[sp,#0x30]` (`d503237f d10143ff a90257f6 a9034ff4`)
 
-Хук `SetSpaceShape` переводит горизонтальный клип слайда в вертикальный: берёт bounding box региона и переводит его x-диапазон в y с коэффициентом H/W, как transform. Это должно убрать чёрную полосу. **Не проверено**: в каких координатах регион (экрана или Space до transform), пока лишь предположение, что они согласованы с transform.
+The `SetSpaceShape` hook turns the slide's horizontal clip vertical: it takes the region's bounding box and maps its x range to y with an H/W factor, like the transform. This should remove the black band. **Not verified**: which coordinates the region is in (screen, or the Space before its transform); so far only an assumption that they match the transform.
 
-Хуки работают, только пока жив демон: демон каждые 2 с шлёт `P <pid>`, хук проверяет `kill(pid, 0)`. После выхода или краша демона Dock снова анимирует сам. Сам патч остаётся до перезапуска Dock.
+The hooks work only while the daemon is alive: the daemon sends `P <pid>` every 2 s, and the hook checks `kill(pid, 0)`. Once the daemon exits or crashes, Dock animates by itself again. The patch itself stays until Dock restarts.
 
-Сигнатуры (дизассемблер; аргументы видны в lldb при переключении):
-- `SLSTransactionShowSpace(transaction, sid)`, `SLSTransactionHideSpace(transaction, sid)` — по 2 аргумента.
-- `SLSTransactionSetSpaceShape(transaction, sid, CGRegionRef)`. Скрытому Space Dock ставит `kCGRegionEmptyRegion`.
-- `SLSTransactionSetSpaceOrderingWeight(transaction, sid, int)` — Dock ставит 1 новому и 0 старому.
-- Регионы: `CGRegionCreateWithRect(CGRect)`, `CGRegionIsEmpty`, `CGSGetRegionBounds(region, CGRect *)` экспортирует CoreGraphics.
-- `CGSCopyManagedDisplaySpaces(cid)` (линкуется из Swift без SkyLight): массив дисплеев, у каждого `"Spaces"` (`id64`, `ManagedSpaceID`, `type`: 0 рабочий стол, 4 полноэкранный) и `"Current Space"`. Проверено.
-- Дисплей 3008×1692 pt, слайд Dock 3072: Spaces стоят через 64 pt, transform Space в точках. Направление: уходящему вправо Space Dock даёт `tx = −3072`, значит, transform Space, как и у окон, отображает экран → Space.
+Signatures (disassembler; the arguments are visible in lldb during a switch):
+- `SLSTransactionShowSpace(transaction, sid)`, `SLSTransactionHideSpace(transaction, sid)` — 2 arguments each.
+- `SLSTransactionSetSpaceShape(transaction, sid, CGRegionRef)`. Dock gives a hidden Space `kCGRegionEmptyRegion`.
+- `SLSTransactionSetSpaceOrderingWeight(transaction, sid, int)` — Dock sets 1 on the new one and 0 on the old one.
+- Regions: `CGRegionCreateWithRect(CGRect)`, `CGRegionIsEmpty`, `CGSGetRegionBounds(region, CGRect *)` are exported by CoreGraphics.
+- `CGSCopyManagedDisplaySpaces(cid)` (links from Swift without SkyLight): an array of displays, each with `"Spaces"` (`id64`, `ManagedSpaceID`, `type`: 0 desktop, 4 fullscreen) and `"Current Space"`. Verified.
+- Display 3008×1692 pt, Dock's slide is 3072: Spaces sit 64 pt apart, a Space transform is in points. Direction: Dock gives a Space leaving to the right `tx = −3072`, so a Space transform, like a window's, maps screen → Space.
 
-## Системные шорткаты Spaces
+## System Space shortcuts
 
-«Switch to Desktop 1…N» — `com.apple.symbolichotkeys`, ключи 118, 119, 120, 121, 122 (рабочие столы 1–5). Параметры `(символ, keycode, модификаторы)`, Option = 524288, Ctrl = 262144. Keycode цифр 1–5 в US-раскладке: 18, 19, 20, 21, 23.
-Включить без UI: `defaults write com.apple.symbolichotkeys AppleSymbolicHotKeys -dict-add 118 '<dict>…</dict>'`, затем `/System/Library/PrivateFrameworks/SystemAdministration.framework/Resources/activateSettings -u`. Сейчас 118–122 включены на Option+1…5.
+"Switch to Desktop 1…N" — `com.apple.symbolichotkeys`, keys 118, 119, 120, 121, 122 (desktops 1–5). Parameters `(character, keycode, modifiers)`, Option = 524288, Ctrl = 262144. Keycodes of digits 1–5 on the US layout: 18, 19, 20, 21, 23.
+Turning them on without the UI: `defaults write com.apple.symbolichotkeys AppleSymbolicHotKeys -dict-add 118 '<dict>…</dict>'`, then `/System/Library/PrivateFrameworks/SystemAdministration.framework/Resources/activateSettings -u`. Right now 118–122 are on, bound to Option+1…5.
 
-## Окна
+## Windows
 
-- Перемещение (`SLSMoveWindowWithGroup` / транзакции, даже из Dock) WindowServer ограничивает краем экрана. Проверено: окно, отправленное на y = 3000, встало на y = 1541 (часть осталась на экране); на y = −3000 — встало на y = 0. Спрятать окно за экран перемещением нельзя.
-- `SLSSetWindowTransform(cid, wid, CGAffineTransform)` — 2D. Матрица обратная (экран → окно), как у yabai. Не перепроверяли.
-- **`SLSTransactionSetWindowTransform3D(transaction, wid, const double m[16])`** — 4×4 transform окна (раскладка CATransform3D, 16 double подряд). Сигнатура из дизассемблера: `x0` transaction, `w1` wid, `x2` указатель, читаются смещения 0x00…0x78. В payload: команда `D wid m11 … m44`.
-  Проверено на живом окне (Dock, macOS 27):
-  - Матрица **обратная**: точка экрана → точка окна. `m41=300, m42=150` сдвигает окно на 300 влево и 150 вверх; `m11=m22=2` уменьшает окно вдвое.
-  - Единицы — точки. Начало координат — **левый верхний угол окна** (масштаб сжимает окно к этому углу).
-  - Конвенция строк, как у CATransform3D: `x_окна = x·m11 + y·m21 + m41`, `y_окна = x·m12 + y·m22 + m42`, `w = x·m14 + y·m24 + m44`.
-  - Точки экрана лежат в z=0, поэтому `m34` ничего не даёт. Перспектива задаётся через `m14/m24`, то есть это 2D-гомография. Рецепт: построить прямую гомографию H (3×3, столбцы, локальные координаты окна → экран), взять G = H⁻¹, нормировать на G[2][2] и разложить: `m11,m21,m41 = G[0]`, `m12,m22,m42 = G[1]`, `m14,m24,m44 = G[2]`, `m33 = 1`.
-  - Поворот вокруг вертикальной оси через центр окна с перспективой (θ = ±0.6, d = 1500) работает: живое окно в 3D, рисуется и за пределами своих bounds. Скрипт: H = T(c)·P·T(−c), P = `[[cos θ,0,0],[0,1,0],[sin θ/d,0,1]]`.
-  - Единичная матрица возвращает окно как было.
-- `SLSSetWindowWarp` / `SLSTransactionSetWindowWarp` — сеточное искажение окна (эффект «джинн»). Не проверено.
-- `SLSSetSessionSwitchCubeAnimation` — куб быстрого переключения пользователей. Не разбирали.
-- Ещё есть: `SLSSetWindowTransforms` (пачкой), `SLSTransactionSetSpaceAlpha`, `SLSCreateGenieWindowAnimation`, `SLSSetWindowAnimationProgress`, `SLSAddWindowFilter` / `SLSNewCIFilterByName` (CI-фильтры на окна).
-- `CGWindowListCopyWindowInfo` с `.optionOnScreenOnly` показывает только окна текущего Space; окно на другом Space в `.optionAll` может иметь bounds (0, 0).
+- Moving (`SLSMoveWindowWithGroup` / transactions, even from Dock) is clamped by WindowServer to the screen edge. Verified: a window sent to y = 3000 landed at y = 1541 (part of it stayed on screen); sent to y = −3000 it landed at y = 0. A window can't be hidden off screen by moving it.
+- `SLSSetWindowTransform(cid, wid, CGAffineTransform)` — 2D. The matrix is inverted (screen → window), as in yabai. Not rechecked.
+- **`SLSTransactionSetWindowTransform3D(transaction, wid, const double m[16])`** — a 4×4 window transform (CATransform3D layout, 16 doubles in a row). Signature from the disassembler: `x0` transaction, `w1` wid, `x2` pointer, offsets 0x00…0x78 are read. In the payload: the `D wid m11 … m44` command.
+  Verified on a live window (Dock, macOS 27):
+  - The matrix is **inverted**: screen point → window point. `m41=300, m42=150` shifts the window 300 left and 150 up; `m11=m22=2` shrinks the window by half.
+  - Units are points. The origin is the window's **top-left corner** (scaling shrinks the window towards that corner).
+  - Row convention, as in CATransform3D: `x_window = x·m11 + y·m21 + m41`, `y_window = x·m12 + y·m22 + m42`, `w = x·m14 + y·m24 + m44`.
+  - Screen points lie at z=0, so `m34` does nothing. Perspective goes through `m14/m24`, i.e. it is a 2D homography. Recipe: build the forward homography H (3×3, columns, window-local coordinates → screen), take G = H⁻¹, normalize by G[2][2] and lay it out: `m11,m21,m41 = G[0]`, `m12,m22,m42 = G[1]`, `m14,m24,m44 = G[2]`, `m33 = 1`.
+  - Rotation about the vertical axis through the window's center with perspective (θ = ±0.6, d = 1500) works: a live window in 3D, drawn even outside its bounds. Script: H = T(c)·P·T(−c), P = `[[cos θ,0,0],[0,1,0],[sin θ/d,0,1]]`.
+  - The identity matrix puts the window back as it was.
+- `SLSSetWindowWarp` / `SLSTransactionSetWindowWarp` — mesh warp of a window (the genie effect). Not verified.
+- `SLSSetSessionSwitchCubeAnimation` — the fast-user-switching cube. Not explored.
+- Also available: `SLSSetWindowTransforms` (batched), `SLSTransactionSetSpaceAlpha`, `SLSCreateGenieWindowAnimation`, `SLSSetWindowAnimationProgress`, `SLSAddWindowFilter` / `SLSNewCIFilterByName` (CI filters on windows).
+- **`CGWindowListCopyWindowInfo` reports window bounds after the Space transform.** Verified: with the overview open (scale 0.4) a 1512×1567 window at (748, 40) was listed as 692×188 at (1158, 825), and windows of the other shown Spaces became "on screen" with negative y. While a Space has a transform, CGWindowList frames can't be trusted: the daemon's strip keeps the frames from its last normal poll then (`syncColumns`, `spaceLayoutBusy`). Otherwise windows really move and shrink (the resize took its width from such a frame).
+- `CGWindowListCopyWindowInfo` with `.optionOnScreenOnly` shows only windows of the current Space; a window on another Space may have bounds (0, 0) in `.optionAll`.
 
-## Идеи, ещё не сделаны
+## Ideas, not done yet
 
-- Свой эффект переключения настоящих Spaces: оставить само переключение Dock (его состояние: Mission Control, строка меню), а в хуке подменять transform и shape обоих Space; для куба — гасить transform Space и вращать окна обоих Space через `SetWindowTransform3D`, прогресс брать из `tx` Dock.
-- Overview и своё переключение сделаны, см. раздел «Своя анимация Spaces». По словам пользователя, overview показывает Spaces, то есть ShowSpace нетекущего Space и формула transform работают.
+- Our own effect for switching real Spaces: keep Dock's switch itself (its state: Mission Control, the menu bar), and replace the transform and shape of both Spaces in the hook; for a cube, zero out the Space transform and rotate the windows of both Spaces through `SetWindowTransform3D`, taking progress from Dock's `tx`.
+- The overview and our own switching are done, see "Our own Space animation". According to the user, the overview shows the Spaces, so ShowSpace of a non-current Space and the transform formula work.
 
-## Своя анимация Spaces: overview и переключение
+## Our own Space animation: overview and switching
 
-`step_layout` в `payload/payload.m`, команда `Y spring target goal sid0 sid1 …`. Overview и переключение Space — одна раскладка: Spaces дисплея друг под другом, `focus` — индекс в центре, `progress` 0 — обычные Spaces, 1 — overview (масштаб 0.4, зазор 48). Payload двигает её на каждом тике `CVDisplayLink`: overview — пружиной (response 0.28, damping 0.78, по реальному времени), переключение — как окна (четверть оставшегося пути за кадр). Каждый кадр одна транзакция: ShowSpace + shape на весь дисплей + SetSpaceTransform для каждого Space; эти же transform отдаются хуку вместо значений Dock.
-Сначала кадры считал демон по `Timer` и слал по сокету на каждый кадр — **дёргалось** (таймер не совпадает с vsync, кадры терялись или приходили парой). Анимации Space должны жить в payload, как анимации окон.
-Демон (`daemon/Overview.swift`) перехватывает в event tap все «Switch to Desktop N» (по `com.apple.symbolichotkeys`, читаются при запуске), шлёт `Y` и нажимает тот же шорткат ещё раз (своё нажатие пропускает по счётчику `passDesktopHotkeys`), чтобы Dock сменил текущий Space. Раскладка заканчивается, только когда вернулась к progress 0 и `SLSGetActiveSpace` стал целевым Space (или прошла 1 с): тогда целевой Space без transform, остальные скрыты, хуки снова пропускают Dock.
+`step_layout` in `payload/payload.m`, command `Y spring target goal sid0 sid1 …`. The overview and a Space switch are one layout: the display's Spaces one under another, `focus` is the index at the center, `progress` 0 is normal Spaces, 1 is the overview (scale 0.4, gap 48). The payload moves it on every `CVDisplayLink` tick: the overview with a spring (response 0.28, damping 0.78, in real time), a switch like windows (a quarter of the remaining distance per frame). One transaction per frame: ShowSpace + a shape covering the whole display + SetSpaceTransform for every Space; the same transforms are handed to the hook in place of Dock's values.
+At first the daemon computed frames on a `Timer` and sent one over the socket per frame — **it stuttered** (the timer isn't aligned with vsync, frames got lost or arrived in pairs). Space animations must live in the payload, like window animations.
+The daemon (`daemon/Overview.swift`) intercepts every "Switch to Desktop N" in the event tap (from `com.apple.symbolichotkeys`, read at start), sends `Y` and presses the same shortcut again (it lets its own press through by the `passDesktopHotkeys` counter) so that Dock changes the current Space. The layout finishes only once it is back at progress 0 and `SLSGetActiveSpace` is the target Space (or after 1 s): then the target Space has no transform, the others are hidden, and the hooks let Dock through again.

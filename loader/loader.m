@@ -1,5 +1,5 @@
 // Source: https://github.com/koekeishiya/yabai (src/osax/loader.m), MIT License.
-// Copied for nori PoC. Injects payload.dylib into Dock.app.
+// Copied for nori PoC. Injects a dylib into Dock.app: loader /absolute/path/to/payload.dylib
 #include <Cocoa/Cocoa.h>
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
@@ -12,7 +12,7 @@
 kern_return_t (*_thread_convert_thread_state)(thread_act_t thread, int direction, thread_state_flavor_t flavor, thread_state_t in_state, mach_msg_type_number_t in_stateCnt, thread_state_t out_state, mach_msg_type_number_t *out_stateCnt);
 #endif
 
-static char *payload_path = "/Users/freethinkel/Developer/pet/niri-mac/build/payload.dylib";
+static const char *payload_path;
 
 //
 // :Attribution
@@ -129,6 +129,13 @@ int main(int argc, char **argv)
     mach_vm_address_t stack = 0;
     vm_size_t stack_size = 16 * 1024;
     uint64_t stack_contents = 0x00000000CAFEBABE;
+    // The path goes into the shellcode, in the zeroed tail after the code.
+    size_t room = sizeof(shell_code) - 168;
+    if (argc != 2 || argv[1][0] != '/' || strlen(argv[1]) >= room) {
+        fprintf(stderr, "usage: loader /absolute/path/to/payload.dylib (shorter than %zu bytes)\n", room);
+        return 1;
+    }
+    payload_path = argv[1];
     pid_t pid = get_dock_pid();
 
     if (!pid) {

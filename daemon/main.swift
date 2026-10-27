@@ -6,6 +6,8 @@
 
 import Cocoa
 
+startApp()  // menu bar item, SIP check, Accessibility, payload: see App.swift
+
 var swallowMouseUp = false  // the click that closed the overview
 
 // Ctrl+Opt+Left / Right, Option+h/j/k/l, the overview binding. 3-finger scroll events are swallowed: the swipe is handled from raw touches.
@@ -15,8 +17,13 @@ let tap = CGEvent.tapCreate(
     place: .headInsertEventTap,
     options: .defaultTap,
     eventsOfInterest: 1 << CGEventType.keyDown.rawValue | 1 << CGEventType.scrollWheel.rawValue
-        | 1 << CGEventType.leftMouseDown.rawValue | 1 << CGEventType.leftMouseUp.rawValue,
+        | 1 << CGEventType.leftMouseDown.rawValue | 1 << CGEventType.leftMouseUp.rawValue
+        | 1 << 29 | 1 << 30,  // gesture and Dock-control events (no CGEventType case for either)
     callback: { _, type, event, _ in
+        if type.rawValue == 29 || type.rawValue == 30 {
+            // Three and four fingers are ours (strip, Spaces, overview): keep Mission Control and friends from seeing them.
+            return fingerCount == overviewFingers || fingerCount == gestureFingers ? nil : Unmanaged.passUnretained(event)
+        }
         if overviewOpen && type == .leftMouseDown {
             closeOverview(at: overviewIndex(at: event.location) ?? overviewTarget)
             swallowMouseUp = true
@@ -40,6 +47,12 @@ let tap = CGEvent.tapCreate(
         }
         if type == .keyDown && matches(event, growChord) { resizeFocused(by: resizeStep); return nil }
         if type == .keyDown && matches(event, shrinkChord) { resizeFocused(by: -resizeStep); return nil }
+        if type == .keyDown && matches(event, moveLeftChord) { moveColumn(by: -1); return nil }
+        if type == .keyDown && matches(event, moveRightChord) { moveColumn(by: 1); return nil }
+        if type == .keyDown, let number = (1...9).first(where: { matches(event, binding("move-to-space-\($0)")) }) {
+            moveFocused(toDesktop: number)
+            return nil
+        }
         if type == .keyDown && overviewOpen && event.getIntegerValueField(.keyboardEventKeycode) == 53 {  // Escape
             closeOverview(at: overviewTarget)
             return nil
@@ -101,7 +114,7 @@ layout(immediate: false)
 // ponytail: focus changes are seen by the same 4x/s poll; observe NSWorkspace activation if that feels slow.
 var lastFront: UInt32?
 Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { _ in
-    guard !gestureActive else { return }
+    guard !gestureActive, !spaceLayoutBusy else { return }
     let before = columns
     let sync = syncColumns()
     defer { lastFront = sync.front }
@@ -114,4 +127,4 @@ Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { _ in
         layout(immediate: false)
     }
 }
-CFRunLoopRun()
+NSApp.run()

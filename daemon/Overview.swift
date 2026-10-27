@@ -51,8 +51,14 @@ func desktopSpaces() -> (ids: [UInt64], current: Int) {
     return ([active], 0)
 }
 
+// The strip must not look at windows while a Space layout is on (see syncColumns). The payload gives up on
+// a layout 1 s after the last "Y"; a spring close settles well before that.
+var spaceLayoutUntil: CFTimeInterval = 0
+var spaceLayoutBusy: Bool { overviewOpen || CACurrentMediaTime() < spaceLayoutUntil }
+
 // spring: the overview opening and closing; otherwise the windows' ease.
 func sendLayout(open: Bool, spring: Bool) {
+    spaceLayoutUntil = CACurrentMediaTime() + 1.2
     send(["Y \(spring ? 1 : 0) \(overviewTarget) \(open ? 1 : 0) " + overviewSpaces.map(String.init).joined(separator: " ")])
 }
 
@@ -77,11 +83,62 @@ func toggleOverview() {
 }
 
 func openOverview() {
+    guard !overviewOpen else { return }
     let desktops = desktopSpaces()
     overviewSpaces = desktops.ids
     overviewTarget = desktops.current
     overviewOpen = true
     sendLayout(open: true, spring: true)
+}
+
+// 4-finger swipe (Trackpad.swift): the overview follows the fingers, then the lift springs it open or closed.
+func beginOverviewSwipe() {
+    if !overviewOpen {
+        let desktops = desktopSpaces()
+        overviewSpaces = desktops.ids
+        overviewTarget = desktops.current
+    }
+    sendLayout(open: overviewOpen, spring: true)  // starts the layout if it isn't running
+    overviewOpen = true  // the strip stays off its windows while the Spaces are transformed
+}
+
+// progress: 0 closed, 1 open, past either end it stretches like rubber. velocity: progress per second.
+func followOverviewSwipe(progress: CGFloat, velocity: CGFloat) {
+    let clamped = min(max(progress, 0), 1)
+    spaceLayoutUntil = CACurrentMediaTime() + 1.2
+    send(["G \(clamped + rubberBand(progress - clamped, 0.5)) \(velocity)"])
+}
+
+func endOverviewSwipe(open: Bool) {
+    if open { sendLayout(open: true, spring: true) } else { closeOverview(at: overviewTarget) }
+}
+
+// 3-finger vertical swipe (Trackpad.swift): the Spaces follow the fingers, in the overview or not.
+// Returns the index the swipe starts from.
+func beginSpaceSwipe() -> CGFloat {
+    if !overviewOpen {
+        let desktops = desktopSpaces()
+        overviewSpaces = desktops.ids
+        overviewTarget = desktops.current
+        sendLayout(open: false, spring: false)  // starts the layout if it isn't running
+    }
+    return CGFloat(overviewTarget)
+}
+
+// focus: index of the Space at the center; past the first or last Space it stretches like rubber.
+func followSpaceSwipe(focus: CGFloat, velocity: CGFloat) {
+    let clamped = min(max(focus, 0), CGFloat(overviewSpaces.count - 1))
+    spaceLayoutUntil = CACurrentMediaTime() + 1.2
+    send(["F \(clamped + rubberBand(focus - clamped, 0.5)) \(velocity)"])
+}
+
+// A flick goes on to the next Space in its direction; a slow lift picks the nearest. Dock then switches to it.
+func endSpaceSwipe(focus: CGFloat, velocity: CGFloat) {
+    let index = abs(velocity) > 1.5 ? Int(focus.rounded(velocity > 0 ? .up : .down)) : Int(focus.rounded())
+    overviewTarget = min(max(index, 0), overviewSpaces.count - 1)
+    sendLayout(open: overviewOpen, spring: overviewOpen)
+    let sid = overviewSpaces[overviewTarget]
+    if sid != CGSGetActiveSpace(cid), let number = spaces().first(where: { $0.id == sid })?.number { pressDesktop(number) }
 }
 
 // Zooms into Space `index`, switching to it if it isn't the current one.

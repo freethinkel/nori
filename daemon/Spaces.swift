@@ -1,5 +1,6 @@
 // Option+J/K: Space below / above, like niri's workspace down / up. The daemon presses the system
 // "Switch to Desktop N" shortcut (com.apple.symbolichotkeys 118 + N - 1), so the switch itself is Dock's.
+// In the overview they move the centered Space instead, see below.
 // ponytail: main display only, Desktops 1…16 (the ones that have such a shortcut), no wrap-around.
 
 import Cocoa
@@ -7,6 +8,15 @@ import Cocoa
 @_silgen_name("CGSCopyManagedDisplaySpaces") func CGSCopyManagedDisplaySpaces(_ cid: Int32) -> Unmanaged<CFArray>
 
 func switchSpace(by delta: Int) {
+    // Overview open: the neighbour slides to the center and becomes the current Space; the overview stays open.
+    if overviewOpen {
+        let target = overviewTarget + delta
+        guard overviewSpaces.indices.contains(target) else { return }
+        overviewTarget = target
+        sendLayout(open: true, spring: false)
+        if let number = spaces().first(where: { $0.id == overviewSpaces[target] })?.number { pressDesktop(number) }
+        return
+    }
     let active = CGSGetActiveSpace(cid)
     // Desktops in Mission Control order; type 0 skips full-screen app Spaces, which have no Desktop number.
     let displays = CGSCopyManagedDisplaySpaces(cid).takeRetainedValue() as? [[String: Any]] ?? []

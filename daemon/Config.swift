@@ -1,12 +1,14 @@
-// ~/.config/nori/config: gaps, screen padding, resize step and key bindings, read once at start.
+// ~/.config/nori/config: gaps, screen padding, resize step and key bindings. Read at start and on "Reload Config".
 
 import Cocoa
 
-// "key = value" lines, # starts a comment. Missing number: 0. Missing binding: its default below.
-// ponytail: no live reload, restart to apply.
+// "key = value" lines, # starts a comment. Missing number: 0. Missing flag: false. Missing binding: its default below.
 let numberKeys = ["gap", "padding-top", "padding-bottom", "padding-left", "padding-right", "resize-step"]
-let bindingDefaults = ["overview": "option+o", "grow-width": "option+=", "shrink-width": "option+-"]
-let config: [String: String] = {
+let flagKeys = ["launch-at-login"]
+let bindingDefaults = ["overview": "option+o", "grow-width": "option+=", "shrink-width": "option+-",
+                       "move-left": "option+shift+h", "move-right": "option+shift+l"]
+    .merging((1...9).map { ("move-to-space-\($0)", "option+shift+\($0)") }) { a, _ in a }
+func readConfig() -> [String: String] {
     let path = NSHomeDirectory() + "/.config/nori/config"
     guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return [:] }
     var result: [String: String] = [:]
@@ -15,23 +17,28 @@ let config: [String: String] = {
         guard !body.allSatisfy(\.isWhitespace) else { continue }
         let parts = body.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
         guard parts.count == 2,
-              numberKeys.contains(parts[0]) && Double(parts[1]) != nil || bindingDefaults[parts[0]] != nil && chord(parts[1]) != nil
+              numberKeys.contains(parts[0]) && Double(parts[1]) != nil || flagKeys.contains(parts[0]) && ["true", "false"].contains(parts[1])
+                  || bindingDefaults[parts[0]] != nil && chord(parts[1]) != nil
         else {
-            fputs("config: skipping \"\(line)\"; keys: \((numberKeys + bindingDefaults.keys.sorted()).joined(separator: ", "))\n", stderr)
+            fputs("config: skipping \"\(line)\"; keys: \((numberKeys + flagKeys + bindingDefaults.keys.sorted()).joined(separator: ", "))\n", stderr)
             continue
         }
         result[parts[0]] = parts[1]
     }
     return result
-}()
+}
+
+// Values below are computed on every use, so a reload reaches them all.
+var config = readConfig()
 
 func number(_ key: String) -> CGFloat { CGFloat(Double(config[key] ?? "") ?? 0) }
-let gap = number("gap")
-let paddingTop = number("padding-top")
-let paddingBottom = number("padding-bottom")
-let paddingLeft = number("padding-left")
-let paddingRight = number("padding-right")
-let resizeStep = config["resize-step"].flatMap(Double.init).map { CGFloat($0) } ?? 10  // percent of the usable width
+var launchAtLogin: Bool { config["launch-at-login"] == "true" }
+var gap: CGFloat { number("gap") }
+var paddingTop: CGFloat { number("padding-top") }
+var paddingBottom: CGFloat { number("padding-bottom") }
+var paddingLeft: CGFloat { number("padding-left") }
+var paddingRight: CGFloat { number("padding-right") }
+var resizeStep: CGFloat { config["resize-step"].flatMap(Double.init).map { CGFloat($0) } ?? 10 }  // percent of the usable width
 
 // Bindings: modifiers and one key joined by "+", e.g. "option+o", "ctrl+shift+1". Keys are letters, digits, "-" and "=".
 // Keycodes are from the US layout, so a binding means the same physical key in any layout.
@@ -62,9 +69,11 @@ func chord(_ text: String) -> Chord? {
 }
 
 func binding(_ name: String) -> Chord { chord(config[name] ?? bindingDefaults[name]!)! }
-let overviewChord = binding("overview")
-let growChord = binding("grow-width")
-let shrinkChord = binding("shrink-width")
+var overviewChord: Chord { binding("overview") }
+var growChord: Chord { binding("grow-width") }
+var shrinkChord: Chord { binding("shrink-width") }
+var moveLeftChord: Chord { binding("move-left") }
+var moveRightChord: Chord { binding("move-right") }
 
 func matches(_ event: CGEvent, _ chord: Chord) -> Bool {
     event.getIntegerValueField(.keyboardEventKeycode) == chord.key && event.flags.intersection(chordModifiers) == chord.flags

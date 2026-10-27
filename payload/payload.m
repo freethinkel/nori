@@ -8,6 +8,11 @@
 //        "Y spring target goal sid0 sid1 …"  Space layout, see step_layout: desktops of the display top to bottom,
 //                              the index to center, overview goal (1 open, 0 plain), and 1 to move on a spring
 //                              (overview) or 0 to ease like windows (a Space switch)
+//        "G progress velocity" a running Space layout follows a swipe: progress held there until the next "Y"
+//        "F focus velocity"    the same for the (fractional) index of the Space at the center
+//        "R wid width"         width animation, see resize_t. S and M for that window move its center meanwhile.
+//        "W wid width"         the app has resized that window to `width` (the end of a width animation)
+//        "X wid sid"           move the window to Space sid
 //        "P pid"               daemon pid. Vertical Spaces are on only while that process is alive.
 // Also turns the native Spaces slide vertical, see hook_space_transform.
 // Animation runs here on a user-interactive queue, so the daemon sends one line per window, not one per frame.
@@ -43,6 +48,8 @@ extern CGError SLSTransactionMoveWindowWithGroup(CFTypeRef transaction, uint32_t
 extern CGError SLSTransactionCommit(CFTypeRef transaction, int synchronous);
 extern CGError SLSSetWindowAlpha(int cid, uint32_t wid, float alpha);
 extern CGError SLSOrderWindow(int cid, uint32_t wid, int order, uint32_t rel_wid);
+// Works only from Dock's connection on macOS 27; the daemon's own connection gets the window left where it is.
+extern void SLSMoveWindowsToManagedSpace(int cid, CFArrayRef wids, uint64_t sid);
 // The matrix is 16 doubles, same layout as CATransform3D.
 extern CGError SLSTransactionSetWindowTransform3D(CFTypeRef transaction, uint32_t wid, const double *m);
 extern CGError SLSTransactionShowSpace(CFTypeRef transaction, uint64_t sid);
@@ -86,10 +93,34 @@ static int layout_count;  // 0: no layout running
 static int layout_target;
 static double layout_goal;
 static bool layout_spring;
+static bool layout_follow;  // a 4-finger swipe holds progress ("G"); the next "Y" lets go
+static bool focus_follow;   // a 3-finger swipe holds focus ("F"); the next "Y" lets go
 static double layout_focus, layout_progress, focus_velocity, progress_velocity;
-static uint64_t layout_started, last_frame;  // ns
+static uint64_t layout_started;  // ns
 
 static int anim_count;
+
+// Width animations ("R"). The window is stretched by a transform from its real width to the drawn one, which eases
+// to `goal`; the real window is kept centered on cx by a move in the same transaction.
+// The real width is never read back: SLSGetWindowBounds reports the window with a transform applied a frame or two
+// late, and guessing the real width from it made the stretch run away and the window land off center. The app keeps
+// its width until the stretch settles; then the daemon resizes it and says so with "W", and the stretch is dropped.
+typedef struct {
+    uint32_t wid;
+    double drawn, goal, real;  // widths
+    double cx, cx_goal;        // screen x of the center
+    uint64_t started;
+} resize_t;
+static resize_t resizes[MAX_ANIMS];
+static int resize_count;
+
+static resize_t *resize_for(uint32_t wid)
+{
+    for (int i = 0; i < resize_count; i++) {
+        if (resizes[i].wid == wid) return &resizes[i];
+    }
+    return NULL;
+}
 
 static anim_t *anim_for(uint32_t wid, bool create)
 {
@@ -117,22 +148,21 @@ static void spring(double *x, double *velocity, double goal, double dt)
 
 // One frame of the Space layout. It ends once it has settled back at plain Spaces and Dock's switch is over
 // (or after a second): only the centered Space stays shown, untransformed, and Dock animates on its own again.
-static void step_layout(void)
+// dt is one display frame, not the time since the last callback: callbacks come unevenly, frames don't.
+static void step_layout(double dt)
 {
     uint64_t now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
-    double dt = fmin((now - last_frame) / 1e9, 0.05);
-    last_frame = now;
     if (layout_spring) {
         for (; dt > 0; dt -= 1.0 / 240) {  // small substeps keep the spring stable
-            spring(&layout_progress, &progress_velocity, layout_goal, fmin(dt, 1.0 / 240));
-            spring(&layout_focus, &focus_velocity, layout_target, fmin(dt, 1.0 / 240));
+            if (!layout_follow) spring(&layout_progress, &progress_velocity, layout_goal, fmin(dt, 1.0 / 240));
+            if (!focus_follow) spring(&layout_focus, &focus_velocity, layout_target, fmin(dt, 1.0 / 240));
         }
     } else {
-        layout_progress += (layout_goal - layout_progress) * 0.25;
-        layout_focus += (layout_target - layout_focus) * 0.25;
+        if (!layout_follow) layout_progress += (layout_goal - layout_progress) * 0.25;
+        if (!focus_follow) layout_focus += (layout_target - layout_focus) * 0.25;
         progress_velocity = focus_velocity = 0;
     }
-    bool settled = fabs(layout_goal - layout_progress) < 0.001 && fabs(layout_target - layout_focus) < 0.001
+    bool settled = !layout_follow && !focus_follow && fabs(layout_goal - layout_progress) < 0.001 && fabs(layout_target - layout_focus) < 0.001
         && fabs(progress_velocity) < 0.01 && fabs(focus_velocity) < 0.01;
     if (settled) {
         layout_progress = layout_goal;
@@ -175,10 +205,10 @@ static void step_layout(void)
     CFRelease(region);
 }
 
-static void tick(void)
+static void tick(double frame)
 {
-    if (layout_count) step_layout();
-    if (!anim_count) return;
+    if (layout_count) step_layout(frame);
+    if (!anim_count && !resize_count) return;
     CFTypeRef transaction = SLSTransactionCreate(SLSMainConnectionID());
     if (!transaction) return;
     int kept = 0;
@@ -195,13 +225,37 @@ static void tick(void)
         SLSTransactionMoveWindowWithGroup(transaction, a.wid, a.cur);
     }
     anim_count = kept;
+    kept = 0;
+    uint64_t now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+    for (int i = 0; i < resize_count; i++) {
+        resize_t r = resizes[i];
+        CGRect b;
+        if (SLSGetWindowBounds(SLSMainConnectionID(), r.wid, &b) != kCGErrorSuccess) continue;  // closed
+        r.drawn += (r.goal - r.drawn) * 0.25;
+        r.cx += (r.cx_goal - r.cx) * 0.25;
+        bool settled = fabs(r.goal - r.drawn) < 0.5 && fabs(r.cx_goal - r.cx) < 0.5;
+        if (settled) {
+            r.drawn = r.goal;
+            r.cx = r.cx_goal;
+        }
+        // Done once the app has the width; after two seconds without "W" the daemon is gone or the app is stuck.
+        bool done = settled && (fabs(r.real - r.goal) < 1 || now - r.started > 2000000000);
+        double s = done ? 1 : r.drawn / r.real;
+        SLSTransactionMoveWindowWithGroup(transaction, r.wid, CGPointMake(r.cx - r.real / 2, b.origin.y));
+        // Screen -> window matrix, origin at the window's top-left (docs/WINDOWSERVER.md): x scaled about the center.
+        double m[16] = { 1 / s, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  r.real / 2 * (1 - 1 / s), 0, 0, 1 };
+        SLSTransactionSetWindowTransform3D(transaction, r.wid, m);
+        if (!done) resizes[kept++] = r;
+    }
+    resize_count = kept;
     SLSTransactionCommit(transaction, 0);
     CFRelease(transaction);
 }
 
 static CVReturn on_frame(CVDisplayLinkRef link, const CVTimeStamp *now, const CVTimeStamp *out, CVOptionFlags in, CVOptionFlags *flags, void *ctx)
 {
-    dispatch_sync(queue, ^{ tick(); });
+    double frame = out->videoRefreshPeriod && out->videoTimeScale ? (double) out->videoRefreshPeriod / out->videoTimeScale : 1.0 / 60;
+    dispatch_sync(queue, ^{ tick(frame); });
     return kCVReturnSuccess;
 }
 
@@ -213,6 +267,8 @@ static void handle_line(char *line)
     case 'S': {
         CGPoint goal;
         if (sscanf(line + 1, "%u %lf %lf", &wid, &goal.x, &goal.y) == 3) {
+            resize_t *r = resize_for(wid);
+            if (r) { r->cx_goal = goal.x + r->goal / 2; break; }  // the resize owns this window's position
             anim_t *a = anim_for(wid, true);
             if (!a) break;
             if (a->wid != wid) {
@@ -234,6 +290,8 @@ static void handle_line(char *line)
     case 'M': {
         CGPoint p;
         if (sscanf(line + 1, "%u %lf %lf", &wid, &p.x, &p.y) == 3) {
+            resize_t *r = resize_for(wid);
+            if (r) { r->cx = r->cx_goal = p.x + r->goal / 2; break; }
             anim_drop(wid);  // a running ease would pull the window back every frame
             SLSMoveWindowWithGroup(cid, wid, &p);
         }
@@ -273,20 +331,80 @@ static void handle_line(char *line)
             layout_focus = target;
             for (int i = 0; i < count; i++) if (spaces[i] == active) layout_focus = i;
             layout_progress = progress_velocity = focus_velocity = 0;
-            last_frame = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
         }
         memcpy(layout_spaces, spaces, sizeof(spaces));
         layout_count = count;
         layout_target = target;
         layout_goal = goal;
         layout_spring = use_spring;
+        layout_follow = false;
+        focus_follow = false;
         layout_started = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
         overview_active = true;
+        break;
+    }
+    case 'F': {
+        // Same as "G" for the Space at the center: a 3-finger swipe moves through Spaces.
+        double focus, velocity;
+        if (layout_count && sscanf(line + 1, "%lf %lf", &focus, &velocity) == 2) {
+            layout_focus = focus;
+            focus_velocity = velocity;
+            focus_follow = true;
+            layout_started = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+        }
+        break;
+    }
+    case 'G': {
+        // The swipe sets progress itself (and its speed, per second), so a following "Y" springs on with the same speed.
+        double progress, velocity;
+        if (layout_count && sscanf(line + 1, "%lf %lf", &progress, &velocity) == 2) {
+            layout_progress = progress;
+            progress_velocity = velocity;
+            layout_follow = true;
+            layout_started = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+        }
         break;
     }
     case 'P':
         daemon_pid = atoi(line + 1);
         break;
+    case 'R': {
+        double width;
+        if (sscanf(line + 1, "%u %lf", &wid, &width) == 2 && width > 0) {
+            resize_t *r = resize_for(wid);
+            if (!r) {
+                CGRect b;
+                if (resize_count == MAX_ANIMS || SLSGetWindowBounds(cid, wid, &b) != kCGErrorSuccess) break;
+                r = &resizes[resize_count++];
+                // No resize running, so no transform: these bounds are the real ones.
+                *r = (resize_t){ wid, b.size.width, width, b.size.width, CGRectGetMidX(b), CGRectGetMidX(b), 0 };
+            }
+            r->goal = width;
+            r->started = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+            anim_drop(wid);  // the resize moves this window now
+        }
+        break;
+    }
+    case 'X': {
+        unsigned long long sid;
+        if (sscanf(line + 1, "%u %llu", &wid, &sid) == 2) {
+            anim_drop(wid);
+            CFNumberRef number = CFNumberCreate(NULL, kCFNumberSInt32Type, &wid);
+            CFArrayRef list = CFArrayCreate(NULL, (const void **) &number, 1, &kCFTypeArrayCallBacks);
+            SLSMoveWindowsToManagedSpace(cid, list, sid);
+            CFRelease(list);
+            CFRelease(number);
+        }
+        break;
+    }
+    case 'W': {
+        double width;
+        if (sscanf(line + 1, "%u %lf", &wid, &width) == 2 && width > 0) {
+            resize_t *r = resize_for(wid);
+            if (r) r->real = width;
+        }
+        break;
+    }
     case 'D': {
         double m[16];
         if (sscanf(line + 1, "%u %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf", &wid,

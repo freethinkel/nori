@@ -28,9 +28,15 @@ func focusedIndex() -> Int {
 var currentSpace: UInt64 = 0
 var savedStrips: [UInt64: (columns: [UInt32], centers: [CGFloat], offset: CGFloat)] = [:]
 
+// Windows as of the last real look, for while a Space layout runs.
+var lastSeen: [UInt32: Win] = [:]
+
 // Drops closed windows and inserts new ones right of the focused column.
 // Returns live windows in column order, where the last new window went, and the frontmost window.
+// While the overview or a Space slide is on, CGWindowList reports frames after the Space transform (scaled,
+// moved, other Spaces' windows on screen), so the strip keeps the frames it saw last and changes nothing.
 func syncColumns() -> (wins: [Win], inserted: Int?, front: UInt32?) {
+    guard !spaceLayoutBusy else { return (withPendingWidths(columns.compactMap { lastSeen[$0] }), nil, nil) }
     let space = CGSGetActiveSpace(cid)
     if space != currentSpace {
         savedStrips[currentSpace] = (columns, columnCenters, stripOffset)
@@ -39,6 +45,7 @@ func syncColumns() -> (wins: [Win], inserted: Int?, front: UInt32?) {
     }
     let live = windows(on: space)
     let byId = Dictionary(live.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+    lastSeen = byId
     columns.removeAll { byId[$0] == nil }
     var at = min(focusedIndex() + 1, columns.count)
     var inserted: Int?
@@ -48,7 +55,7 @@ func syncColumns() -> (wins: [Win], inserted: Int?, front: UInt32?) {
         at += 1
     }
     // CGWindowList is ordered front to back, so the first window is the focused one.
-    return (columns.compactMap { byId[$0] }, inserted, live.first?.id)
+    return (withPendingWidths(columns.compactMap { byId[$0] }), inserted, live.first?.id)
 }
 
 // Height each window was last resized to. One try per window and height, so a window that refuses
