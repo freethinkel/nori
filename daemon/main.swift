@@ -10,6 +10,7 @@ if CommandLine.arguments.count > 1 { runClient(Array(CommandLine.arguments.dropF
 startApp()  // menu bar item, SIP check, Accessibility, payload: see App.swift
 
 var swallowMouseUp = false  // a press that began in the overview: its drag and release are the overview's too
+var mainTap: CFMachPort?
 
 // Ctrl+Opt+Left / Right, Option+h/j/k/l, the overview binding. 3-finger scroll events are swallowed: the swipe is handled from raw touches.
 // While the overview is open, clicks pick a Space and Escape closes it; the clicks don't reach apps. Keys: see below.
@@ -22,6 +23,11 @@ let tap = CGEvent.tapCreate(
         | 1 << CGEventType.leftMouseDragged.rawValue
         | 1 << 29 | 1 << 30,  // gesture and Dock-control events (no CGEventType case for either)
     callback: { _, type, event, _ in
+        // macOS turns a tap off when a callback runs late (or for secure input); off, macOS gestures fight ours.
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            if let mainTap { CGEvent.tapEnable(tap: mainTap, enable: true) }
+            return Unmanaged.passUnretained(event)
+        }
         if type.rawValue == 29 || type.rawValue == 30 {
             // Three and four fingers are ours (strip, Spaces, overview): keep Mission Control and friends from seeing them.
             return fingerCount == overviewFingers || fingerCount == gestureFingers ? nil : Unmanaged.passUnretained(event)
@@ -113,6 +119,7 @@ guard let tap = tap else {
     fputs("event tap failed: grant Accessibility to this binary\n", stderr)
     exit(1)
 }
+mainTap = tap
 CFRunLoopAddSource(CFRunLoopGetCurrent(), CFMachPortCreateRunLoopSource(nil, tap, 0), .commonModes)
 CGEvent.tapEnable(tap: tap, enable: true)
 // The payload turns its Space hooks off once this pid is gone. Repeated so a restarted Dock learns it too.

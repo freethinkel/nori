@@ -132,43 +132,89 @@ func touchFrame(count: Int32, center: CGPoint?) {
 // gestures (swipe between full-screen apps) to 4 fingers or off, or macOS fires them too.
 typealias ContactCallback = @convention(c) (OpaquePointer?, UnsafeMutableRawPointer?, Int32, Double, Int32, UnsafeMutableRawPointer?) -> Int32
 
+// Runs on a MultitouchSupport thread. Each touch is a 96-byte MTTouch; the normalized position is two floats at offset 32.
+// The list also holds contacts that are hovering, lifting or lingering after a lift (state at offset 20);
+// counting those made a quick second swipe look like 5 or 6 fingers. Only MakeTouch (3) and Touching (4) count.
+let contactCallback: ContactCallback = { _, touches, contacts, _, _, _ in
+    var count: Int32 = 0
+    var x: Float = 0, y: Float = 0
+    if let touches {
+        for i in 0..<Int(contacts) {
+            let state = touches.load(fromByteOffset: i * 96 + 20, as: Int32.self)
+            guard state == 3 || state == 4 else { continue }
+            count += 1
+            x += touches.load(fromByteOffset: i * 96 + 32, as: Float.self)
+            y += touches.load(fromByteOffset: i * 96 + 36, as: Float.self)
+        }
+    }
+    fingerCount = count
+    let center = count > 0 ? CGPoint(x: CGFloat(x / Float(count)), y: CGFloat(y / Float(count))) : nil
+    DispatchQueue.main.async { touchFrame(count: count, center: center) }
+    return 0
+}
+
+// The device list is read once per call: a Magic Trackpad that connects later (Bluetooth, after sleep) is a new
+// device, so startMultitouch runs again whenever a multitouch device appears and after wake, as MiddleClick does.
+var multitouchDevices: CFArray?
+var multitouchNotify: IONotificationPortRef?
+
 func startMultitouch() {
     guard let lib = dlopen("/System/Library/PrivateFrameworks/MultitouchSupport.framework/MultitouchSupport", RTLD_LAZY),
           let createList = dlsym(lib, "MTDeviceCreateList"),
           let start = dlsym(lib, "MTDeviceStart"),
-          let register = dlsym(lib, "MTRegisterContactFrameCallbackWithRefcon")
+          let stop = dlsym(lib, "MTDeviceStop"),
+          let register = dlsym(lib, "MTRegisterContactFrameCallbackWithRefcon"),
+          let unregister = dlsym(lib, "MTUnregisterContactFrameCallback")
     else {
         fputs("MultitouchSupport unavailable: trackpad swipe disabled\n", stderr)
         return
     }
     typealias CreateList = @convention(c) () -> Unmanaged<CFArray>?
     typealias Start = @convention(c) (OpaquePointer, Int32) -> Int32
+    typealias Stop = @convention(c) (OpaquePointer) -> Int32
     typealias Register = @convention(c) (OpaquePointer, ContactCallback, UnsafeMutableRawPointer?) -> Int32
+    typealias Unregister = @convention(c) (OpaquePointer, ContactCallback) -> Int32
 
-    // Runs on a MultitouchSupport thread. Each touch is a 96-byte MTTouch; the normalized position is two floats at offset 32.
-    // The list also holds contacts that are hovering, lifting or lingering after a lift (state at offset 20);
-    // counting those made a quick second swipe look like 5 or 6 fingers. Only MakeTouch (3) and Touching (4) count.
-    let callback: ContactCallback = { _, touches, contacts, _, _, _ in
-        var count: Int32 = 0
-        var x: Float = 0, y: Float = 0
-        if let touches {
-            for i in 0..<Int(contacts) {
-                let state = touches.load(fromByteOffset: i * 96 + 20, as: Int32.self)
-                guard state == 3 || state == 4 else { continue }
-                count += 1
-                x += touches.load(fromByteOffset: i * 96 + 32, as: Float.self)
-                y += touches.load(fromByteOffset: i * 96 + 36, as: Float.self)
-            }
+    func each(_ list: CFArray?, _ body: (OpaquePointer) -> Void) {
+        guard let list else { return }
+        for index in 0..<CFArrayGetCount(list) {
+            if let device = OpaquePointer(CFArrayGetValueAtIndex(list, index)) { body(device) }
         }
-        fingerCount = count
-        let center = count > 0 ? CGPoint(x: CGFloat(x / Float(count)), y: CGFloat(y / Float(count))) : nil
-        DispatchQueue.main.async { touchFrame(count: count, center: center) }
-        return 0
     }
-    guard let list = unsafeBitCast(createList, to: CreateList.self)()?.takeRetainedValue() else { return }
-    for index in 0..<CFArrayGetCount(list) {
-        guard let device = OpaquePointer(CFArrayGetValueAtIndex(list, index)) else { continue }
-        _ = unsafeBitCast(register, to: Register.self)(device, callback, nil)
+    each(multitouchDevices) { device in
+        _ = unsafeBitCast(unregister, to: Unregister.self)(device, contactCallback)
+        _ = unsafeBitCast(stop, to: Stop.self)(device)
+    }
+    fingerCount = 0
+    touchFrame(count: 0, center: nil)  // a gesture cut off by the restart ends here
+    multitouchDevices = unsafeBitCast(createList, to: CreateList.self)()?.takeRetainedValue()
+    each(multitouchDevices) { device in
+        _ = unsafeBitCast(register, to: Register.self)(device, contactCallback, nil)
         _ = unsafeBitCast(start, to: Start.self)(device, 0)
+    }
+
+    guard multitouchNotify == nil, let port = IONotificationPortCreate(kIOMainPortDefault) else { return }
+    multitouchNotify = port
+    CFRunLoopAddSource(CFRunLoopGetMain(), IONotificationPortGetRunLoopSource(port).takeUnretainedValue(), .defaultMode)
+    var iterator: io_iterator_t = 0
+    let added: IOServiceMatchingCallback = { _, iterator in
+        while case let service = IOIteratorNext(iterator), service != 0 { IOObjectRelease(service) }
+        restartMultitouchSoon()  // the port's source is on the main run loop
+    }
+    IOServiceAddMatchingNotification(port, kIOFirstMatchNotification, IOServiceMatching("AppleMultitouchDevice"), added, nil, &iterator)
+    while case let service = IOIteratorNext(iterator), service != 0 { IOObjectRelease(service) }  // arms the notification
+    NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { _ in
+        restartMultitouchSoon()
+    }
+}
+
+// The device is matched before its driver is ready: restart a moment later, once for a burst of devices.
+var multitouchRestartQueued = false
+func restartMultitouchSoon() {
+    guard !multitouchRestartQueued else { return }
+    multitouchRestartQueued = true
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+        multitouchRestartQueued = false
+        startMultitouch()
     }
 }
