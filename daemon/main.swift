@@ -114,6 +114,7 @@ let quitSources = [SIGINT, SIGTERM].map { sig in
 startControl()
 startMultitouch()
 startMouseDrag()
+startAnalytics()
 loadStrips()
 layout(immediate: false)
 // New window: scroll to it. Window focused by click or Cmd+Tab: scroll to it. Closed window: close the gap.
