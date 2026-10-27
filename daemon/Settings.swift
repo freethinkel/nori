@@ -149,7 +149,6 @@ enum Page: String, CaseIterable, Identifiable {
         case .general: ("gearshape", .gray)
         }
     }
-    var preview: Bool { self == .focus }
 }
 
 let sidebar: [(title: String, pages: [Page])] = [("", [.general]), ("Strip", [.layout, .focus]), ("Controls", [.hotkeys]), ("Apps", [.rules])]
@@ -281,9 +280,6 @@ struct SettingsView: View {
             }
         }
         .searchable(text: $query, placement: .sidebar)
-        .inspector(isPresented: .constant(current.preview)) {
-            StripPreview(shown: current.preview).inspectorColumnWidth(min: 360, ideal: 480, max: 700)
-        }
         .onChange(of: query) {
             if !matches(current, query) { page = Page.allCases.first { matches($0, query) } ?? page }
         }
@@ -826,103 +822,17 @@ struct CommitField: View {
     private func save() { if draft != value { commit(draft) } }
 }
 
-// The main display's wallpaper, scaled down: the preview draws it on every change.
+// The main display's wallpaper, scaled down for the Background tile.
 func wallpaperThumbnail() -> NSImage? {
     guard let screen = NSScreen.screens.first, let url = NSWorkspace.shared.desktopImageURL(for: screen),
           let source = CGImageSourceCreateWithURL(url as CFURL, nil),
           let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true,
-                                                                      kCGImageSourceThumbnailMaxPixelSize: 1600] as CFDictionary)
+                                                                      kCGImageSourceThumbnailMaxPixelSize: 200] as CFDictionary)
     else { return nil }
     return NSImage(cgImage: image, size: .zero)
 }
 
-// The strip as the settings set it: the main display with its wallpaper and menu bar, four windows at
-// the width presets, gap and padding to scale. ◀ ▶ move the focus so the centering mode shows; where the strip rests
-// comes from Scroll, the code the strip itself uses.
-struct StripPreview: View {
-    let shown: Bool  // SwiftUI keeps the inspector's toolbar items while it is hidden
-    @State private var focused = 1
-    @State private var previous: Int?
-    @State private var offset: CGFloat = 0
-    @State private var single = false
-    @State private var wallpaper: NSImage?
-
-    var body: some View {
-        let model = settingsModel
-        let screen = NSScreen.screens.first
-        let frame = screen?.frame ?? CGRect(x: 0, y: 0, width: 1512, height: 982)
-        let visible = screen?.visibleFrame ?? frame
-        let strip = scroll()
-        let left = model.number("padding-left"), usable = strip.view
-        let top = frame.maxY - visible.maxY + model.number("padding-top")
-        let height = frame.height - (visible.minY - frame.minY) - model.number("padding-bottom") - top
-        GeometryReader { geo in
-            let scale = min((geo.size.width - 48) / frame.width, (geo.size.height - 140) / frame.height)
-            ZStack(alignment: .topLeading) {
-                Background(image: wallpaper)
-                Rectangle().fill(.ultraThinMaterial).frame(height: (frame.maxY - visible.maxY) * scale)
-                Rectangle()
-                    .strokeBorder(.white.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                    .frame(width: usable * scale, height: height * scale)
-                    .offset(x: left * scale, y: top * scale)
-                ForEach(Array(strip.widths.indices), id: \.self) { i in
-                    PreviewWindow(focused: i == focused, scale: scale)
-                        .frame(width: strip.widths[i] * scale, height: height * scale)
-                        .opacity(i == focused ? 1 : min(max(model.number("inactive-opacity"), 0.1), 1))
-                        .offset(x: (left + usable / 2 + strip.centers[i] - offset - strip.widths[i] / 2) * scale, y: top * scale)
-                }
-            }
-            .frame(width: frame.width * scale, height: frame.height * scale, alignment: .topLeading)
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .shadow(color: .black.opacity(0.4), radius: 24, y: 8)
-            .position(x: geo.size.width / 2, y: geo.size.height / 2)
-        }
-        .background { Background(image: wallpaper).blur(radius: 40).overlay(.black.opacity(0.35)).ignoresSafeArea() }
-        .toolbar {
-            if shown {
-                ToolbarItemGroup {
-                    Button { move(-1) } label: { Label("Focus Left", systemImage: "chevron.left") }
-                        .help("Focus the column to the left")
-                    Button { move(1) } label: { Label("Focus Right", systemImage: "chevron.right") }
-                        .help("Focus the column to the right")
-                    Toggle(isOn: $single) { Label("Single Window", systemImage: "rectangle") }
-                        .help("A single window")
-                }
-            }
-        }
-        .animation(.smooth, value: model.values)
-        .onChange(of: model.values, initial: true) { settle() }
-        .onChange(of: single) { settle() }
-        .task { wallpaper = wallpaperThumbnail() }
-    }
-
-    private func scroll() -> Scroll {
-        let model = settingsModel
-        let width = (NSScreen.screens.first?.frame.width ?? 1512) - model.number("padding-left") - model.number("padding-right")
-        let gap = model.number("gap")
-        let third: CGFloat = 1 / 3
-        let presets: [CGFloat] = single ? [0.5] : [0.5, third, 2 * third, 0.5]
-        return Scroll(widths: presets.map { (width + gap) * $0 - gap }, view: width, gap: gap,
-                      mode: model.text("center-focused-column"), centerSingle: model.flag("always-center-single-column"))
-    }
-
-    private func move(_ by: Int) {
-        let count = scroll().widths.count
-        previous = focused
-        focused = settingsModel.flag("wrap-around") ? (focused + by + count) % count : min(max(focused + by, 0), count - 1)
-        settle()
-    }
-
-    // Where the strip comes to rest for the focused column, as focusColumn and layout put it.
-    private func settle() {
-        let strip = scroll()
-        focused = min(focused, strip.widths.count - 1)
-        let rest = strip.rest(focused, from: offset, previous: previous)
-        withAnimation(.smooth) { offset = min(max(rest, strip.bounds.lowerBound), strip.bounds.upperBound) }
-        previous = nil
-    }
-}
-
+// The wallpaper tile, or a gradient where the wallpaper can't be read (a video).
 struct Background: View {
     let image: NSImage?
 
@@ -932,28 +842,5 @@ struct Background: View {
         } else {
             LinearGradient(colors: [.indigo, .blue, .teal], startPoint: .topLeading, endPoint: .bottomTrailing)
         }
-    }
-}
-
-// A window in the preview: a title bar with its three buttons, gray when it isn't focused.
-struct PreviewWindow: View {
-    let focused: Bool
-    let scale: CGFloat
-
-    var body: some View {
-        let shape = RoundedRectangle(cornerRadius: max(16 * scale, 3), style: .continuous)
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: max(8 * scale, 2)) {
-                ForEach([Color.red, .yellow, .green], id: \.self) { color in
-                    Circle().fill(focused ? color : .gray.opacity(0.5)).frame(width: max(12 * scale, 3), height: max(12 * scale, 3))
-                }
-            }
-            .padding(max(14 * scale, 3))
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Color(nsColor: .windowBackgroundColor), in: shape)
-        .overlay(shape.strokeBorder(.white.opacity(focused ? 0.35 : 0.12)))
-        .shadow(color: .black.opacity(focused ? 0.35 : 0.15), radius: 6 * scale + 2, y: 2)
     }
 }
