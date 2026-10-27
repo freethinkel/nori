@@ -69,7 +69,7 @@ version:  # app/Info.plist's version, which a push to main releases (.github/wor
 	@plutil -extract CFBundleShortVersionString raw app/Info.plist
 
 test: | $(BUILD)
-	swiftc daemon/TOML.swift test/main.swift -o $(BUILD)/test && $(BUILD)/test
+	swiftc daemon/TOML.swift daemon/Scroll.swift test/main.swift -o $(BUILD)/test && $(BUILD)/test
 
 clean:
 	rm -rf $(BUILD)

@@ -139,6 +139,7 @@ func relaunch() {
                          "_", "\(getpid())", Bundle.main.bundleURL.path]
     try? process.run()
     resetOverview()
+    restoreWindows()
     exit(0)
 }
 

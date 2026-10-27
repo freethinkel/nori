@@ -6,9 +6,10 @@ import Cocoa
 // Top level: numbers (missing: 0), flags (missing: false) and choices (missing: the first). [bindings]: key bindings (missing: the default below).
 // [[rule]]: app rules, see Rules.swift. Unknown keys and bad values are reported and skipped.
 let numberKeys = ["gap", "padding-top", "padding-bottom", "padding-left", "padding-right", "resize-step"]
-let flagKeys = ["launch-at-login"]
-let choiceKeys = ["overview-background": ["none", "blur"]]
+let flagKeys = ["launch-at-login", "always-center-single-column"]
+let choiceKeys = ["overview-background": ["none", "blur"], "center-focused-column": ["always", "never", "on-overflow"]]
 let bindingDefaults = ["overview": "option+o", "grow-width": "option+=", "shrink-width": "option+-",
+                       "cycle-width-forward": "option+.", "cycle-width-backward": "option+,", "toggle-full-width": "option+shift+f",
                        "move-left": "option+shift+h", "move-right": "option+shift+l"]
     .merging((1...9).map { ("move-to-space-\($0)", "option+shift+\($0)") }) { a, _ in a }
 let configPath = NSHomeDirectory() + "/.config/nori/config.toml"
@@ -24,11 +25,16 @@ padding-right = 24
 resize-step = 10          # width step, % of screen width
 launch-at-login = false   # start Nori.app at login
 overview-background = "none"  # behind the overview's Spaces: "none" (black) or "blur" (the wallpaper, blurred)
+center-focused-column = "always"  # "always", "never" (scroll only to show it whole) or "on-overflow"
+always-center-single-column = false  # a lone window in the center, whatever center-focused-column says
 
 [bindings]
 overview = "option+o"
 grow-width = "option+="
 shrink-width = "option+-"
+cycle-width-forward = "option+."    # 1/3, 1/2, 2/3 of the screen
+cycle-width-backward = "option+,"
+toggle-full-width = "option+shift+f"
 move-left = "option+shift+h"
 move-right = "option+shift+l"
 \((1...9).map { "move-to-space-\($0) = \"option+shift+\($0)\"" }.joined(separator: "\n"))
@@ -95,8 +101,10 @@ var paddingBottom: CGFloat { number("padding-bottom") }
 var paddingLeft: CGFloat { number("padding-left") }
 var paddingRight: CGFloat { number("padding-right") }
 var resizeStep: CGFloat { config["resize-step"].flatMap(Double.init).map { CGFloat($0) } ?? 10 }  // percent of the usable width
+var centerFocusedColumn: String { config["center-focused-column"] ?? "always" }  // see Scroll.swift
+var alwaysCenterSingleColumn: Bool { config["always-center-single-column"] == "true" }
 
-// Bindings: modifiers and one key joined by "+", e.g. "option+o", "ctrl+shift+1". Keys are letters, digits, "-" and "=".
+// Bindings: modifiers and one key joined by "+", e.g. "option+o", "ctrl+shift+1". Keys are letters, digits, "-", "=", "," and ".".
 // Keycodes are from the US layout, so a binding means the same physical key in any layout.
 typealias Chord = (key: Int64, flags: CGEventFlags)
 let chordModifiers: CGEventFlags = [.maskAlternate, .maskControl, .maskCommand, .maskShift]
@@ -104,7 +112,7 @@ let keycodes: [String: Int64] = [
     "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9, "b": 11, "q": 12, "w": 13,
     "e": 14, "r": 15, "y": 16, "t": 17, "1": 18, "2": 19, "3": 20, "4": 21, "6": 22, "5": 23, "9": 25, "7": 26,
     "8": 28, "0": 29, "o": 31, "u": 32, "i": 34, "p": 35, "l": 37, "j": 38, "k": 40, "n": 45, "m": 46,
-    "-": 27, "=": 24,
+    "-": 27, "=": 24, ",": 43, ".": 47,
 ]
 
 func chord(_ text: String) -> Chord? {

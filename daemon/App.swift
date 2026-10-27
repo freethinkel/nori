@@ -62,6 +62,7 @@ final class MenuActions: NSObject, NSMenuDelegate {
 
     @objc func quit() {
         resetOverview()
+        restoreWindows()
         exit(0)
     }
 }

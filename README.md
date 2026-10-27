@@ -6,7 +6,7 @@ It's a prototype. WindowServer moves the windows, not Accessibility. A dylib loa
 
 ## Features
 
-- Every window of the current Space is a column. The focused window sits in the center, the others line up left and right, `gap` apart.
+- Every window of the current Space is a column. The focused window sits in the center, the others line up left and right, `gap` apart. With `center-focused-column` the strip scrolls only as far as it takes to show the focused window whole, as in niri and OmniWM.
 - A new window opens right of the focused one and the strip scrolls to it. When a window closes, its neighbours close the gap.
 - Clicking a window or switching to it with Cmd+Tab scrolls the strip to it.
 - nori stretches a window to the full screen height when it joins the strip.
@@ -56,7 +56,7 @@ After that nori lives in the menu bar.
 | Open Config | opens `~/.config/nori/config.toml` in your text editor, creating it with every setting if needed |
 | Reload Config, ⌘R | reads the config again and lays the windows out with it |
 | Restart Dock and Reload Payload | use it after a rebuild, so Dock runs the new payload. The line under it says whether the payload is running in Dock |
-| Quit nori, ⌘Q | puts Spaces back and quits. The payload stays in Dock and does nothing |
+| Quit nori, ⌘Q | puts Spaces and windows back and quits. The payload stays in Dock and does nothing |
 
 ### 3. macOS settings
 
@@ -114,10 +114,12 @@ A repair at Apple or an authorized service provider may turn SIP back on too. Th
 | Opt+H / Opt+L | column to the left / right |
 | Opt+J / Opt+K | Space below / above, through the system "Switch to Desktop N" shortcuts. In the overview the neighbour slides to the center and becomes current, and the overview stays open |
 | Opt+= / Opt+- | focused window wider / narrower by `resize-step`, animated |
+| Opt+. / Opt+, | focused window to the next wider / narrower of 1/3, 1/2 and 2/3 of the screen, round at either end. Config names `cycle-width-forward`, `cycle-width-backward` |
+| Opt+Shift+F | focused window to the full width, and back to its width before. Config name `toggle-full-width` |
 | Opt+Shift+H / Opt+Shift+L | move the focused window one column left / right. Config names `move-left`, `move-right` |
 | Opt+Shift+1…9 | send the focused window to Desktop N. Focus stays on this Space. Config names `move-to-space-N` |
 | Opt + left drag | move the window under the pointer. It trades places with a neighbour once it passes the neighbour's center |
-| Opt + right drag | resize the window under the pointer. It takes focus, and both edges follow the pointer |
+| Opt + right drag | resize the window under the pointer. It takes focus, and both edges follow the pointer, or only the right one when `center-focused-column` doesn't center it |
 | Opt+1…5 | Space 1…5. These are the system "Switch to Desktop N" shortcuts, and nori animates the switch itself |
 | Opt+O | overview. Click a Space to pick it and the window under the pointer. Drag a window onto another Space to move it there. Esc or Opt+O closes it. Config name `overview` |
 | in the overview: H/L or ←/→, J/K or ↓/↑, Return | move through the centered Space's columns, bring the Space below or above to the center, pick it |
@@ -138,11 +140,16 @@ padding-right = 24
 resize-step = 10          # width step, % of screen width, default 10
 launch-at-login = true    # start Nori.app at login, default false
 overview-background = "blur"  # behind the overview's Spaces: "none" (black, default) or "blur"
+center-focused-column = "always"     # "always" (default), "never" or "on-overflow"
+always-center-single-column = false  # a lone window in the center whatever the above says, default false
 
 [bindings]
 overview = "option+o"
 grow-width = "option+="
 shrink-width = "option+-"
+cycle-width-forward = "option+."
+cycle-width-backward = "option+,"
+toggle-full-width = "option+shift+f"
 move-left = "option+shift+h"
 move-right = "option+shift+l"
 move-to-space-1 = "option+shift+1"   # … up to move-to-space-9
@@ -152,9 +159,13 @@ app = "Telegram"
 space = 3
 ```
 
-Missing numbers are 0, except `resize-step`. A missing binding keeps the default shown above. A binding is modifiers and one key joined by `+`. Modifiers are `option` or `alt`, `ctrl`, `cmd` and `shift`. The key is a letter, a digit, `-` or `=`, and nori reads it as a physical key on the US layout, so the binding stays put when you switch layouts.
+Missing numbers are 0, except `resize-step`. A missing binding keeps the default shown above. A binding is modifiers and one key joined by `+`. Modifiers are `option` or `alt`, `ctrl`, `cmd` and `shift`. The key is a letter, a digit, `-`, `=`, `,` or `.`, and nori reads it as a physical key on the US layout, so the binding stays put when you switch layouts.
 
 `overview-background = "blur"` puts the current wallpaper of the main display, blurred and dimmed by 30%, around and between the Spaces in the overview. It is read when the overview opens, so a wallpaper change shows up on the next open.
+
+`center-focused-column` decides where the focused window sits, like niri's and OmniWM's setting of that name. `"always"` puts it in the center. `"never"` scrolls the strip only as far as it takes to show it whole, against the left or right padding, so a window already on screen doesn't move the strip and a lone window sits at the left. `"on-overflow"` centers it when it doesn't fit on screen beside the window focus came from, and otherwise acts like `"never"`. Three fingers settle the strip the same way: on a centered window, or with one against the padding. `always-center-single-column = true` centers a lone window in any mode.
+
+The width presets count the gap in, so two windows at 1/2, or one at 1/3 and one at 2/3, fill the space between the paddings exactly. An app with a minimum or maximum width gets as close as it allows.
 
 `launch-at-login` adds Nori.app to System Settings → General → Login Items, or removes it, at launch and on "Reload Config". It only works for the app, not for `build/nori` in a terminal. The login item remembers where the bundle is, so move the app to /Applications first.
 
@@ -228,7 +239,7 @@ nori sees the titles of windows on other Spaces only with Screen Recording permi
 - One window per column.
 - nori learns about new windows and focus changes from Accessibility and NSWorkspace notifications. If a window closes and focus doesn't move, nori notices on its next poll, up to a second later.
 - Main display only.
-- nori doesn't restore the original window sizes when it quits.
+- On quit, windows go back to where they were before nori. Windows of the current Space get their size back too; Accessibility doesn't reach other Spaces, so windows there keep the size nori gave them. After a crash windows stay where nori put them.
 
 ## License
 

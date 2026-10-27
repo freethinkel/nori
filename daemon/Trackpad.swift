@@ -4,7 +4,7 @@
 import Cocoa
 
 // Trackpad: the strip follows the 3-finger centroid. A swipe that starts vertical moves through Spaces instead.
-// On lift the strip is thrown by the last finger speed and snaps to the nearest column.
+// On lift the strip is thrown by the last finger speed and snaps to the nearest rest point (Scroll.snap).
 // ponytail: one trackpad at a time; frames from a second trackpad would interleave with the first.
 var fingerCount: Int32 = 0
 let gestureFingers: Int32 = 3
@@ -79,8 +79,9 @@ func touchFrame(count: Int32, center: CGPoint?, time: CFTimeInterval = 0) {
     guard count == gestureFingers, lastTouchCount == gestureFingers || lastCenter == nil, let center else {
         if gestureActive {
             gestureActive = false
-            stripOffset -= swipeVelocity * 8  // ponytail: fixed throw; real momentum would decay over frames
-            focusColumn(at: focusedIndex())
+            // ponytail: fixed throw; real momentum would decay over frames
+            let rest = scroll(syncColumns().wins).snap(stripOffset - swipeVelocity * 8, focused: focusedIndex())
+            focusColumn(at: rest.index, offset: rest.offset)
         }
         if spaceSwiping {
             spaceSwiping = false

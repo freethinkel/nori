@@ -1,4 +1,5 @@
-// make test: checks of the TOML reader (daemon/TOML.swift). Fails with an assertion.
+// make test: checks of the TOML reader (daemon/TOML.swift) and the strip's rest points (daemon/Scroll.swift).
+// Fails with an assertion.
 
 import Foundation
 
@@ -20,3 +21,30 @@ entries = parse("a = [1, 2]\nb = 1\nb = 2\nc = 1 2\n[bad name]\nd = \"open\ne = 
 assert(entries.map(\.key) == ["b"] && errors.count == 6, "\(errors)")
 
 print("toml: ok")
+
+// A 1000 pt wide screen, gap 10. Three 300 pt columns fit on it, three 600 pt ones don't.
+func strip(_ widths: [CGFloat], _ mode: String, single: Bool = false) -> Scroll {
+    Scroll(widths: widths, view: 1000, gap: 10, mode: mode, centerSingle: single)
+}
+let narrow: [CGFloat] = [300, 300, 300], wide: [CGFloat] = [600, 600, 600]
+
+// "always": the focused column in the center, the ends centered too; a lift snaps to the nearest center.
+assert(strip(narrow, "always").centers == [0, 310, 620])
+assert(strip(narrow, "always").bounds == 0...620 && strip(narrow, "always").rest(2, from: 0, previous: 0) == 620)
+assert(strip(narrow, "always").snap(400, focused: 0) == (310, 1))
+
+// "never": no scroll while the column shows whole; else the nearer padding. A lone window sits at the left
+// unless always-center-single-column; a window wider than the screen against the left padding.
+assert(strip(narrow, "never").bounds == 350...350 && strip(narrow, "never").rest(2, from: 350, previous: 0) == 350)
+assert(strip(narrow, "never").snap(500, focused: 2) == (350, 2))  // all on screen: focus stays
+assert(strip(wide, "never").bounds == 200...1020 && strip(wide, "never").rest(1, from: 200, previous: 0) == 410)
+assert(strip([300], "never").bounds == 350...350 && strip([300], "never", single: true).bounds == 0...0)
+assert(strip([1200], "never").rest(0, from: 0, previous: nil) == -100)
+
+// "on-overflow": centered when it doesn't fit beside the column focus came from, else like "never".
+assert(strip(wide, "on-overflow").rest(1, from: 200, previous: 0) == 610)
+assert(strip(wide, "on-overflow").rest(1, from: 200, previous: nil) == 410)
+assert(strip(narrow, "on-overflow").rest(2, from: 350, previous: 0) == 350)
+assert(strip(wide, "on-overflow").bounds == 0...1220 && strip(wide, "on-overflow").snap(600, focused: 0) == (610, 1))
+
+print("scroll: ok")

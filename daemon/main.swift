@@ -61,6 +61,12 @@ let tap = CGEvent.tapCreate(
         }
         if type == .keyDown && matches(event, growChord) { resizeFocused(by: resizeStep); return nil }
         if type == .keyDown && matches(event, shrinkChord) { resizeFocused(by: -resizeStep); return nil }
+        if type == .keyDown && matches(event, binding("cycle-width-forward")) { cycleWidth(forward: true); return nil }
+        if type == .keyDown && matches(event, binding("cycle-width-backward")) { cycleWidth(forward: false); return nil }
+        if type == .keyDown && matches(event, binding("toggle-full-width")) {
+            if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 { toggleFullWidth() }
+            return nil
+        }
         if type == .keyDown && matches(event, moveLeftChord) { moveColumn(by: -1); return nil }
         if type == .keyDown && matches(event, moveRightChord) { moveColumn(by: 1); return nil }
         if type == .keyDown, let number = (1...9).first(where: { matches(event, binding("move-to-space-\($0)")) }) {
@@ -127,12 +133,12 @@ signal(SIGPIPE, SIG_IGN)
 // The payload turns its Space hooks off once this pid is gone. Repeated so a restarted Dock learns it too.
 send(["P \(getpid())"])
 Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in send(["P \(getpid())"]) }
-// Ctrl+C / kill: put Spaces back before quitting. A crash leaves the overview scaled until Dock restarts.
+// Ctrl+C / kill: put Spaces and windows back before quitting. A crash leaves the overview scaled until Dock restarts.
 signal(SIGINT, SIG_IGN)
 signal(SIGTERM, SIG_IGN)
 let quitSources = [SIGINT, SIGTERM].map { sig in
     let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
-    source.setEventHandler { resetOverview(); exit(0) }
+    source.setEventHandler { resetOverview(); restoreWindows(); exit(0) }
     source.resume()
     return source
 }
