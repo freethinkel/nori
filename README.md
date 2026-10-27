@@ -137,6 +137,7 @@ padding-left = 24
 padding-right = 24
 resize-step = 10          # width step, % of screen width, default 10
 launch-at-login = true    # start Nori.app at login, default false
+overview-background = "blur"  # behind the overview's Spaces: "none" (black, default) or "blur"
 
 [bindings]
 overview = "option+o"
@@ -152,6 +153,8 @@ space = 3
 ```
 
 Missing numbers are 0, except `resize-step`. A missing binding keeps the default shown above. A binding is modifiers and one key joined by `+`. Modifiers are `option` or `alt`, `ctrl`, `cmd` and `shift`. The key is a letter, a digit, `-` or `=`, and nori reads it as a physical key on the US layout, so the binding stays put when you switch layouts.
+
+`overview-background = "blur"` puts the current wallpaper of the main display, blurred and dimmed by 30%, around and between the Spaces in the overview. It is read when the overview opens, so a wallpaper change shows up on the next open.
 
 `launch-at-login` adds Nori.app to System Settings → General → Login Items, or removes it, at launch and on "Reload Config". It only works for the app, not for `build/nori` in a terminal. The login item remembers where the bundle is, so move the app to /Applications first.
 
@@ -199,6 +202,7 @@ nori focus left|right                   # column to the left / right
 nori focus column N                     # column N on the current Space, counting from 1
 nori focus space N                      # Desktop N, through "Switch to Desktop N"
 nori focus window WID                   # a window by id, switching Spaces if needed
+                                        # any focus takes --instant: no slide, no ease
 nori subscribe                          # one line of `query spaces` JSON now and on every change
 nori help
 
@@ -207,7 +211,7 @@ nori focus window "$(nori query windows --app Telegram | jq '.[0].id')"
 nori subscribe | jq -c --unbuffered '.[] | select(.isFocused) | .number'
 ```
 
-A Space has `id`, `number`, `display`, `type`, `isFocused`, `isVisible`, `windows`, `columns`, `focusedWindow` and `apps`. `isFocused` marks the one Space that has focus. It moves as soon as nori starts a switch (a Desktop shortcut, Opt+J/K, a swipe, the overview, `nori focus space`), before the slide ends. `isVisible` marks the Space each display shows. `columns` is the strip left to right. On a Space nori hasn't shown yet it is the order the strip will get there. `focusedWindow` is the focused window on the focused Space, from Accessibility, and on other Spaces the window that had focus there last.
+A Space has `id`, `number`, `display`, `type`, `isFocused`, `isVisible`, `isAnimating`, `windows`, `columns`, `focusedWindow` and `apps`. `isFocused` marks the one Space that has focus. It moves as soon as nori starts a switch (a Desktop shortcut, Opt+J/K, a swipe, the overview, `nori focus space`), before the slide ends. `isVisible` marks the Space each display shows. `isAnimating` is true while a nori animation moves or scales the Space (a switch, the overview); meanwhile the frames macOS reports for its windows (`CGWindowListCopyWindowInfo`) have that motion in them, so a bar that judges windows by their frames should wait for it to turn false. `columns` is the strip left to right. On a Space nori hasn't shown yet it is the order the strip will get there. `focusedWindow` is the focused window on the focused Space, from Accessibility, and on other Spaces the window that had focus there last.
 
 `nori subscribe` writes the whole `query spaces` array as one compact line, at once and then on every change: a Space switch, a window opening, closing or moving to another Space, focus, a column moving. A line only goes out when it differs from the last one. When nori quits, `subscribe` exits with 2.
 

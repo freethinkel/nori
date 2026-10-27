@@ -44,6 +44,16 @@ func pressDesktop(_ number: Int) {
     }
 }
 
+// `nori focus space N --instant`: no slide. Dock switches as usual, but the payload hands its frames identity
+// transforms, so the new Space is just there. ponytail: "I 0" after a fixed second, Dock's switch takes ~250 ms.
+func switchSpaceInstant(to number: Int) -> Bool {
+    guard spaces().contains(where: { $0.number == number }) else { return false }
+    send(["I 1"])
+    pressDesktop(number)
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { send(["I 0"]) }
+    return true
+}
+
 // Desktops (not full-screen Spaces) of the display that shows the active Space, in Mission Control order.
 func desktopSpaces() -> (ids: [UInt64], current: Int) {
     let active = CGSGetActiveSpace(cid)
@@ -66,8 +76,10 @@ let spaceLayoutFallback = 3.0
 
 func spaceLayoutDone(_ seq: Int) {
     guard seq == layoutSeq else { return }  // a later "Y" is still running
+    if !overviewOpen { hideBackdrop() }
     spaceLayoutUntil = 0
     pollSoon()
+    publishSoon()  // isAnimating, for subscribers
 }
 
 // spring: the overview opening and closing; otherwise the windows' ease.
@@ -77,6 +89,7 @@ func sendLayout(open: Bool, spring: Bool) {
     // The Space-changed event lands while the strip is paused; layout-done polls, this is in case it never comes.
     DispatchQueue.main.asyncAfter(deadline: .now() + spaceLayoutFallback + 0.05) { pollSoon() }
     send(["Q \(layoutSeq)", "Y \(spring ? 1 : 0) \(overviewTarget) \(open ? 1 : 0) " + overviewSpaces.map(String.init).joined(separator: " ")])
+    publishSoon()  // isAnimating, for subscribers
 }
 
 // Every "Switch to Desktop N" press lands here (keys, Option+J/K, nori focus space), and Dock switches under our slide.
@@ -105,6 +118,7 @@ func openOverview() {
     overviewSpaces = desktops.ids
     overviewTarget = desktops.current
     overviewOpen = true
+    showBackdrop()
     sendLayout(open: true, spring: true)
 }
 
@@ -114,6 +128,7 @@ func beginOverviewSwipe() {
         let desktops = desktopSpaces()
         overviewSpaces = desktops.ids
         overviewTarget = desktops.current
+        showBackdrop()
     }
     sendLayout(open: overviewOpen, spring: true)  // starts the layout if it isn't running
     overviewOpen = true  // the strip stays off its windows while the Spaces are transformed
@@ -177,6 +192,56 @@ func resetOverview() {
     overviewOpen = false
     overviewTarget = overviewSpaces.firstIndex(of: CGSGetActiveSpace(cid)) ?? overviewTarget
     sendLayout(open: false, spring: false)
+}
+
+// overview-background = "blur": the wallpaper, blurred and dimmed by 30%, behind the overview's Spaces. It is a
+// window in a Space of its own at absolute level -1, below every desktop (they are at 0), so it shows only around
+// and between the scaled Spaces; shown while the overview is open or closing.
+// ponytail: the main display's wallpaper as desktopImageURL gives it; one it can't read (a video) leaves black.
+@_silgen_name("CGSSpaceCreate") func CGSSpaceCreate(_ cid: Int32, _ flags: Int32, _ options: Int32) -> UInt64
+@_silgen_name("CGSSpaceSetAbsoluteLevel") func CGSSpaceSetAbsoluteLevel(_ cid: Int32, _ sid: UInt64, _ level: Int32) -> Int32
+@_silgen_name("CGSShowSpaces") func CGSShowSpaces(_ cid: Int32, _ sids: CFArray) -> Int32
+@_silgen_name("CGSHideSpaces") func CGSHideSpaces(_ cid: Int32, _ sids: CFArray) -> Int32
+@_silgen_name("CGSSpaceAddWindowsAndRemoveFromSpaces")
+func CGSSpaceAddWindowsAndRemoveFromSpaces(_ cid: Int32, _ sid: UInt64, _ wids: CFArray, _ mask: Int32) -> Int32
+
+var backdrop: (window: NSWindow, space: UInt64, wallpaper: URL?)?
+
+func showBackdrop() {
+    guard overviewBlur, let screen = NSScreen.screens.first else { return }
+    if backdrop == nil {
+        let window = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.backgroundColor = .black
+        window.level = NSWindow.Level(Int(CGWindowLevelForKey(.desktopWindow)))  // not layer 0: no one lists it as an app window
+        window.ignoresMouseEvents = true
+        window.contentView!.layer = CALayer()
+        window.contentView!.wantsLayer = true
+        window.contentView!.layer!.contentsGravity = .resizeAspectFill
+        window.contentView!.layer!.opacity = 0.7  // over the black window: a 30% black overlay
+        window.orderFrontRegardless()
+        let space = CGSSpaceCreate(cid, 1, 0)
+        _ = CGSSpaceSetAbsoluteLevel(cid, space, -1)
+        _ = CGSSpaceAddWindowsAndRemoveFromSpaces(cid, space, [window.windowNumber] as CFArray, 7)
+        backdrop = (window, space, nil)
+    }
+    let wallpaper = NSWorkspace.shared.desktopImageURL(for: screen)
+    if wallpaper != backdrop!.wallpaper {
+        backdrop!.wallpaper = wallpaper
+        backdrop!.window.contentView!.layer!.contents = wallpaper.flatMap(blurred)
+    }
+    backdrop!.window.setFrame(screen.frame, display: false)
+    _ = CGSShowSpaces(cid, [backdrop!.space] as CFArray)
+}
+
+func hideBackdrop() {
+    if let space = backdrop?.space { _ = CGSHideSpaces(cid, [space] as CFArray) }
+}
+
+// Scaled down to 960 px wide first: the blur is cheap there and wipes out the detail anyway.
+func blurred(_ url: URL) -> CGImage? {
+    guard let image = CIImage(contentsOf: url) else { return nil }
+    let small = image.transformed(by: CGAffineTransform(scaleX: 960 / image.extent.width, y: 960 / image.extent.width))
+    return CIContext().createCGImage(small.clampedToExtent().applyingGaussianBlur(sigma: 24), from: small.extent)
 }
 
 // Where Space i sits in the open overview, in CG coordinates.

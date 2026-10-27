@@ -122,6 +122,8 @@ guard let tap = tap else {
 mainTap = tap
 CFRunLoopAddSource(CFRunLoopGetCurrent(), CFMachPortCreateRunLoopSource(nil, tap, 0), .commonModes)
 CGEvent.tapEnable(tap: tap, enable: true)
+// A peer gone mid-write (Dock restarting under the payload socket, a subscriber) must not kill the daemon: EPIPE instead.
+signal(SIGPIPE, SIG_IGN)
 // The payload turns its Space hooks off once this pid is gone. Repeated so a restarted Dock learns it too.
 send(["P \(getpid())"])
 Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in send(["P \(getpid())"]) }

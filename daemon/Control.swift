@@ -19,6 +19,7 @@ let usage = """
       nori focus column N
       nori focus space N
       nori focus window WID
+      (any focus takes --instant: no animation)
 
     """
 
@@ -140,6 +141,11 @@ func publishSoon() {
 }
 
 func handle(_ args: [String]) -> String {
+    // --instant on any focus: Spaces switch without the slide, windows move without the ease.
+    let instant = args.contains("--instant")
+    let args = args.filter { $0 != "--instant" }
+    instantMoves = instant
+    defer { instantMoves = false }
     let number = args.count == 3 ? Int(args[2]) : nil
     switch (args.first ?? "", args.count > 1 ? args[1] : "") {
     case ("query", "spaces"):
@@ -161,7 +167,7 @@ func handle(_ args: [String]) -> String {
         return ""
     case ("focus", "space"):
         guard let n = number else { break }
-        return switchToSpace(n) ? "" : "error: no Desktop \(n), or its shortcut is off in Keyboard Shortcuts → Mission Control\n"
+        return (instant ? switchSpaceInstant(to: n) : switchToSpace(n)) ? "" : "error: no Desktop \(n), or its shortcut is off in Keyboard Shortcuts → Mission Control\n"
     // From the payload in Dock, see its header.
     case ("payload", "layout-done"):
         if let n = number { spaceLayoutDone(n) }
@@ -172,7 +178,7 @@ func handle(_ args: [String]) -> String {
     case ("focus", "window"):
         guard let n = number else { break }
         guard let listed = listWindows([]).first(where: { $0.win.id == n }) else { return "error: no window \(n)\n" }
-        focusWindow(listed)
+        focusWindow(listed, instant: instant)
         return ""
     default:
         break
@@ -275,6 +281,7 @@ func querySpaces(_ opts: [String: String]) -> [[String: Any]] {
         let fields: [String: Any?] = [
             "id": space.id, "number": space.number, "display": space.display,
             "type": space.fullscreen ? "fullscreen" : "desktop", "isFocused": space.id == focused, "isVisible": space.visible,
+            "isAnimating": spaceLayoutBusy && overviewSpaces.contains(space.id),
             "windows": wins.map(\.win.id), "columns": strip(of: space.id, listed), "apps": apps,
             "focusedWindow": focusedWins[space.id],
         ]
@@ -327,7 +334,7 @@ func switchToSpace(_ number: Int) -> Bool {
     return true
 }
 
-func focusWindow(_ listed: Listed) {
+func focusWindow(_ listed: Listed, instant: Bool = false) {
     let active = CGSGetActiveSpace(cid)
     if listed.spaces.contains(active) {
         if let index = columns.firstIndex(of: listed.win.id) { focusColumn(at: index) } else { focus(listed.win) }
@@ -336,8 +343,9 @@ func focusWindow(_ listed: Listed) {
     // Accessibility only sees windows of the current Space, so go there first. A fullscreen Space or one without
     // a shortcut: activating the app may switch Spaces by itself.
     // ponytail: fixed wait for the Space slide; wait for the active Space to change if 0.5 s is too short or too long.
-    if let number = spaces().first(where: { listed.spaces.contains($0.id) })?.number, switchToSpace(number) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { focus(listed.win) }
+    if let number = spaces().first(where: { listed.spaces.contains($0.id) })?.number,
+       instant ? switchSpaceInstant(to: number) : switchToSpace(number) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + (instant ? 0.3 : 0.5)) { focus(listed.win) }
     } else {
         focus(listed.win)
     }

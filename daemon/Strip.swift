@@ -72,6 +72,8 @@ func rubberBand(_ over: CGFloat, _ dimension: CGFloat) -> CGFloat {
     return over < 0 ? -pulled : pulled
 }
 
+var instantMoves = false  // a `--instant` request is being handled: "M" instead of "S", with the usual bookkeeping
+
 // immediate: "M" moves right away (used while the finger is down). Otherwise "S" sets a target and the payload eases there.
 func layout(immediate: Bool) {
     let screen = CGDisplayBounds(CGMainDisplayID())
@@ -90,7 +92,7 @@ func layout(immediate: Bool) {
     if !immediate { stripOffset = clamped }
     send(wins.enumerated().map { index, win in
         let x = centerX + columnCenters[index] - offset - win.frame.width / 2
-        return "\(immediate ? "M" : "S") \(win.id) \(x) \(top)"
+        return "\(immediate || instantMoves ? "M" : "S") \(win.id) \(x) \(top)"
     })
     guard !immediate else { return }
     saveStrips()

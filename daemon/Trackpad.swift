@@ -39,7 +39,8 @@ var overviewSwipeTime: CFTimeInterval = 0
 var lastTouchCount: Int32 = 0
 
 // Main thread. center is the normalized (0...1) centroid of the touches, or nil when there are none.
-func touchFrame(count: Int32, center: CGPoint?) {
+// time is the trackpad's own (seconds): frames reach the main thread in bunches, which made speeds jump.
+func touchFrame(count: Int32, center: CGPoint?, time: CFTimeInterval = 0) {
     defer { lastTouchCount = count }
     if count == overviewFingers, let center {
         // The centroid jumps when a finger lands, so the swipe counts from the first frame with four.
@@ -51,18 +52,17 @@ func touchFrame(count: Int32, center: CGPoint?) {
                     overviewSwiping = true
                     overviewSwipeProgress = overviewOpen ? 1 : 0
                     overviewSwipeVelocity = 0
-                    overviewSwipeTime = CACurrentMediaTime()
+                    overviewSwipeTime = time
                     beginOverviewSwipe()
                     // The travel before the threshold counts too, so the overview moves from the first frame.
                     overviewSwipeProgress += overviewSwipeTravel / overviewSwipeDistance
                     followOverviewSwipe(progress: overviewSwipeProgress, velocity: 0)
                 }
             } else {
-                let now = CACurrentMediaTime()
                 let delta = dy / overviewSwipeDistance
                 overviewSwipeProgress += delta
-                overviewSwipeVelocity = overviewSwipeVelocity * 0.5 + delta / CGFloat(max(now - overviewSwipeTime, 1.0 / 240)) * 0.5
-                overviewSwipeTime = now
+                overviewSwipeVelocity = overviewSwipeVelocity * 0.5 + delta / CGFloat(max(time - overviewSwipeTime, 1.0 / 240)) * 0.5
+                overviewSwipeTime = time
                 followOverviewSwipe(progress: overviewSwipeProgress, velocity: overviewSwipeVelocity)
             }
         }
@@ -95,11 +95,10 @@ func touchFrame(count: Int32, center: CGPoint?) {
     defer { lastCenter = center }
     if spaceSwiping, let last = lastCenter {
         // Fingers up: the Space below comes up into view, so content follows the fingers.
-        let now = CACurrentMediaTime()
         let delta = (center.y - last.y) / spaceSwipeDistance
         spaceSwipeFocus += delta
-        spaceSwipeVelocity = spaceSwipeVelocity * 0.5 + delta / CGFloat(max(now - spaceSwipeTime, 1.0 / 240)) * 0.5
-        spaceSwipeTime = now
+        spaceSwipeVelocity = spaceSwipeVelocity * 0.5 + delta / CGFloat(max(time - spaceSwipeTime, 1.0 / 240)) * 0.5
+        spaceSwipeTime = time
         followSpaceSwipe(focus: spaceSwipeFocus, velocity: spaceSwipeVelocity)
         return
     }
@@ -114,7 +113,7 @@ func touchFrame(count: Int32, center: CGPoint?) {
             spaceSwiping = true
             spaceSwipeFocus = beginSpaceSwipe() + swipeTravel.y / spaceSwipeDistance  // travel so far counts
             spaceSwipeVelocity = 0
-            spaceSwipeTime = CACurrentMediaTime()
+            spaceSwipeTime = time
             followSpaceSwipe(focus: spaceSwipeFocus, velocity: 0)
             return
         }
@@ -135,7 +134,7 @@ typealias ContactCallback = @convention(c) (OpaquePointer?, UnsafeMutableRawPoin
 // Runs on a MultitouchSupport thread. Each touch is a 96-byte MTTouch; the normalized position is two floats at offset 32.
 // The list also holds contacts that are hovering, lifting or lingering after a lift (state at offset 20);
 // counting those made a quick second swipe look like 5 or 6 fingers. Only MakeTouch (3) and Touching (4) count.
-let contactCallback: ContactCallback = { _, touches, contacts, _, _, _ in
+let contactCallback: ContactCallback = { _, touches, contacts, time, _, _ in
     var count: Int32 = 0
     var x: Float = 0, y: Float = 0
     if let touches {
@@ -149,7 +148,7 @@ let contactCallback: ContactCallback = { _, touches, contacts, _, _, _ in
     }
     fingerCount = count
     let center = count > 0 ? CGPoint(x: CGFloat(x / Float(count)), y: CGFloat(y / Float(count))) : nil
-    DispatchQueue.main.async { touchFrame(count: count, center: center) }
+    DispatchQueue.main.async { touchFrame(count: count, center: center, time: time) }
     return 0
 }
 

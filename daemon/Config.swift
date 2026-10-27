@@ -3,10 +3,11 @@
 
 import Cocoa
 
-// Top level: numbers (missing: 0) and flags (missing: false). [bindings]: key bindings (missing: the default below).
+// Top level: numbers (missing: 0), flags (missing: false) and choices (missing: the first). [bindings]: key bindings (missing: the default below).
 // [[rule]]: app rules, see Rules.swift. Unknown keys and bad values are reported and skipped.
 let numberKeys = ["gap", "padding-top", "padding-bottom", "padding-left", "padding-right", "resize-step"]
 let flagKeys = ["launch-at-login"]
+let choiceKeys = ["overview-background": ["none", "blur"]]
 let bindingDefaults = ["overview": "option+o", "grow-width": "option+=", "shrink-width": "option+-",
                        "move-left": "option+shift+h", "move-right": "option+shift+l"]
     .merging((1...9).map { ("move-to-space-\($0)", "option+shift+\($0)") }) { a, _ in a }
@@ -22,6 +23,7 @@ padding-left = 24
 padding-right = 24
 resize-step = 10          # width step, % of screen width
 launch-at-login = false   # start Nori.app at login
+overview-background = "none"  # behind the overview's Spaces: "none" (black) or "blur" (the wallpaper, blurred)
 
 [bindings]
 overview = "option+o"
@@ -63,10 +65,11 @@ func readConfig() -> (values: [String: String], rules: [Rule]) {
         switch (entry.table, entry.value) {
         case ("", .number(let n)) where numberKeys.contains(entry.key): values[entry.key] = String(n)
         case ("", .bool(let b)) where flagKeys.contains(entry.key): values[entry.key] = String(b)
+        case ("", .string(let s)) where choiceKeys[entry.key]?.contains(s) == true: values[entry.key] = s
         case ("bindings", .string(let s)) where bindingDefaults[entry.key] != nil && chord(s) != nil: values[entry.key] = s
         case ("rule", _) where entry.index != nil: ruleTables[entry.index!, default: [:]][entry.key] = entry.value
         default:
-            report(entry.line, "skipping \(entry.key): unknown key or bad value. Top level: \((numberKeys + flagKeys).joined(separator: ", ")); "
+            report(entry.line, "skipping \(entry.key): unknown key or bad value. Top level: \((numberKeys + flagKeys + choiceKeys.keys).joined(separator: ", ")); "
                 + "[bindings]: \(bindingDefaults.keys.sorted().joined(separator: ", ")); [[rule]]: app, space, floating, ignore")
         }
     }
@@ -85,6 +88,7 @@ var rules: [Rule] { configFile.rules }
 
 func number(_ key: String) -> CGFloat { CGFloat(Double(config[key] ?? "") ?? 0) }
 var launchAtLogin: Bool { config["launch-at-login"] == "true" }
+var overviewBlur: Bool { config["overview-background"] == "blur" }
 var gap: CGFloat { number("gap") }
 var paddingTop: CGFloat { number("padding-top") }
 var paddingBottom: CGFloat { number("padding-bottom") }

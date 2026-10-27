@@ -22,6 +22,7 @@ padding-left = 24
 padding-right = 24
 resize-step = 10          # Opt+= / Opt+- width step, % of screen width
 launch-at-login = false   # add Nori.app to Login Items (only the app bundle, move it to /Applications first)
+overview-background = "none"  # behind the overview's Spaces: "none" (black) or "blur" (the wallpaper, blurred, dimmed 30%)
 
 [bindings]
 overview = "option+o"
@@ -36,7 +37,7 @@ app = "Telegram"
 space = 3
 ```
 
-Top-level keys are only `gap`, `padding-top`, `padding-bottom`, `padding-left`, `padding-right`, `resize-step` (numbers) and `launch-at-login` (true/false). A missing number is 0, except `resize-step`, which is 10.
+Top-level keys are only `gap`, `padding-top`, `padding-bottom`, `padding-left`, `padding-right`, `resize-step` (numbers), `launch-at-login` (true/false) and `overview-background` ("none" or "blur", default "none"). A missing number is 0, except `resize-step`, which is 10.
 
 ## Bindings
 
