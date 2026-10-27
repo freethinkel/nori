@@ -53,6 +53,12 @@ final class MenuActions: NSObject, NSMenuDelegate {
     }
 
     @objc func reloadConfig() { reloadSettings() }
+
+    // config.default.toml: every setting with its default, rewritten on each start, for a config from an older version.
+    @objc func showAllSettings() {
+        writeDefaultConfig()
+        _ = shell("/usr/bin/open", ["-t", defaultConfigPath])
+    }
     @objc func reloadPayload() { loadPayload() }
 
     // Whether the payload answers in Dock, under the item that reloads it; a socket connect, so read on each open.
@@ -84,6 +90,7 @@ func menu() -> NSMenu {
         ("Settings…", #selector(MenuActions.openSettings), ","),
         ("Open Config", #selector(MenuActions.openConfig), ""),
         ("Reload Config", #selector(MenuActions.reloadConfig), "r"),
+        ("Show All Settings", #selector(MenuActions.showAllSettings), ""),
     ] {
         menu.addItem(withTitle: title, action: action, keyEquivalent: key).target = menuActions
     }

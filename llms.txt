@@ -8,7 +8,7 @@
 2. Give back the whole edited file, or only the lines to add, with a comment on each changed line.
 3. Tell them to save it and choose "Reload Config" (⌘R) in nori's menu bar item, or run `nori reload`. Mistakes don't crash nori: it prints a warning to stderr, skips that line and applies the rest.
 
-The menu item "Open Config" opens the file, and creates it with every setting and its default if it's missing. "Settings…" (⌘,) edits the same settings, bindings and rules in a window, applies each change at once and writes it into the file without touching the rest, so the person can also do it there instead.
+The menu item "Open Config" opens the file, and creates it with every setting and its default if it's missing. `~/.config/nori/config.default.toml` (menu item "Show All Settings") always holds every setting of the installed version with its default and a comment; nori rewrites it on every start and never reads it. "Settings…" (⌘,) edits the same settings, bindings and rules in a window, applies each change at once and writes it into config.toml without touching the rest, so the person can also do it there instead.
 
 ## The file
 

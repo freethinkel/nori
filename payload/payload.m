@@ -2,7 +2,8 @@
 // Lines: "S wid x y"         set target; payload eases the window there
 //        "T wid a b c d tx ty"  transform
 //        "M wid x y"           move (immediate)
-//        "A wid alpha"         alpha
+//        "A wid alpha"         alpha (immediate)
+//        "E wid from to"       alpha eases from `from` to `to`, on the same curve as S
 //        "O wid order rel"     order
 //        "D wid m11 m12 … m44"  3D transform (CATransform3D, row by row); identity resets
 //        "Y spring target goal sid0 sid1 …"  Space layout, see step_layout: desktops of the display top to bottom,
@@ -186,6 +187,21 @@ static void anim_drop(uint32_t wid)
     }
 }
 
+// Alpha fades ("E"). The start comes from the daemon: it set the alpha it is fading from, so nothing is read back.
+typedef struct {
+    uint32_t wid;
+    float cur, goal;
+} fade_t;
+static fade_t fades[MAX_ANIMS];
+static int fade_count;
+
+static void fade_drop(uint32_t wid)
+{
+    for (int i = 0; i < fade_count; i++) {
+        if (fades[i].wid == wid) { fades[i] = fades[--fade_count]; return; }
+    }
+}
+
 static void spring(double *x, double *velocity, double goal, double dt)
 {
     double stiffness = pow(2 * M_PI / SPRING_RESPONSE, 2), friction = 4 * M_PI * SPRING_DAMPING / SPRING_RESPONSE;
@@ -295,6 +311,14 @@ static void step_layout(double dt)
 static void tick(double frame)
 {
     if (layout_count) step_layout(frame);
+    int kept_fades = 0;
+    for (int i = 0; i < fade_count; i++) {
+        fade_t f = fades[i];
+        f.cur += (f.goal - f.cur) * 0.25f;
+        if (fabsf(f.goal - f.cur) < 0.005f) f.cur = f.goal; else fades[kept_fades++] = f;
+        SLSSetWindowAlpha(SLSMainConnectionID(), f.wid, f.cur);
+    }
+    fade_count = kept_fades;
     if (!anim_count && !resize_count) return;
     CFTypeRef transaction = SLSTransactionCreate(SLSMainConnectionID());
     if (!transaction) return;
@@ -423,7 +447,22 @@ static void handle_line(char *line)
     case 'A': {
         float alpha;
         if (sscanf(line + 1, "%u %f", &wid, &alpha) == 2) {
+            fade_drop(wid);  // a running fade would overwrite it next frame
             SLSSetWindowAlpha(cid, wid, alpha);
+        }
+        break;
+    }
+    case 'E': {
+        float from, to;
+        if (sscanf(line + 1, "%u %f %f", &wid, &from, &to) == 3) {
+            fade_t *f = NULL;
+            for (int i = 0; i < fade_count; i++) if (fades[i].wid == wid) f = &fades[i];
+            if (!f) {
+                if (fade_count == MAX_ANIMS) { SLSSetWindowAlpha(cid, wid, to); break; }
+                f = &fades[fade_count++];
+                *f = (fade_t){ wid, from, to };
+            }
+            f->goal = to;  // a running fade keeps its current alpha and turns to the new goal
         }
         break;
     }
