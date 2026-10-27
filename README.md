@@ -57,6 +57,7 @@ After that nori lives in the menu bar.
 | Check for Updates… | asks GitHub for a newer release; becomes "Update to vX" once one is found. Only in a released (Developer ID) app |
 | Open Config | opens `~/.config/nori/config.toml` in your text editor, creating it with every setting if needed |
 | Reload Config, ⌘R | reads the config again and lays the windows out with it |
+| Show All Settings | opens `~/.config/nori/config.default.toml`: every setting of this version with its default and a comment. nori rewrites it on every start, so a config from an older version can look up what is new |
 | Restart Dock and Reload Payload | use it after a rebuild, so Dock runs the new payload. The line under it says whether the payload is running in Dock |
 | Quit nori, ⌘Q | puts Spaces and windows back and quits. The payload stays in Dock and does nothing |
 
@@ -135,7 +136,7 @@ Every row with a config name can be rebound in `[bindings]`, or unbound with `"n
 
 To have an assistant write it for you, give it [llms.txt](llms.txt) (raw: `https://raw.githubusercontent.com/freethinkel/nori/main/llms.txt`) and say what you want.
 
-nori reads `~/.config/nori/config.toml`, a [TOML](https://toml.io) file, at start and on "Reload Config". If the file doesn't exist, nori writes it first with every setting and its default. If it meets a key it doesn't know or a value of the wrong kind, it prints a warning to stderr, skips that line and applies the rest.
+nori reads `~/.config/nori/config.toml`, a [TOML](https://toml.io) file, at start and on "Reload Config". If the file doesn't exist, nori writes it first with every setting, its default and a comment on what it does; optional ones are commented out. The same text is always in `config.default.toml` next to it, rewritten on every start. If it meets a key it doesn't know or a value of the wrong kind, it prints a warning to stderr, skips that line and applies the rest.
 
 ```toml
 gap = 16                  # between windows, in points

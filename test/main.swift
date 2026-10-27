@@ -67,3 +67,23 @@ assert(ruleMatching(["Finder"], title: title("Picture in Picture"), in: safari) 
 assert(asked == 3, "\(asked)")
 
 print("rules: ok")
+
+// The default config (Config.swift) parses without a warning, only sets known keys to valid values, and names every
+// setting and binding, commented out or not, so a new setting can't be left out of it.
+errors = []
+for entry in parse(defaultConfig) {
+    switch (entry.table, entry.value) {
+    case ("", .number): assert(numberKeys.contains(entry.key), entry.key)
+    case ("", .bool): assert(flagKeys.contains(entry.key), entry.key)
+    case ("", .string(let s)): assert(choiceKeys[entry.key]?.contains(s) == true || modifierKeys.contains(entry.key) && modifiers(s) != nil, entry.key)
+    case ("bindings", .string(let s)): assert(bindingDefaults[entry.key] == s, entry.key)
+    default: assertionFailure("\(entry.table).\(entry.key)")
+    }
+}
+assert(errors.isEmpty, "\(errors)")
+for key in numberKeys + flagKeys + choiceKeys.keys + modifierKeys + bindingDefaults.keys {
+    assert(defaultConfig.split(separator: "\n").contains { $0.hasPrefix("\(key) = ") || $0.hasPrefix("# \(key) = ") }, "missing \(key)")
+}
+for key in ["app", "title", "space", "floating", "ignore", "width"] { assert(defaultConfig.contains("#   \(key) "), "missing rule \(key)") }
+
+print("default config: ok")

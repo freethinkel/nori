@@ -19,70 +19,102 @@ let bindingDefaults = ["focus-left": "option+h", "focus-right": "option+l", "foc
     .merging((1...9).map { ("move-to-space-\($0)", "option+shift+\($0)") }) { a, _ in a }
 let configPath = NSHomeDirectory() + "/.config/nori/config.toml"
 
-// Written where there is no config yet (first launch, "Open Config"), so every setting is there to edit.
+let defaultConfigPath = NSHomeDirectory() + "/.config/nori/config.default.toml"
+
+// Every setting with its default and what it does. Written as config.toml where there is none yet (first launch,
+// "Open Config"), and as config.default.toml on every start and reload, so a config from an older version can look up
+// what is new ("Show All Settings"). Settings that change nothing at their default are commented out.
 let defaultConfig = """
-# nori, see "Config" in the README
-gap = 16                  # between windows, in points
-padding-top = 40          # from the menu bar
-padding-bottom = 0        # from the Dock or the bottom of the screen
+# nori config. Save, then choose "Reload Config" (⌘R) in nori's menu bar item or run `nori reload`.
+# A line starting with # is off: remove the # to turn it on. A key nori doesn't know, or a bad value, is skipped
+# with a warning, and the rest still applies.
+# Every setting of the running version, with its default: config.default.toml next to this file, or
+# "Show All Settings" in the menu. More in the README: https://github.com/freethinkel/nori#config
+
+# Space around windows, in points.
+gap = 16                  # between two windows
+padding-top = 40          # below the menu bar
+padding-bottom = 0        # above the Dock, or the bottom of the screen
 padding-left = 24
 padding-right = 24
-resize-step = 10          # width step, % of screen width
-launch-at-login = false   # start Nori.app at login
-overview-background = "none"  # behind the overview's Spaces: "none" (black) or "blur" (the wallpaper, blurred)
-center-focused-column = "always"  # "always", "never" (scroll only to show it whole) or "on-overflow"
-always-center-single-column = false  # a lone window in the center, whatever center-focused-column says
-wrap-around = false       # focus-left on the first column goes to the last, focus-space-up on the first Space to the last
-inactive-opacity = 1.0    # opacity of the strip's unfocused windows, 0.1 to 1
-mouse-modifier = "option" # held for a left drag to move a window, a right drag to resize it
 
-[bindings]                # "none" unbinds an action
-focus-left = "option+h"
+# Where the strip puts the focused window:
+#   "always"       in the center of the screen
+#   "never"        the strip scrolls only as far as it takes to show the window whole
+#   "on-overflow"  in the center when it doesn't fit beside the window focus came from, else like "never"
+center-focused-column = "always"
+# always-center-single-column = true   # a lone window in the center, whatever the setting above says
+
+resize-step = 10          # how much grow-width and shrink-width change a window, in % of the screen width
+
+# wrap-around = true          # focus past the last window or Space goes round to the first one
+# inactive-opacity = 0.85     # windows without focus fade to this opacity, 0.1 to 1. Default 1: off
+# overview-background = "blur"  # the wallpaper, blurred, behind the overview's Spaces. Default "none": black
+# mouse-modifier = "ctrl+option"  # held for a left drag (move a window) or a right drag (resize it). Default "option"
+# launch-at-login = true      # start Nori.app at login. Move the app to /Applications first
+
+# Key bindings: modifiers and one key joined by "+". Modifiers: option, ctrl, cmd, shift. Keys: a to z, 0 to 9,
+# - = , . and left, right, up, down. Keys are physical keys on the US layout, so a binding stays put in any
+# keyboard layout. "none" turns a binding off. Each action is also a command, see `nori help`.
+# Option+1…9 aren't here: they are macOS's "Switch to Desktop N" shortcuts, set in System Settings → Keyboard →
+# Keyboard Shortcuts → Mission Control, and nori animates them.
+[bindings]
+focus-left = "option+h"             # the window to the left / right
 focus-right = "option+l"
-focus-first = "ctrl+option+h"
+focus-first = "ctrl+option+h"       # the first / last window of the strip
 focus-last = "ctrl+option+l"
-focus-space-down = "option+j"
+focus-space-down = "option+j"       # the Space below / above
 focus-space-up = "option+k"
-center-column = "option+c"          # scroll the focused window to the center
-overview = "option+o"
-grow-width = "option+="
+center-column = "option+c"          # scroll the focused window to the center, once
+overview = "option+o"               # all Spaces of the display, with live windows
+grow-width = "option+="             # focused window wider / narrower by resize-step
 shrink-width = "option+-"
-cycle-width-forward = "option+."    # 1/3, 1/2, 2/3 of the screen
+cycle-width-forward = "option+."    # focused window to the next of 1/3, 1/2, 2/3 of the screen
 cycle-width-backward = "option+,"
-toggle-full-width = "option+shift+f"
-move-left = "option+shift+h"
+toggle-full-width = "option+shift+f"  # full width, and back
+move-left = "option+shift+h"        # focused window trades places with its neighbour
 move-right = "option+shift+l"
-move-to-space-down = "option+shift+j"
+move-to-space-down = "option+shift+j"  # send the focused window to the Space below / above
 move-to-space-up = "option+shift+k"
-\((1...9).map { "move-to-space-\($0) = \"option+shift+\($0)\"" }.joined(separator: "\n"))
+\((1...9).map { "move-to-space-\($0) = \"option+shift+\($0)\"" + ($0 == 1 ? "   # send the focused window to Desktop 1, and so on" : "") }.joined(separator: "\n"))
 
-# App rules: app is a name or bundle id, title a regular expression; the first matching rule wins.
+# App rules. One [[rule]] table each; the first rule that matches a window wins.
+#   app       the app's name or bundle id, any case. Find them with:
+#             nori query windows | jq -r '.[] | "\\(.app)\\t\\(.bundleId)"' | sort -u
+#   title     optional: a regular expression the window title must contain, any case
+# and at least one of:
+#   space     new windows of the app go to Desktop N, once; move one back by hand and it stays
+#   floating  true: its windows stay out of the strip, where you put them
+#   ignore    true: nori doesn't move or list its windows at all
+#   width     new windows take N % of the screen width, once
+# Raycast, Alfred, Spotlight and LaunchBar are ignored without a rule.
+#
 # [[rule]]
 # app = "Telegram"
-# space = 3              # new windows go to Desktop 3
+# space = 3
 #
 # [[rule]]
-# app = "com.apple.finder"
-# floating = true        # windows stay out of the strip
-#
-# [[rule]]
-# app = "Raycast"
-# ignore = true          # nori doesn't move or list its windows
+# app = "com.apple.calculator"
+# floating = true
 #
 # [[rule]]
 # app = "Ghostty"
-# width = 50             # new windows take half the screen width, in %
+# width = 50
 #
 # [[rule]]
 # app = "Safari"
-# title = "Picture in Picture"
+# title = "Picture in Picture"   # only this Safari window floats, the others stay in the strip
 # floating = true
 
 """
 
 func writeDefaultConfig() {
+    let folder = (configPath as NSString).deletingLastPathComponent
+    try? FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+    if (try? String(contentsOfFile: defaultConfigPath, encoding: .utf8)) != defaultConfig {
+        try? defaultConfig.write(toFile: defaultConfigPath, atomically: true, encoding: .utf8)
+    }
     guard !FileManager.default.fileExists(atPath: configPath) else { return }
-    try? FileManager.default.createDirectory(atPath: (configPath as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
     try? defaultConfig.write(toFile: configPath, atomically: true, encoding: .utf8)
 }
 
