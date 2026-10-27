@@ -2,6 +2,8 @@
 
 nori is a scrolling window manager for macOS, modeled on [niri](https://github.com/YaLTeR/niri). Windows stand side by side as columns on a horizontal strip, and the focused one sits in the middle of the screen.
 
+![nori scrolls the strip, opens and moves windows, resizes a column, slides between Spaces and opens the overview](docs/demo.webp)
+
 It's a prototype. WindowServer moves the windows, not Accessibility. A dylib loaded into Dock calls private SkyLight functions every frame, so animations run on vsync and a slow app can't make them stutter. The price is that part of System Integrity Protection has to be off.
 
 ## Features
@@ -282,6 +284,16 @@ nori sees the titles of windows on other Spaces only with Screen Recording permi
 - nori learns about new windows and focus changes from Accessibility and NSWorkspace notifications. If a window closes and focus doesn't move, nori notices on its next poll, up to a second later.
 - Main display only.
 - On quit, windows go back to where they were before nori. Windows of the current Space get their size back too; Accessibility doesn't reach other Spaces, so windows there keep the size nori gave them. After a crash windows stay where nori put them until the next nori quits: it remembers their frames in `~/Library/Application Support/nori/strips.json`.
+
+## Analytics
+
+To know how many people run it, nori sends one anonymous `active` event a day to a self-hosted [Aptabase](https://aptabase.com): the nori and macOS versions, nothing about your windows, apps or keys. Aptabase keeps the country, not the IP address. To turn it off, set `DO_NOT_TRACK=1`: `launchctl setenv DO_NOT_TRACK 1` before nori starts for the app (until the next login), or `DO_NOT_TRACK=1 build/nori` in a terminal.
+
+## Credits
+
+- [niri](https://github.com/YaLTeR/niri) is the model. The strip with the focused column in the middle, Spaces stacked vertically, the overview and most of the keys come from it.
+- [yabai](https://github.com/koekeishiya/yabai) showed how to get code into Dock. `loader/loader.m` is yabai's, the SIP steps follow its wiki, and much of what nori knows about SkyLight started there.
+- [OmniWM](https://github.com/OmniNull/OmniWM) does niri's strip on macOS too. nori follows it in which windows join the strip, in reading the trackpad through MultitouchSupport, in width presets and full width, in snap points for center-focused-column, and in how `nori subscribe` behaves.
 
 ## License
 
