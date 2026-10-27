@@ -46,7 +46,7 @@ func listWindows(_ options: CGWindowListOption) -> [Listed] {
         guard info[kCGWindowLayer as String] as? Int == 0,
               (info[kCGWindowAlpha as String] as? Double ?? 1) > 0,
               let id = info[kCGWindowNumber as String] as? UInt32,
-              let pid = info[kCGWindowOwnerPID as String] as? pid_t,
+              let pid = info[kCGWindowOwnerPID as String] as? pid_t, pid != getpid(),  // the Settings window
               let bounds = info[kCGWindowBounds as String] as? [String: CGFloat],
               let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary),
               frame.width >= 50, frame.height >= 50,

@@ -3,9 +3,10 @@
 
 import Cocoa
 
-// Top level: numbers (missing: 0), flags (missing: false) and choices (missing: the first). [bindings]: key bindings (missing: the default below).
+// Top level: numbers (missing: numberDefaults, else 0), flags (missing: false) and choices (missing: the first). [bindings]: key bindings (missing: the default below).
 // [[rule]]: app rules, see Rules.swift. Unknown keys and bad values are reported and skipped.
 let numberKeys = ["gap", "padding-top", "padding-bottom", "padding-left", "padding-right", "resize-step", "inactive-opacity"]
+let numberDefaults: [String: Double] = ["resize-step": 10, "inactive-opacity": 1]  // the rest: 0
 let flagKeys = ["launch-at-login", "always-center-single-column", "wrap-around"]
 let choiceKeys = ["overview-background": ["none", "blur"], "center-focused-column": ["always", "never", "on-overflow"]]
 let modifierKeys = ["mouse-modifier"]  // modifiers joined by "+", at least one
@@ -17,7 +18,8 @@ let bindingDefaults = ["focus-left": "option+h", "focus-right": "option+l", "foc
                        "move-left": "option+shift+h", "move-right": "option+shift+l",
                        "move-to-space-down": "option+shift+j", "move-to-space-up": "option+shift+k"]
     .merging((1...9).map { ("move-to-space-\($0)", "option+shift+\($0)") }) { a, _ in a }
-let configPath = NSHomeDirectory() + "/.config/nori/config.toml"
+// NORI_CONFIG: another file, to try settings out without touching your own.
+let configPath = ProcessInfo.processInfo.environment["NORI_CONFIG"] ?? NSHomeDirectory() + "/.config/nori/config.toml"
 
 // Written where there is no config yet (first launch, "Open Config"), so every setting is there to edit.
 let defaultConfig = """
@@ -119,7 +121,7 @@ var configFile = readConfig()
 var config: [String: String] { configFile.values }
 var rules: [Rule] { configFile.rules + builtinRules }
 
-func number(_ key: String) -> CGFloat { CGFloat(Double(config[key] ?? "") ?? 0) }
+func number(_ key: String) -> CGFloat { CGFloat(config[key].flatMap(Double.init) ?? numberDefaults[key] ?? 0) }
 var launchAtLogin: Bool { config["launch-at-login"] == "true" }
 var overviewBlur: Bool { config["overview-background"] == "blur" }
 var gap: CGFloat { number("gap") }
@@ -127,11 +129,11 @@ var paddingTop: CGFloat { number("padding-top") }
 var paddingBottom: CGFloat { number("padding-bottom") }
 var paddingLeft: CGFloat { number("padding-left") }
 var paddingRight: CGFloat { number("padding-right") }
-var resizeStep: CGFloat { config["resize-step"].flatMap(Double.init).map { CGFloat($0) } ?? 10 }  // percent of the usable width
+var resizeStep: CGFloat { number("resize-step") }  // percent of the usable width
 var centerFocusedColumn: String { config["center-focused-column"] ?? "always" }  // see Scroll.swift
 var alwaysCenterSingleColumn: Bool { config["always-center-single-column"] == "true" }
 var wrapAround: Bool { config["wrap-around"] == "true" }
-var inactiveOpacity: Float { Float(min(max(config["inactive-opacity"].flatMap(Double.init) ?? 1, 0.1), 1)) }  // 1: off
+var inactiveOpacity: Float { Float(min(max(number("inactive-opacity"), 0.1), 1)) }  // 1: off
 var mouseModifier: CGEventFlags { config["mouse-modifier"].flatMap(modifiers) ?? .maskAlternate }
 
 // Bindings: modifiers and one key joined by "+", e.g. "option+o", "ctrl+shift+1". Keys are letters, digits, "-", "=", ",", "."

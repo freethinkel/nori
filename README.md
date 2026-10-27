@@ -53,6 +53,7 @@ After that nori lives in the menu bar.
 | Menu item | What it does |
 |---|---|
 | Check for Updates… | asks GitHub for a newer release; becomes "Update to vX" once one is found. Only in a released (Developer ID) app |
+| Settings…, ⌘, | a window with every setting, key binding and app rule. See [Config](#config) |
 | Open Config | opens `~/.config/nori/config.toml` in your text editor, creating it with every setting if needed |
 | Reload Config, ⌘R | reads the config again and lays the windows out with it |
 | Restart Dock and Reload Payload | use it after a rebuild, so Dock runs the new payload. The line under it says whether the payload is running in Dock |
@@ -83,6 +84,8 @@ make run    # stops a running nori, restarts Dock, loads the payload with sudo, 
 ```
 
 Ctrl+C stops it. If you only changed the daemon, Dock needs no restart. Press Ctrl+C and run `build/nori` again.
+
+`NORI_CONFIG=/path/to/config.toml build/nori` reads and writes that file instead of `~/.config/nori/config.toml`, to try settings out without touching yours.
 
 ### Releases
 
@@ -132,6 +135,8 @@ Every row with a config name can be rebound in `[bindings]`, or unbound with `"n
 ## Config
 
 To have an assistant write it for you, give it [llms.txt](llms.txt) (raw: `https://raw.githubusercontent.com/freethinkel/nori/main/llms.txt`) and say what you want.
+
+Or choose Settings… (⌘,) in the menu. The window edits the same file, and each change applies at once, like "Reload Config". It changes a value in its own line and adds a missing key under the last key of its table, so your comments, rules and their order stay as you wrote them. After an edit by hand, "Reload Config" shows it in the window too. On the Layout and Focus pages a preview draws the strip on your wallpaper with the current gap, padding and centering; ◀ ▶ move the focus in it. Hotkeys records a binding when you click it and press the keys: Esc cancels, Delete unbinds, and a binding needs Control, Option or Command. Two actions on the same keys, or an action on a "Switch to Desktop N" shortcut (that one wins), show in red. App Rules lists the `[[rule]]` tables in file order; + adds one for a running app.
 
 nori reads `~/.config/nori/config.toml`, a [TOML](https://toml.io) file, at start and on "Reload Config". If the file doesn't exist, nori writes it first with every setting and its default. If it meets a key it doesn't know or a value of the wrong kind, it prints a warning to stderr, skips that line and applies the rest.
 

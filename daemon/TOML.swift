@@ -19,7 +19,8 @@ struct TOMLEntry {
     var line: Int
 }
 
-func parseTOML(_ text: String, report: (Int, String) -> Void) -> [TOMLEntry] {
+// onHeader hears each [table] or [[table]] line with its index and line number; a malformed one as table "?".
+func parseTOML(_ text: String, onHeader: (String, Int?, Int) -> Void = { _, _, _ in }, report: (Int, String) -> Void) -> [TOMLEntry] {
     var entries: [TOMLEntry] = []
     var table = "", index: Int?
     var arrays: [String: Int] = [:]
@@ -37,11 +38,13 @@ func parseTOML(_ text: String, report: (Int, String) -> Void) -> [TOMLEntry] {
             guard !name.isEmpty, rest.hasPrefix(array ? "]]" : "]"), isEnd(rest.dropFirst(array ? 2 : 1)) else {
                 report(line, "expected [table] or [[table]] with a plain name")
                 table = "?"; index = nil  // its keys are skipped as unknown
+                onHeader(table, index, line)
                 continue
             }
             table = String(name)
             index = array ? arrays[table, default: -1] + 1 : nil
             if array { arrays[table] = index }
+            onHeader(table, index, line)
             continue
         }
 
@@ -116,4 +119,92 @@ private func parseValue(_ text: Substring) -> (TOMLValue, Substring)? {
     guard digits.range(of: #"^[+-]?\d+(\.\d+)?([eE][+-]?\d+)?$"#, options: .regularExpression) != nil,
           let number = Double(digits) else { return nil }
     return (.number(number), after)
+}
+
+// Edits for the Settings window. Only the lines of the key or table in question change: comments, order and keys
+// nori doesn't know stay as written.
+
+// The text with one key set, or with its line gone for nil. The value changes inside its own line and a comment after
+// it keeps its column. A missing key goes under the last key of its table, or under the header of an empty one; a
+// top-level key with no other one goes first in the file, a [table] that isn't there is added at the end.
+func settingTOML(_ text: String, table: String = "", index: Int? = nil, key: String, to value: TOMLValue?) -> String {
+    var lines = text.components(separatedBy: "\n")
+    var headers: [(table: String, index: Int?, line: Int)] = []
+    let entries = parseTOML(text, onHeader: { headers.append(($0, $1, $2)) }, report: { _, _ in })
+        .filter { $0.table == table && $0.index == index }
+    if let entry = entries.first(where: { $0.key == key }) {
+        if let value { lines[entry.line - 1] = replacingValue(lines[entry.line - 1], with: tomlText(value)) } else { lines.remove(at: entry.line - 1) }
+        return lines.joined(separator: "\n")
+    }
+    guard let value else { return text }
+    let line = "\(key) = \(tomlText(value))"
+    if let last = entries.last {
+        lines.insert(line, at: last.line)
+    } else if let header = headers.first(where: { $0.table == table && $0.index == index }) {
+        lines.insert(line, at: header.line)
+    } else if table == "" {
+        lines.insert(line, at: 0)
+    } else if index == nil {
+        return withBlankLine(text) + "[\(table)]\n\(line)\n"
+    }
+    return lines.joined(separator: "\n")
+}
+
+// The text with a new [[name]] table of these keys at the end.
+func appendingTOMLTable(_ text: String, _ name: String, _ keys: [(String, TOMLValue)]) -> String {
+    withBlankLine(text) + "[[\(name)]]\n" + keys.map { "\($0) = \(tomlText($1))\n" }.joined()
+}
+
+// The text without the index-th [[name]] table: its header, everything up to its last key and the blank line above.
+// Comments under its last key stay, as they may be about the table that follows.
+func removingTOMLTable(_ text: String, _ name: String, index: Int) -> String {
+    var lines = text.components(separatedBy: "\n")
+    var headers: [(table: String, index: Int?, line: Int)] = []
+    _ = parseTOML(text, onHeader: { headers.append(($0, $1, $2)) }, report: { _, _ in })
+    guard let header = headers.first(where: { $0.table == name && $0.index == index }) else { return text }
+    let isNote = { (line: String) in line.trimmingCharacters(in: .whitespaces).isEmpty || line.trimmingCharacters(in: .whitespaces).hasPrefix("#") }
+    var end = (headers.first { $0.line > header.line }?.line ?? lines.count + 1) - 1  // its last line, from 1
+    while end > header.line && isNote(lines[end - 1]) { end -= 1 }
+    var start = header.line - 1
+    if start > 0 && lines[start - 1].trimmingCharacters(in: .whitespaces).isEmpty { start -= 1 }
+    lines.removeSubrange(start..<end)
+    return lines.joined(separator: "\n")
+}
+
+// A value as the file spells it: whole numbers without ".0", strings in quotes with escapes.
+func tomlText(_ value: TOMLValue) -> String {
+    switch value {
+    case .bool(let on): return String(on)
+    case .number(let n): return n == n.rounded() && abs(n) < 1e15 ? String(Int(n)) : String(n)
+    case .string(let s):
+        return "\"" + s.unicodeScalars.map { c -> String in
+            switch c {
+            case "\"": return "\\\""
+            case "\\": return "\\\\"
+            case "\n": return "\\n"
+            case "\t": return "\\t"
+            case "\r": return "\\r"
+            default: return c.value < 0x20 || c.value == 0x7f ? String(format: "\\u%04X", c.value) : String(c)
+            }
+        }.joined() + "\""
+    }
+}
+
+// A key's line with another value. Spaces before a comment shrink or grow so the comment stays where it was.
+private func replacingValue(_ line: String, with value: String) -> String {
+    let text = Substring(line)
+    guard let equals = text.firstIndex(of: "=") else { return line }
+    let start = text[text.index(after: equals)...].firstIndex { $0 != " " && $0 != "\t" } ?? text.endIndex
+    guard let (_, after) = parseValue(text[start...]) else { return line }
+    let spaces = after.prefix { $0 == " " || $0 == "\t" }
+    let rest = after.dropFirst(spaces.count)
+    let width = text.distance(from: start, to: after.startIndex) + spaces.count - value.count
+    return String(text[..<start]) + value + (rest.hasPrefix("#") ? String(repeating: " ", count: max(1, width)) : String(spaces)) + rest
+}
+
+// The text ending in a blank line, ready for a table to follow; empty stays empty.
+private func withBlankLine(_ text: String) -> String {
+    guard !text.isEmpty else { return "" }
+    let ended = text.hasSuffix("\n") ? text : text + "\n"
+    return ended.hasSuffix("\n\n") ? ended : ended + "\n"
 }

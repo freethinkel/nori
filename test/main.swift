@@ -22,6 +22,51 @@ assert(entries.map(\.key) == ["b"] && errors.count == 6, "\(errors)")
 
 print("toml: ok")
 
+// In-place edits for the Settings window: a value changes in its own line, the comment after it keeps its column; a
+// missing key goes under the last key of its table; a [[rule]] comes and goes whole; every other line stays.
+let file = """
+    # top
+    gap = 16      # pt
+    name = "a"
+
+    [bindings]
+    focus-left = "option+h"
+
+    [[rule]]
+    app = "A"
+    space = 3
+    # about B
+    [[rule]]
+    app = "B"
+
+    """
+func edit(_ table: String, _ index: Int?, _ key: String, _ value: TOMLValue?) -> String {
+    settingTOML(file, table: table, index: index, key: key, to: value)
+}
+func edit(_ key: String, _ value: TOMLValue?) -> String { edit("", nil, key, value) }
+assert(edit("gap", .number(8)) == file.replacingOccurrences(of: "gap = 16      #", with: "gap = 8       #"))
+assert(edit("gap", .number(1234567)) == file.replacingOccurrences(of: "gap = 16      #", with: "gap = 1234567 #"))
+assert(edit("gap", .number(123456789)) == file.replacingOccurrences(of: "gap = 16      #", with: "gap = 123456789 #"))
+assert(edit("gap", .number(0.75)).contains("gap = 0.75    # pt"))
+assert(edit("name", .string("q\"\\")) == file.replacingOccurrences(of: "name = \"a\"", with: "name = \"q\\\"\\\\\""))
+assert(parse(edit("name", .string("q\"\\ \n"))).first { $0.key == "name" }?.value == .string("q\"\\ \n"))
+assert(edit("wrap-around", .bool(true)) == file.replacingOccurrences(of: "name = \"a\"\n", with: "name = \"a\"\nwrap-around = true\n"))
+assert(edit("bindings", nil, "overview", .string("none")).contains("focus-left = \"option+h\"\noverview = \"none\"\n\n[[rule]]"))
+assert(edit("rule", 0, "space", nil) == file.replacingOccurrences(of: "space = 3\n", with: ""))
+assert(edit("rule", 1, "floating", .bool(true)) == file + "floating = true\n")
+assert(edit("rule", 0, "missing", nil) == file && edit("rule", 5, "app", .string("C")) == file)
+assert(settingTOML("[t]\n", table: "t", key: "k", to: .number(1)) == "[t]\nk = 1\n")
+assert(settingTOML("# only\n", key: "gap", to: .number(1)) == "gap = 1\n# only\n")
+assert(settingTOML("gap = 1", table: "bindings", key: "overview", to: .string("none")) == "gap = 1\n\n[bindings]\noverview = \"none\"\n")
+assert(removingTOMLTable(file, "rule", index: 0) == file.replacingOccurrences(of: "\n[[rule]]\napp = \"A\"\nspace = 3\n", with: ""))
+assert(removingTOMLTable(file, "rule", index: 1) == file.replacingOccurrences(of: "[[rule]]\napp = \"B\"\n", with: ""))
+assert(appendingTOMLTable(file, "rule", [("app", .string("C")), ("ignore", .bool(true))]) == file + "\n[[rule]]\napp = \"C\"\nignore = true\n")
+assert(appendingTOMLTable("", "rule", [("app", .string("C"))]) == "[[rule]]\napp = \"C\"\n")
+errors = []
+assert(parse(appendingTOMLTable(edit("rule", 1, "floating", .bool(true)), "rule", [("app", .string("C"))])).filter { $0.table == "rule" }.map(\.index) == [0, 0, 1, 1, 2] && errors.isEmpty)
+
+print("toml edits: ok")
+
 // A 1000 pt wide screen, gap 10. Three 300 pt columns fit on it, three 600 pt ones don't.
 func strip(_ widths: [CGFloat], _ mode: String, single: Bool = false) -> Scroll {
     Scroll(widths: widths, view: 1000, gap: 10, mode: mode, centerSingle: single)

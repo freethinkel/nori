@@ -36,14 +36,17 @@ func statusIcon() -> NSImage? {
     return image
 }
 
-// "Reload Config" (⌘R) and `nori reload`.
+// "Reload Config" (⌘R), `nori reload` and every change in the Settings window.
 func reloadSettings() {
     configFile = readConfig()
+    settingsModel.refresh()
     applyLaunchAtLogin()
     layout(immediate: false)
 }
 
 final class MenuActions: NSObject, NSMenuDelegate {
+    @objc func openSettings() { showSettings() }
+
     @objc func openConfig() {
         writeDefaultConfig()
         _ = shell("/usr/bin/open", ["-t", configPath])
@@ -78,7 +81,8 @@ func menu() -> NSMenu {
     menu.addItem(updateItem)
     menu.addItem(.separator())
     for (title, action, key) in [
-        ("Open Config", #selector(MenuActions.openConfig), ","),
+        ("Settings…", #selector(MenuActions.openSettings), ","),
+        ("Open Config", #selector(MenuActions.openConfig), ""),
         ("Reload Config", #selector(MenuActions.reloadConfig), "r"),
     ] {
         menu.addItem(withTitle: title, action: action, keyEquivalent: key).target = menuActions

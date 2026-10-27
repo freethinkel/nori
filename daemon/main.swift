@@ -47,6 +47,10 @@ let tap = CGEvent.tapCreate(
             overviewMouseUp(at: event.location)
             return nil
         }
+        if type == .keyDown && settingsModel.recording != nil {  // the Settings window's shortcut recorder takes the press
+            settingsModel.record(event)
+            return nil
+        }
         if type == .keyDown, let number = desktopNumber(for: event) {
             if passDesktopHotkeys > 0 {
                 passDesktopHotkeys -= 1
