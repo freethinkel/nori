@@ -1,0 +1,7 @@
+#!/bin/sh
+# Talks to the nori daemon: nori-msg query windows --app Safari, nori-msg focus right. Commands: README.md.
+# Arguments go joined by tabs, so a name with spaces stays one argument.
+tab=$(printf '\t')
+out=$( (IFS=$tab; printf '%s\n' "$*") | nc -U "/tmp/nori-ctl_$USER.socket") || { echo "nori-msg: nori is not running" >&2; exit 1; }
+case $out in error:*) echo "$out" >&2; exit 1 ;; esac
+[ -z "$out" ] || echo "$out"

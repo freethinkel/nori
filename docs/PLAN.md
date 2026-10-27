@@ -1,11 +1,11 @@
-# niri-mac: план PoC
+# nori: план PoC
 
 Цель: прототип niri-подобного WM для macOS. Колонки, вертикальные воркспейсы, хоткеи. Анимация через WindowServer transform.
 
 ## Структура
 
 - `loader.m` — копия loader из yabai (MIT, src/osax). В шапке указать источник и лицензию.
-- `payload.m` — свой dylib для Dock. Сокет `/tmp/niri-mac_$USER.socket`. Три команды: батч transform на кадр, move, alpha/order.
+- `payload.m` — свой dylib для Dock. Сокет `/tmp/nori_$USER.socket`. Три команды: батч transform на кадр, move, alpha/order.
 - `main.swift` — демон: колонки, вертикальные воркспейсы, хоткеи через CGEvent tap, CVDisplayLink шлёт transform.
 
 ## Шаги

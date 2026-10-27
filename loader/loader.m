@@ -1,5 +1,5 @@
 // Source: https://github.com/koekeishiya/yabai (src/osax/loader.m), MIT License.
-// Copied for niri-mac PoC. Injects payload.dylib into Dock.app.
+// Copied for nori PoC. Injects payload.dylib into Dock.app.
 #include <Cocoa/Cocoa.h>
 #include <mach/mach.h>
 #include <mach/mach_vm.h>

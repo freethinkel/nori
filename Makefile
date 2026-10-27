@@ -3,9 +3,9 @@
 BUILD = build
 SKYLIGHT = -F/System/Library/PrivateFrameworks -framework SkyLight
 
-all: $(BUILD)/niri-mac $(BUILD)/payload.dylib $(BUILD)/loader
+all: $(BUILD)/nori $(BUILD)/payload.dylib $(BUILD)/loader
 
-$(BUILD)/niri-mac: $(wildcard daemon/*.swift) | $(BUILD)
+$(BUILD)/nori: $(wildcard daemon/*.swift) | $(BUILD)
 	swiftc -O $^ -o $@.tmp && mv -f $@.tmp $@
 
 $(BUILD)/payload.dylib: payload/payload.m | $(BUILD)
@@ -19,11 +19,11 @@ $(BUILD):
 
 # Restarts Dock with a fresh payload, then runs the daemon in the foreground.
 run: all
-	-pkill -f $(BUILD)/niri-mac
+	-pkill -f $(BUILD)/nori
 	killall Dock
 	sleep 1
 	sudo $(BUILD)/loader
-	$(BUILD)/niri-mac
+	$(BUILD)/nori
 
 clean:
 	rm -rf $(BUILD)

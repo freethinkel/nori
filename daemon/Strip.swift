@@ -98,7 +98,7 @@ func focusColumn(at index: Int) {
     let i = min(max(0, index), wins.count - 1)
     stripOffset = centers(of: wins)[i]
     layout(immediate: false)
-    NSRunningApplication(processIdentifier: wins[i].pid)?.activate()
+    focus(wins[i])
 }
 
 // Keyboard: one column left or right from the column the strip is closest to.

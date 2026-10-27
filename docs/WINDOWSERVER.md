@@ -1,11 +1,11 @@
 # WindowServer / SkyLight: что найдено
 
-Заметки по приватным API, которые использует или может использовать niri-mac. Проверено на macOS 27 (Darwin 27.0.0), Apple Silicon.
+Заметки по приватным API, которые использует или может использовать nori. Проверено на macOS 27 (Darwin 27.0.0), Apple Silicon.
 «Проверено» = видели своими глазами; «не проверено» = вывод из дизассемблера или догадка.
 
 ## Как смотреть
 
-- Логи payload: `/usr/bin/log show --last 1h --predicate 'process == "Dock" AND eventMessage CONTAINS "niri-mac"' --style compact`.
+- Логи payload: `/usr/bin/log show --last 1h --predicate 'process == "Dock" AND eventMessage CONTAINS "nori"' --style compact`.
   В zsh просто `log` — встроенная команда, она молча ничего не покажет. Нужен полный путь `/usr/bin/log`.
 - Экспорты SkyLight (он в shared cache, `nm` не поможет):
   `dyld_info -exports /System/Library/PrivateFrameworks/SkyLight.framework/SkyLight | awk '{print $NF}' | grep -i <что-то>`
@@ -39,8 +39,22 @@ Transform Space только 2D-аффинный: сдвиг и масштаб �
 `SLSSetSessionSwitchCubeAnimation(bool)` — только флаг «куб при быстром переключении пользователей», уходит на server root port. Для Spaces не годится.
 Вывод: 3D для Space делается только через окна — `SetWindowTransform3D` каждому окну обоих Space (обои — тоже окна).
 
-Хук в `payload/payload.m` (`hook_space_transform`) патчит первые 16 байт `SLSTransactionSetSpaceTransform` в копии SkyLight внутри Dock и превращает горизонтальный сдвиг в вертикальный. Работает: `vertical spaces on (kr=0)`, вызовы видны в логе. Пролог на macOS 27: `pacibsp; stp d9,d8,[sp,#-0x40]!; stp x22,x21,[sp,#0x10]; stp x20,x19,[sp,#0x20]`.
-Чтобы убрать чёрную полосу, нужно так же перехватить `SLSTransactionSetSpaceShape` и двигать клип по вертикали. Не сделано.
+Хук в `payload/payload.m` (`hook`) патчит первые 16 байт функции в копии SkyLight внутри Dock (переход на свой stub, stub подменяет аргумент и выполняет вытесненный пролог). Проверено для `SLSTransactionSetSpaceTransform`: горизонтальный сдвиг превращается в вертикальный, в логе `… hooked (kr=0)`.
+Прологи на macOS 27 (оба без PC-зависимых инструкций, поэтому их можно копировать в stub):
+- `SLSTransactionSetSpaceTransform`: `pacibsp; stp d9,d8,[sp,#-0x40]!; stp x22,x21,[sp,#0x10]; stp x20,x19,[sp,#0x20]`
+- `SLSTransactionSetSpaceShape`: `pacibsp; sub sp,sp,#0x50; stp x22,x21,[sp,#0x20]; stp x20,x19,[sp,#0x30]` (`d503237f d10143ff a90257f6 a9034ff4`)
+
+Хук `SetSpaceShape` переводит горизонтальный клип слайда в вертикальный: берёт bounding box региона и переводит его x-диапазон в y с коэффициентом H/W, как transform. Это должно убрать чёрную полосу. **Не проверено**: в каких координатах регион (экрана или Space до transform), пока лишь предположение, что они согласованы с transform.
+
+Хуки работают, только пока жив демон: демон каждые 2 с шлёт `P <pid>`, хук проверяет `kill(pid, 0)`. После выхода или краша демона Dock снова анимирует сам. Сам патч остаётся до перезапуска Dock.
+
+Сигнатуры (дизассемблер; аргументы видны в lldb при переключении):
+- `SLSTransactionShowSpace(transaction, sid)`, `SLSTransactionHideSpace(transaction, sid)` — по 2 аргумента.
+- `SLSTransactionSetSpaceShape(transaction, sid, CGRegionRef)`. Скрытому Space Dock ставит `kCGRegionEmptyRegion`.
+- `SLSTransactionSetSpaceOrderingWeight(transaction, sid, int)` — Dock ставит 1 новому и 0 старому.
+- Регионы: `CGRegionCreateWithRect(CGRect)`, `CGRegionIsEmpty`, `CGSGetRegionBounds(region, CGRect *)` экспортирует CoreGraphics.
+- `CGSCopyManagedDisplaySpaces(cid)` (линкуется из Swift без SkyLight): массив дисплеев, у каждого `"Spaces"` (`id64`, `ManagedSpaceID`, `type`: 0 рабочий стол, 4 полноэкранный) и `"Current Space"`. Проверено.
+- Дисплей 3008×1692 pt, слайд Dock 3072: Spaces стоят через 64 pt, transform Space в точках. Направление: уходящему вправо Space Dock даёт `tx = −3072`, значит, transform Space, как и у окон, отображает экран → Space.
 
 ## Системные шорткаты Spaces
 
@@ -67,4 +81,10 @@ Transform Space только 2D-аффинный: сдвиг и масштаб �
 ## Идеи, ещё не сделаны
 
 - Свой эффект переключения настоящих Spaces: оставить само переключение Dock (его состояние: Mission Control, строка меню), а в хуке подменять transform и shape обоих Space; для куба — гасить transform Space и вращать окна обоих Space через `SetWindowTransform3D`, прогресс брать из `tx` Dock.
-- Overview как в niri: масштаб окон (или Space) через transform.
+- Overview и своё переключение сделаны, см. раздел «Своя анимация Spaces». По словам пользователя, overview показывает Spaces, то есть ShowSpace нетекущего Space и формула transform работают.
+
+## Своя анимация Spaces: overview и переключение
+
+`step_layout` в `payload/payload.m`, команда `Y spring target goal sid0 sid1 …`. Overview и переключение Space — одна раскладка: Spaces дисплея друг под другом, `focus` — индекс в центре, `progress` 0 — обычные Spaces, 1 — overview (масштаб 0.4, зазор 48). Payload двигает её на каждом тике `CVDisplayLink`: overview — пружиной (response 0.28, damping 0.78, по реальному времени), переключение — как окна (четверть оставшегося пути за кадр). Каждый кадр одна транзакция: ShowSpace + shape на весь дисплей + SetSpaceTransform для каждого Space; эти же transform отдаются хуку вместо значений Dock.
+Сначала кадры считал демон по `Timer` и слал по сокету на каждый кадр — **дёргалось** (таймер не совпадает с vsync, кадры терялись или приходили парой). Анимации Space должны жить в payload, как анимации окон.
+Демон (`daemon/Overview.swift`) перехватывает в event tap все «Switch to Desktop N» (по `com.apple.symbolichotkeys`, читаются при запуске), шлёт `Y` и нажимает тот же шорткат ещё раз (своё нажатие пропускает по счётчику `passDesktopHotkeys`), чтобы Dock сменил текущий Space. Раскладка заканчивается, только когда вернулась к progress 0 и `SLSGetActiveSpace` стал целевым Space (или прошла 1 с): тогда целевой Space без transform, остальные скрыты, хуки снова пропускают Dock.
