@@ -12,6 +12,7 @@ let actions: [String: () -> Void] = [
     "focus-space-up": { switchSpace(by: -1) },
     "center-column": centerColumn,
     "overview": toggleOverview,
+    "show-floating": showFloating,
     "grow-width": { resizeFocused(by: resizeStep) },
     "shrink-width": { resizeFocused(by: -resizeStep) },
     "cycle-width-forward": { cycleWidth(forward: true) },
@@ -34,4 +35,5 @@ let cliActions = [
     "move left": "move-left", "move right": "move-right", "move space down": "move-to-space-down", "move space up": "move-to-space-up",
     "width grow": "grow-width", "width shrink": "shrink-width", "width next": "cycle-width-forward", "width previous": "cycle-width-backward",
     "width toggle-full": "toggle-full-width", "center": "center-column", "overview": "overview",
+    "show floating": "show-floating",
 ]

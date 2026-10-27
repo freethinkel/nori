@@ -163,7 +163,7 @@ let pageCards: [Page: [(title: String, keys: [String])]] = [
                ("Columns", ["focus-left", "focus-right", "focus-first", "focus-last", "center-column", "move-left", "move-right"]),
                ("Width", ["grow-width", "shrink-width", "cycle-width-forward", "cycle-width-backward", "toggle-full-width"]),
                ("Spaces", ["focus-space-down", "focus-space-up", "move-to-space-down", "move-to-space-up"] + (1...9).map { "move-to-space-\($0)" }),
-               ("Overview", ["overview"])],
+               ("Overview", ["overview"]), ("Floating windows", ["show-floating"])],
     .general: [("Startup", ["launch-at-login"]), ("Overview", ["overview-background"])],
 ]
 
@@ -205,6 +205,7 @@ let descriptions: [String: (title: String, help: String)] = [
     "move-to-space-down": ("Move window to the Space below", ""),
     "move-to-space-up": ("Move window to the Space above", ""),
     "overview": ("Overview", "All Spaces of the display, windows live"),
+    "show-floating": ("Show floating windows", "Windows outside the strip come above it; focus stays"),
 ]
 
 func describe(_ key: String) -> (title: String, help: String) {
@@ -587,6 +588,7 @@ func bindingIcon(_ action: String) -> String {
         "cycle-width-forward": "rectangle.righthalf.inset.filled", "cycle-width-backward": "rectangle.lefthalf.inset.filled",
         "toggle-full-width": "arrow.up.left.and.arrow.down.right", "focus-space-down": "arrow.down", "focus-space-up": "arrow.up",
         "move-to-space-down": "arrow.down.square", "move-to-space-up": "arrow.up.square", "overview": "square.grid.2x2",
+        "show-floating": "macwindow.on.rectangle",
     ][action] ?? "keyboard"
 }
 

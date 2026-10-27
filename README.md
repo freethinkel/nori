@@ -132,6 +132,7 @@ Every row with a config name can be rebound in `[bindings]`, or unbound with `"n
 | Opt + right drag (`mouse-modifier`) | resize the window under the pointer. It takes focus, and both edges follow the pointer, or only the right one when `center-focused-column` doesn't center it |
 | Opt+1…5 | Space 1…5. These are the system "Switch to Desktop N" shortcuts, and nori animates the switch itself |
 | Opt+O | overview. Click a Space to pick it and the window under the pointer. Drag a window onto another Space to move it there. Esc or Opt+O closes it. Config name `overview` |
+| Opt+F | every window of this Space outside the strip (floating rules, dialogs, panels, PiP) comes above the strip's. Focus stays where it was. Config name `show-floating` |
 | in the overview: H/L or ←/→, J/K or ↓/↑, Return | move through the centered Space's columns, bring the Space below or above to the center, pick it |
 | 4 fingers up / down | the overview follows the swipe and settles open or closed on lift. This replaces Mission Control on four fingers |
 
@@ -167,6 +168,7 @@ focus-space-down = "option+j"
 focus-space-up = "option+k"
 center-column = "option+c"
 overview = "option+o"
+show-floating = "option+f"
 grow-width = "option+="
 shrink-width = "option+-"
 cycle-width-forward = "option+."
@@ -258,6 +260,7 @@ nori width next|previous                # the next of 1/3, 1/2, 2/3
 nori width toggle-full                  # full width, and back
 nori center                             # scroll the focused window to the center
 nori overview                           # open or close the overview
+nori show floating                      # windows outside the strip above it
 nori reload                             # read the config again, like "Reload Config"
 nori subscribe                          # one line of `query spaces` JSON now and on every change
 nori help

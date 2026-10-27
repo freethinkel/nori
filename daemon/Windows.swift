@@ -118,6 +118,14 @@ func focus(_ win: Win) {
     NSRunningApplication(processIdentifier: win.pid)?.activate()
 }
 
+// Every window of the current Space outside the strip (floating rules, dialogs, panels, PiP) above the strip's, in the
+// order they had among themselves. Through the payload: Dock may order any app's window, and focus stays put.
+func showFloating() {
+    let space = CGSGetActiveSpace(cid)
+    let floating = listWindows(.optionOnScreenOnly).filter { $0.spaces.contains(space) && !columns.contains($0.win.id) }
+    send(floating.reversed().map { "O \($0.win.id) 1 0" })  // back to front, each above all: the frontmost ends on top
+}
+
 // Title without Screen Recording permission, which CGWindowList needs for kCGWindowName. Current Space only.
 func axTitle(_ win: Win) -> String? {
     var value: CFTypeRef?

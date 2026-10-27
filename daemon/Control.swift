@@ -25,6 +25,7 @@ let usage = """
       nori width grow|shrink|next|previous|toggle-full
       nori center
       nori overview
+      nori show floating
       nori reload             read the config again
 
     """
