@@ -125,8 +125,9 @@ private func parseValue(_ text: Substring) -> (TOMLValue, Substring)? {
 // nori doesn't know stay as written.
 
 // The text with one key set, or with its line gone for nil. The value changes inside its own line and a comment after
-// it keeps its column. A missing key goes under the last key of its table, or under the header of an empty one; a
-// top-level key with no other one goes first in the file, a [table] that isn't there is added at the end.
+// it keeps its column. A missing key takes a commented-out line of it, or goes under the last key of its table, or
+// under the header of an empty one; a top-level key with no other one goes first in the file, a [table] that isn't
+// there is added at the end.
 func settingTOML(_ text: String, table: String = "", index: Int? = nil, key: String, to value: TOMLValue?) -> String {
     var lines = text.components(separatedBy: "\n")
     var headers: [(table: String, index: Int?, line: Int)] = []
@@ -137,6 +138,20 @@ func settingTOML(_ text: String, table: String = "", index: Int? = nil, key: Str
         return lines.joined(separator: "\n")
     }
     guard let value else { return text }
+    // The default config has optional settings as "# key = value  # what it does": such a line of the table is turned
+    // back on in place. Not in [[tables]], whose commented-out examples may sit among them.
+    if index == nil {
+        let start = table == "" ? 0 : headers.first { $0.table == table }?.line ?? lines.count
+        let end = (headers.first { $0.line > start }?.line).map { $0 - 1 } ?? lines.count
+        for i in start..<max(start, end) {
+            let rest = lines[i].drop { $0 == " " || $0 == "\t" }
+            guard rest.hasPrefix("#") else { continue }
+            let uncommented = String(rest.dropFirst().drop { $0 == " " || $0 == "\t" })
+            guard uncommented.hasPrefix(key), uncommented.dropFirst(key.count).drop(while: { $0 == " " || $0 == "\t" }).hasPrefix("=") else { continue }
+            let line = replacingValue(uncommented, with: tomlText(value), shift: lines[i].count - uncommented.count)
+            if line != uncommented { lines[i] = line; return lines.joined(separator: "\n") }
+        }
+    }
     let line = "\(key) = \(tomlText(value))"
     if let last = entries.last {
         lines.insert(line, at: last.line)
@@ -190,15 +205,16 @@ func tomlText(_ value: TOMLValue) -> String {
     }
 }
 
-// A key's line with another value. Spaces before a comment shrink or grow so the comment stays where it was.
-private func replacingValue(_ line: String, with value: String) -> String {
+// A key's line with another value. Spaces before a comment shrink or grow so the comment stays where it was, `shift`
+// more for what was cut off the line's start.
+private func replacingValue(_ line: String, with value: String, shift: Int = 0) -> String {
     let text = Substring(line)
     guard let equals = text.firstIndex(of: "=") else { return line }
     let start = text[text.index(after: equals)...].firstIndex { $0 != " " && $0 != "\t" } ?? text.endIndex
     guard let (_, after) = parseValue(text[start...]) else { return line }
     let spaces = after.prefix { $0 == " " || $0 == "\t" }
     let rest = after.dropFirst(spaces.count)
-    let width = text.distance(from: start, to: after.startIndex) + spaces.count - value.count
+    let width = text.distance(from: start, to: after.startIndex) + spaces.count - value.count + shift
     return String(text[..<start]) + value + (rest.hasPrefix("#") ? String(repeating: " ", count: max(1, width)) : String(spaces)) + rest
 }
 

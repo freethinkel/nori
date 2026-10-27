@@ -65,6 +65,13 @@ assert(appendingTOMLTable("", "rule", [("app", .string("C"))]) == "[[rule]]\napp
 errors = []
 assert(parse(appendingTOMLTable(edit("rule", 1, "floating", .bool(true)), "rule", [("app", .string("C"))])).filter { $0.table == "rule" }.map(\.index) == [0, 0, 1, 1, 2] && errors.isEmpty)
 
+// A commented-out "# key = …" line comes back on in place, comment and all; a [[rule]] example doesn't.
+let commented = "# wrap-around = true   # round\ngap = 1\n[bindings]\n# overview = \"option+o\"\n[[rule]]\napp = \"A\"\n# space = 3\n"
+assert(settingTOML(commented, key: "wrap-around", to: .bool(false)) == commented.replacingOccurrences(of: "# wrap-around = true   #", with: "wrap-around = false    #"))
+assert(settingTOML(commented, table: "bindings", key: "overview", to: .string("none")).contains("[bindings]\noverview = \"none\"\n[[rule]]"))
+assert(settingTOML(commented, table: "rule", index: 0, key: "space", to: .number(2)).hasSuffix("app = \"A\"\nspace = 2\n# space = 3\n"))
+assert(settingTOML(defaultConfig, key: "inactive-opacity", to: .number(0.7)).contains("\ninactive-opacity = 0.7 "))
+
 print("toml edits: ok")
 
 // A 1000 pt wide screen, gap 10. Three 300 pt columns fit on it, three 600 pt ones don't.
