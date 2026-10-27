@@ -1,7 +1,7 @@
-# Every push and PR: test and build Nori.app, ad-hoc signed, as a workflow artifact.
-# A push to main whose app/Info.plist version has no release yet: the app is signed with Developer ID, notarized,
-# stapled, tagged v<version> and published as Nori.zip, which the app's updater looks for: bump the version to
-# release (/make-new-release).
+# Every push and PR: test and build Nori.app and Nori.dmg, ad-hoc signed, as a workflow artifact.
+# A push to main whose app/Info.plist version has no release yet: the app and the dmg are signed with Developer ID,
+# notarized, stapled, tagged v<version> and published as Nori.dmg, for people, and Nori.zip, which the app's updater
+# looks for: bump the version to release (/make-new-release).
 name: build
 
 on:
@@ -58,12 +58,13 @@ jobs:
         run: |
           if [ "$RELEASE" = true ]; then
             sed -i '' "/CFBundleVersion/{n;s|<string>.*</string>|<string>$GITHUB_RUN_NUMBER</string>|;}" app/Info.plist
-            make app SIGN="Developer ID Application"
+            make dmg SIGN="Developer ID Application"
           else
-            make app
+            make dmg
           fi
           codesign --verify --deep --strict --verbose=2 build/Nori.app
 
+      # The dmg's ticket covers the app inside too, so one submission staples both.
       - name: Notarize
         if: env.RELEASE == 'true'
         env:
@@ -72,18 +73,22 @@ jobs:
           NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
         run: |
           echo "$NOTARY_KEY" > $RUNNER_TEMP/notary.p8
-          ditto -c -k --keepParent build/Nori.app $RUNNER_TEMP/Nori.zip
-          xcrun notarytool submit $RUNNER_TEMP/Nori.zip --key $RUNNER_TEMP/notary.p8 \
+          xcrun notarytool submit build/Nori.dmg --key $RUNNER_TEMP/notary.p8 \
             --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" --wait
+          xcrun stapler staple build/Nori.dmg
           xcrun stapler staple build/Nori.app
           rm $RUNNER_TEMP/notary.p8
 
-      - run: ditto -c -k --keepParent build/Nori.app Nori.zip
+      - run: |
+          ditto -c -k --keepParent build/Nori.app Nori.zip
+          mv build/Nori.dmg Nori.dmg
 
       - uses: actions/upload-artifact@v4
         with:
           name: Nori
-          path: Nori.zip
+          path: |
+            Nori.dmg
+            Nori.zip
 
       - name: Release
         if: env.RELEASE == 'true'
@@ -95,4 +100,4 @@ jobs:
             git log --no-merges --format='- %s' ${prev:+"$prev"..}HEAD | grep -vE '^- (docs|release):' || true
             [ -n "$prev" ] && printf '\n**Full Changelog**: %s/compare/%s...%s\n' "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "$prev" "$tag"
           } > "$RUNNER_TEMP/notes.md"
-          gh release create "$tag" Nori.zip --target "$GITHUB_SHA" --title "$tag" --notes-file "$RUNNER_TEMP/notes.md"
+          gh release create "$tag" Nori.dmg Nori.zip --target "$GITHUB_SHA" --title "$tag" --notes-file "$RUNNER_TEMP/notes.md"

@@ -87,7 +87,7 @@ Ctrl+C stops it. If you only changed the daemon, Dock needs no restart. Press Ct
 
 ### Releases
 
-CI (`.github/workflows/build.yml`) builds an ad-hoc signed app on every push. When a push to main carries a version in `app/Info.plist` (`make version`) that has no release yet, CI signs the app with Developer ID, notarizes it, tags `v<version>` and attaches `Nori.zip` to a GitHub release. So a release is a version bump: `/make-new-release [patch|minor|major|X.Y.Z]` in Claude Code does it. CI needs these repository secrets:
+CI (`.github/workflows/build.yml`) builds an ad-hoc signed app on every push. When a push to main carries a version in `app/Info.plist` (`make version`) that has no release yet, CI signs the app with Developer ID, notarizes it, tags `v<version>` and attaches `Nori.dmg` (to install from) and `Nori.zip` (for the updater) to a GitHub release. `make dmg` builds the dmg locally (needs pipx); its background is `assets/dmg-background.png`, the layout `assets/dmg.py`. So a release is a version bump: `/make-new-release [patch|minor|major|X.Y.Z]` in Claude Code does it. CI needs these repository secrets:
 
 | Secret | Value |
 |---|---|

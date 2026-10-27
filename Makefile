@@ -4,6 +4,7 @@ BUILD = build
 SKYLIGHT = -F/System/Library/PrivateFrameworks -framework SkyLight
 
 APP = $(BUILD)/Nori.app
+DMG = $(BUILD)/Nori.dmg
 
 # Ad-hoc by default. A real identity (make app SIGN="Developer ID Application") also gets the hardened runtime
 # and a secure timestamp, which notarization requires.
@@ -49,6 +50,12 @@ app: all
 	rm -rf $(APP)
 	mv $(APP).tmp $(APP)
 
+# The app in a dmg next to an Applications link, on assets/dmg-background.png (assets/dmg.py), signed like the app.
+dmg: app
+	rm -f $(DMG)
+	pipx run --spec dmgbuild==1.6.7 dmgbuild -s assets/dmg.py -D app=$(APP) Nori $(DMG)
+	$(if $(filter -,$(SIGN)),,codesign --force --timestamp --sign "$(SIGN)" $(DMG))
+
 # Regenerates the app icon from assets/icon.png (1024, already masked to the macOS squircle).
 icon:
 	rm -rf $(BUILD)/AppIcon.iconset && mkdir -p $(BUILD)/AppIcon.iconset
@@ -67,4 +74,4 @@ test: | $(BUILD)
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all run app icon version test clean
+.PHONY: all run app dmg icon version test clean
