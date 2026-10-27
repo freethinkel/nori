@@ -208,7 +208,7 @@ assets/            icon.svg and AppIcon.icns built from it (make icon)
 bin/nori-msg       CLI
 test/main.swift    checks of the TOML reader (make test)
 payload/payload.m  dylib inside Dock: socket, window animation on CVDisplayLink, vertical Space switching
-loader/loader.m    loads the payload into Dock (from yabai, MIT)
+loader/loader.m    loads the payload into Dock (from yabai, MIT, loader/LICENSE)
 docs/PLAN.md       the original PoC plan
 docs/WINDOWSERVER.md  findings about private WindowServer/Dock APIs and how to explore them
 ```
@@ -221,3 +221,7 @@ The daemon sends lines like `S <wid> <x> <y>` (move the window smoothly) or `M <
 - New windows and focus changes come from Accessibility and NSWorkspace notifications; a window closing without a focus change is only seen by the once-a-second poll.
 - Main display only.
 - Original window sizes are not restored on exit.
+
+## License
+
+MIT, see [LICENSE](LICENSE). `loader/loader.m` comes from [yabai](https://github.com/koekeishiya/yabai) and keeps its MIT license, see [loader/LICENSE](loader/LICENSE).

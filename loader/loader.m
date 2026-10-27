@@ -1,4 +1,4 @@
-// Source: https://github.com/koekeishiya/yabai (src/osax/loader.m), MIT License.
+// Source: https://github.com/koekeishiya/yabai (src/osax/loader.m), MIT License, see loader/LICENSE.
 // Copied for nori PoC. Injects a dylib into Dock.app: loader /absolute/path/to/payload.dylib
 #include <Cocoa/Cocoa.h>
 #include <mach/mach.h>
