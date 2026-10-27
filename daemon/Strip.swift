@@ -34,8 +34,9 @@ var savedStrips: [UInt64: (columns: [UInt32], centers: [CGFloat], offset: CGFloa
 // ponytail: entries of closed windows stay, like sizedTo's.
 var lastSeen: [UInt32: Win] = [:]
 
-// Frame of each strip window when nori first saw it, for restoreWindows.
-// ponytail: entries of closed windows stay, like sizedTo's; a crash loses them.
+// Frame of each strip window when nori first saw it, for restoreWindows. Kept in strips.json (Persist.swift), so a
+// nori started after a crash still knows where the windows were before nori.
+// ponytail: entries of closed windows stay, like sizedTo's.
 var originalFrames: [UInt32: CGRect] = [:]
 
 // Drops closed windows and inserts new ones right of the focused column.
@@ -69,9 +70,16 @@ func syncColumns() -> (wins: [Win], inserted: Int?, front: UInt32?) {
 }
 
 // Height each window was last resized to. One try per window and height, so a window that refuses
-// (fixed size, min/max limits) or that the user resized by hand is left alone.
+// (fixed size, min/max limits) or that the user resized by hand is left alone. The first try also sets the width
+// a `width` rule asks for, counted like the presets so 50 + 50 fill the usable width exactly.
 // ponytail: entries of closed windows stay; window ids are not reused within a session.
 var sizedTo: [UInt32: CGFloat] = [:]
+
+func ruleWidth(_ win: Win) -> CGFloat? {
+    let current = rules
+    guard current.contains(where: { $0.width != nil }), let percent = rule(for: win, in: current)?.width else { return nil }
+    return (usableWidth + gap) * percent / 100 - gap
+}
 
 // How far the strip shows when dragged `over` points past its end: the further, the less it moves (UIScrollView's curve).
 func rubberBand(_ over: CGFloat, _ dimension: CGFloat) -> CGFloat {
@@ -104,13 +112,35 @@ func layout(immediate: Bool) {
     guard !immediate else { return }
     saveStrips()
     publishSoon()
+    dimUnfocused(wins)
     var resized = false
     for win in wins where sizedTo[win.id] != height {
+        let width = sizedTo[win.id] == nil ? ruleWidth(win) ?? win.frame.width : win.frame.width
         sizedTo[win.id] = height
-        if abs(win.frame.height - height) >= 1 { setHeight(win, height); resized = true }
+        if abs(win.frame.height - height) >= 1 || abs(win.frame.width - width) >= 1 {
+            pendingWidths[win.id] = width
+            axQueue.async { setSize(win, width: width, height: height) }  // off the main thread: a hung app must not stall the strip
+            resized = true
+        }
     }
     // An app that resizes may commit its frame at the position it last knew; put it back in its column.
-    if resized { DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { layout(immediate: false) } }
+    if resized { DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { layout(immediate: false) } }
+}
+
+// inactive-opacity: the strip's unfocused windows are translucent, the focused one opaque, so the focus shows.
+// Alpha is set in WindowServer ("A"), the app never knows. A window that left the strip gets its alpha back.
+// ponytail: a window the app itself made translucent is set back to 1 when focused.
+var alphaSet: [UInt32: Float] = [:]
+
+func dimUnfocused(_ wins: [Win]) {
+    let focused = wins.indices.contains(focusedIndex()) ? wins[focusedIndex()].id : nil
+    var wanted = Dictionary(wins.map { ($0.id, $0.id == focused ? 1 : inactiveOpacity) }, uniquingKeysWith: { a, _ in a })
+    let elsewhere = Set(savedStrips.values.flatMap(\.columns))
+    for (id, alpha) in alphaSet where alpha != 1 && wanted[id] == nil && !elsewhere.contains(id) { wanted[id] = 1 }
+    let changes = wanted.filter { alphaSet[$0.key] ?? 1 != $0.value }
+    guard !changes.isEmpty else { return }
+    alphaSet.merge(changes) { _, new in new }
+    send(changes.map { "A \($0.key) \($0.value)" })
 }
 
 // offset: where the strip comes to rest, if not where center-focused-column puts column `index` (a gesture's snap).
@@ -124,9 +154,19 @@ func focusColumn(at index: Int, offset: CGFloat? = nil) {
     focus(wins[i])
 }
 
-// Keyboard: one column left or right from the column the strip is closest to.
+// Keyboard: one column left or right from the column the strip is closest to; past either end with wrap-around,
+// the other end.
 func focusColumn(by delta: Int) {
-    focusColumn(at: focusedIndex() + delta)
+    let i = focusedIndex() + delta
+    focusColumn(at: wrapAround && !columns.isEmpty ? (i + columns.count) % columns.count : i)
+}
+
+// Option+C (config: center-column), niri's center-column: the focused column scrolls to the center whatever
+// center-focused-column says. ponytail: within the strip's bounds, so in "never" the first and last column stay put.
+func centerColumn() {
+    let wins = syncColumns().wins, i = focusedIndex()
+    guard wins.indices.contains(i) else { return }
+    focusColumn(at: i, offset: scroll(wins).centers[i])
 }
 
 // Quit: strip windows go back to the frames they had before nori. The payload puts every one back in place (and drops
@@ -134,7 +174,7 @@ func focusColumn(by delta: Int) {
 func restoreWindows() {
     let open = Set(listWindows([]).map(\.win.id))
     let back = originalFrames.filter { open.contains($0.key) }
-    send(back.map { "M \($0.key) \($0.value.minX) \($0.value.minY)" })
+    send(back.map { "M \($0.key) \($0.value.minX) \($0.value.minY)" } + alphaSet.filter { $0.value != 1 }.map { "A \($0.key) 1" })
     for (id, frame) in back {
         guard let win = lastSeen[id], let element = axElement(win) else { continue }
         var size = frame.size, origin = frame.origin

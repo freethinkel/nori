@@ -10,8 +10,35 @@ typealias Listed = (win: Win, spaces: [UInt64], info: [String: Any])
 @_silgen_name("CGSCopySpacesForWindows") func CGSCopySpacesForWindows(_ cid: Int32, _ mask: Int32, _ wids: CFArray) -> Unmanaged<CFArray>?
 let cid = CGSMainConnectionID()
 
+// The rule for a window (Rules.swift). The title comes from CGWindowList where macOS gives it (Screen Recording), else
+// from Accessibility, which reaches the current Space only.
+// ponytail: a title rule costs an AX round trip per window of that app and poll; cache titles by id if that shows.
+func rule(for listed: Listed, in rules: [Rule]) -> Rule? {
+    ruleMatching(appNames(listed.win.pid), title: { listedTitle(listed) ?? axTitle(listed.win) }, in: rules)
+}
+
+func rule(for win: Win, in rules: [Rule]) -> Rule? {
+    ruleMatching(appNames(win.pid), title: { axTitle(win) }, in: rules)
+}
+
+// Name and bundle id by pid, looked up once per app: every window goes through the rules on every poll.
+// Dropped when the app quits (Events.swift), since macOS reuses pids.
+var appNamesCache: [pid_t: [String]] = [:]
+
+func appNames(_ pid: pid_t) -> [String] {
+    if let names = appNamesCache[pid] { return names }
+    guard let app = NSRunningApplication(processIdentifier: pid) else { return [] }
+    let names = [app.localizedName, app.bundleIdentifier].compactMap { $0 }
+    if !names.isEmpty { appNamesCache[pid] = names }
+    return names
+}
+
+func listedTitle(_ listed: Listed) -> String? {
+    (listed.info[kCGWindowName as String] as? String).flatMap { $0.isEmpty ? nil : $0 }
+}
+
 // Windows from other apps that are on some Space, front to back, normal layer only, with their Spaces.
-// Skips invisible and tiny helper windows, and apps with an ignore rule.
+// Skips invisible and tiny helper windows, and windows with an ignore rule.
 func listWindows(_ options: CGWindowListOption) -> [Listed] {
     let list = CGWindowListCopyWindowInfo(options.union(.excludeDesktopElements), kCGNullWindowID) as? [[String: Any]] ?? []
     let current = rules
@@ -24,10 +51,10 @@ func listWindows(_ options: CGWindowListOption) -> [Listed] {
               let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary),
               frame.width >= 50, frame.height >= 50,
               let spaces = CGSCopySpacesForWindows(cid, 7, [id] as CFArray)?.takeRetainedValue() as? [UInt64],
-              !spaces.isEmpty,
-              rule(for: pid, in: current)?.ignore != true
+              !spaces.isEmpty
         else { return nil }
-        return ((id, pid, frame), spaces, info)
+        let listed: Listed = ((id, pid, frame), spaces, info)
+        return rule(for: listed, in: current)?.ignore == true ? nil : listed
     }
 }
 
@@ -36,7 +63,7 @@ func listWindows(_ options: CGWindowListOption) -> [Listed] {
 func windows(on space: UInt64) -> [Win] {
     let current = rules
     return listWindows(.optionOnScreenOnly)
-        .filter { $0.spaces.contains(space) && rule(for: $0.win.pid, in: current)?.floating != true && isStandard($0.win) }
+        .filter { $0.spaces.contains(space) && rule(for: $0, in: current)?.floating != true && isStandard($0.win) }
         .map(\.win)
 }
 
@@ -77,9 +104,9 @@ func axID(_ element: AXUIElement) -> CGWindowID? {
 
 func axElement(_ win: Win) -> AXUIElement? { axWindows(win.pid)?.first { axID($0) == win.id } }
 
-func setHeight(_ win: Win, _ height: CGFloat) {
+func setSize(_ win: Win, width: CGFloat, height: CGFloat) {
     guard let element = axElement(win) else { return }
-    var size = CGSize(width: win.frame.width, height: height)
+    var size = CGSize(width: width, height: height)
     if let axSize = AXValueCreate(.cgSize, &size) {
         AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, axSize)
     }

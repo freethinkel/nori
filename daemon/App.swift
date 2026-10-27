@@ -36,18 +36,20 @@ func statusIcon() -> NSImage? {
     return image
 }
 
+// "Reload Config" (⌘R) and `nori reload`.
+func reloadSettings() {
+    configFile = readConfig()
+    applyLaunchAtLogin()
+    layout(immediate: false)
+}
+
 final class MenuActions: NSObject, NSMenuDelegate {
     @objc func openConfig() {
         writeDefaultConfig()
         _ = shell("/usr/bin/open", ["-t", configPath])
     }
 
-    @objc func reloadConfig() {
-        configFile = readConfig()
-        applyLaunchAtLogin()
-        layout(immediate: false)
-    }
-
+    @objc func reloadConfig() { reloadSettings() }
     @objc func reloadPayload() { loadPayload() }
 
     // Whether the payload answers in Dock, under the item that reloads it; a socket connect, so read on each open.

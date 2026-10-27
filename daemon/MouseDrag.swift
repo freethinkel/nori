@@ -3,8 +3,8 @@
 // on release it eases into its column and takes focus. Resize: the window under the pointer takes focus and its width
 // follows the pointer: both edges at once when it is centered, else the right one, as its left edge stays put
 // (center-focused-column); the app resizes once the drag stops (Resize.swift).
-// The clicks themselves don't reach the app.
-// ponytail: the modifier is fixed to Option; an own event tap, so main.swift's stays as it is.
+// The clicks themselves don't reach the app. The modifier is `mouse-modifier` in the config, Option by default.
+// ponytail: an own event tap, so main.swift's stays as it is.
 
 import Cocoa
 
@@ -30,7 +30,7 @@ func startMouseDrag() {
             let p = event.location
             switch type {
             case .leftMouseDown, .rightMouseDown:
-                guard !overviewOpen, event.flags.intersection(chordModifiers) == .maskAlternate,
+                guard !overviewOpen, event.flags.intersection(chordModifiers) == mouseModifier,
                       let win = stripWindow(at: p) else { return Unmanaged.passUnretained(event) }
                 if type == .rightMouseDown, let i = columns.firstIndex(of: win.id) { focusColumn(at: i) } else { focus(win) }
                 drag = (win.id, p, win.frame.origin, win.frame.width)
@@ -57,7 +57,7 @@ func startMouseDrag() {
         },
         userInfo: nil
     ) else {
-        fputs("mouse tap failed: Option + drag disabled\n", stderr)
+        fputs("mouse tap failed: modifier + drag disabled\n", stderr)
         return
     }
     mouseTap = tap

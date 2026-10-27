@@ -1,11 +1,22 @@
-// Option+J/K: Space below / above, like niri's workspace down / up. The daemon presses the system
-// "Switch to Desktop N" shortcut (com.apple.symbolichotkeys 118 + N - 1), so the switch itself is Dock's.
+// Option+J/K (config: focus-space-down, focus-space-up): Space below / above, like niri's workspace down / up. The daemon
+// presses the system "Switch to Desktop N" shortcut (com.apple.symbolichotkeys 118 + N - 1), so the switch itself is Dock's.
 // In the overview they move the centered Space instead, see below.
-// ponytail: main display only, Desktops 1…16 (the ones that have such a shortcut), no wrap-around.
+// ponytail: main display only, Desktops 1…16 (the ones that have such a shortcut).
 
 import Cocoa
 
 @_silgen_name("CGSCopyManagedDisplaySpaces") func CGSCopyManagedDisplaySpaces(_ cid: Int32) -> Unmanaged<CFArray>
+
+// The Desktop number `delta` Desktops below (+) or above (-) the current one on its display; fullscreen Spaces don't
+// count. Past either end: nil, or round to the other end with wrap-around.
+func neighbourDesktop(_ delta: Int) -> Int? {
+    let all = spaces(), active = CGSGetActiveSpace(cid)
+    guard let display = all.first(where: { $0.id == active })?.display else { return nil }
+    let desktops = all.filter { $0.display == display && !$0.fullscreen }
+    guard let i = desktops.firstIndex(where: { $0.id == active }) else { return nil }
+    let j = wrapAround ? (i + delta + desktops.count) % desktops.count : i + delta
+    return desktops.indices.contains(j) ? desktops[j].number : nil
+}
 
 func switchSpace(by delta: Int) {
     // Overview open: the neighbour slides to the center and becomes the current Space; the overview stays open.
@@ -17,25 +28,6 @@ func switchSpace(by delta: Int) {
         if let number = spaces().first(where: { $0.id == overviewSpaces[target] })?.number { pressDesktop(number) }
         return
     }
-    let active = CGSGetActiveSpace(cid)
-    // Desktops in Mission Control order; type 0 skips full-screen app Spaces, which have no Desktop number.
-    let displays = CGSCopyManagedDisplaySpaces(cid).takeRetainedValue() as? [[String: Any]] ?? []
-    let desktops = displays.lazy
-        .map { ($0["Spaces"] as? [[String: Any]] ?? []).filter { $0["type"] as? Int == 0 }.compactMap { $0["ManagedSpaceID"] as? UInt64 } }
-        .first { $0.contains(active) } ?? []
-    guard let index = desktops.firstIndex(of: active), desktops.indices.contains(index + delta) else { return }
-    let target = index + delta
-    let hotkeys = CFPreferencesCopyAppValue("AppleSymbolicHotKeys" as CFString, "com.apple.symbolichotkeys" as CFString) as? [String: Any]
-    guard let entry = hotkeys?[String(118 + target)] as? [String: Any], entry["enabled"] as? Bool == true,
-          let params = (entry["value"] as? [String: Any])?["parameters"] as? [Int], params.count == 3
-    else {
-        fputs("Desktop \(target + 1): turn on \"Switch to Desktop \(target + 1)\" in System Settings → Keyboard → Shortcuts → Mission Control\n", stderr)
-        return
-    }
-    // parameters: (character, keycode, modifier flags); the flags use the same bits as CGEventFlags.
-    for down in [true, false] {
-        let event = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(params[1]), keyDown: down)
-        event?.flags = CGEventFlags(rawValue: UInt64(params[2]))
-        event?.post(tap: .cghidEventTap)
-    }
+    guard let number = neighbourDesktop(delta), !switchToSpace(number) else { return }
+    fputs("Desktop \(number): turn on \"Switch to Desktop \(number)\" in System Settings → Keyboard → Shortcuts → Mission Control\n", stderr)
 }

@@ -1,8 +1,8 @@
 // nori daemon: niri-like scrolling columns for macOS. See README.md.
 // Hotkeys and mouse-drag release come through the event tap here; the trackpad swipe is in Trackpad.swift.
 // Option+1…5 are the system "Switch to Desktop N" shortcuts (com.apple.symbolichotkeys 118–122); the tap catches them
-// (and any other press of them) to slide Spaces itself, see switchSpaceAnimated. Option+O (config: overview) opens the overview.
-// ponytail: polls the window list 4x/s; push window-created events from the payload (SLS notify in Dock) if latency matters.
+// (and any other press of them) to slide Spaces itself, see switchSpaceAnimated. Every other key is a [bindings] action, Actions.swift.
+// Window events come from Accessibility observers (Events.swift); a poll once a second catches what they miss.
 
 import Cocoa
 
@@ -12,7 +12,7 @@ startApp()  // menu bar item, SIP check, Accessibility, payload: see App.swift
 var swallowMouseUp = false  // a press that began in the overview: its drag and release are the overview's too
 var mainTap: CFMachPort?
 
-// Ctrl+Opt+Left / Right, Option+h/j/k/l, the overview binding. 3-finger scroll events are swallowed: the swipe is handled from raw touches.
+// Key bindings. 3-finger scroll events are swallowed: the swipe is handled from raw touches.
 // While the overview is open, clicks pick a Space and Escape closes it; the clicks don't reach apps. Keys: see below.
 let tap = CGEvent.tapCreate(
     tap: .cgSessionEventTap,
@@ -55,22 +55,8 @@ let tap = CGEvent.tapCreate(
             if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 { switchSpaceAnimated(to: number) }
             return nil
         }
-        if type == .keyDown && matches(event, overviewChord) {
-            if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 { toggleOverview() }
-            return nil
-        }
-        if type == .keyDown && matches(event, growChord) { resizeFocused(by: resizeStep); return nil }
-        if type == .keyDown && matches(event, shrinkChord) { resizeFocused(by: -resizeStep); return nil }
-        if type == .keyDown && matches(event, binding("cycle-width-forward")) { cycleWidth(forward: true); return nil }
-        if type == .keyDown && matches(event, binding("cycle-width-backward")) { cycleWidth(forward: false); return nil }
-        if type == .keyDown && matches(event, binding("toggle-full-width")) {
-            if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 { toggleFullWidth() }
-            return nil
-        }
-        if type == .keyDown && matches(event, moveLeftChord) { moveColumn(by: -1); return nil }
-        if type == .keyDown && matches(event, moveRightChord) { moveColumn(by: 1); return nil }
-        if type == .keyDown, let number = (1...9).first(where: { matches(event, binding("move-to-space-\($0)")) }) {
-            moveFocused(toDesktop: number)
+        if type == .keyDown, let name = boundAction(event) {  // [bindings] → Actions.swift
+            if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 || !noRepeat.contains(name) { actions[name]?() }
             return nil
         }
         if type == .keyDown && overviewOpen && event.getIntegerValueField(.keyboardEventKeycode) == 53 {  // Escape
@@ -96,27 +82,10 @@ let tap = CGEvent.tapCreate(
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { layout(immediate: false) }
             return Unmanaged.passUnretained(event)
         }
-        let flags = event.flags
         if type == .scrollWheel {
             return fingerCount == gestureFingers ? nil : Unmanaged.passUnretained(event)
         }
-        guard flags.contains(.maskAlternate) else { return Unmanaged.passUnretained(event) }
-        let key = event.getIntegerValueField(.keyboardEventKeycode)
-        if flags.contains(.maskControl) {
-            switch key {
-            case 123: focusColumn(by: -1); return nil  // left
-            case 124: focusColumn(by: 1); return nil   // right
-            default: break
-            }
-        }
-        // Option + h/l = previous / next column, Option + j/k = Space below / above (vim keys, keycodes from the US layout).
-        switch key {
-        case 4: focusColumn(by: -1); return nil   // h
-        case 37: focusColumn(by: 1); return nil   // l
-        case 38: switchSpace(by: 1); return nil   // j
-        case 40: switchSpace(by: -1); return nil  // k
-        default: return Unmanaged.passUnretained(event)
-        }
+        return Unmanaged.passUnretained(event)
     },
     userInfo: nil
 )

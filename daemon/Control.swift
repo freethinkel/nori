@@ -15,11 +15,17 @@ let usage = """
       nori query spaces [--current]
       nori query windows [--space N] [--current] [--app NAME] [--id WID] [--focused]
       nori subscribe
-      nori focus left|right
+      nori focus left|right|first|last
       nori focus column N
-      nori focus space N
+      nori focus space N|up|down
       nori focus window WID
       (any focus takes --instant: no animation)
+      nori move left|right
+      nori move space N|up|down
+      nori width grow|shrink|next|previous|toggle-full
+      nori center
+      nori overview
+      nori reload             read the config again
 
     """
 
@@ -147,18 +153,24 @@ func handle(_ args: [String]) -> String {
     instantMoves = instant
     defer { instantMoves = false }
     let number = args.count == 3 ? Int(args[2]) : nil
+    if let name = cliActions[args.joined(separator: " ")] {  // the key bindings' actions, Actions.swift
+        actions[name]!()
+        return ""
+    }
     switch (args.first ?? "", args.count > 1 ? args[1] : "") {
+    case ("reload", "") where args.count == 1:
+        reloadSettings()
+        return ""
     case ("query", "spaces"):
         guard let opts = options(args.dropFirst(2), values: [], flags: ["--current"]) else { break }
         return json(querySpaces(opts))
     case ("query", "windows"):
         guard let opts = options(args.dropFirst(2), values: ["--space", "--app", "--id"], flags: ["--current", "--focused"]) else { break }
         return json(queryWindows(opts))
-    case ("focus", "left") where args.count == 2:
-        focusColumn(by: -1)
-        return ""
-    case ("focus", "right") where args.count == 2:
-        focusColumn(by: 1)
+    case ("move", "space"):
+        guard let n = number else { break }
+        guard spaces().contains(where: { $0.number == n }) else { return "error: no Desktop \(n)\n" }
+        moveFocused(toDesktop: n)
         return ""
     case ("focus", "column"):
         guard let n = number else { break }
@@ -244,7 +256,7 @@ func spaces() -> [(id: UInt64, number: Int?, display: String, fullscreen: Bool, 
 // yet gets the order its first sync will give it (syncColumns): ascending ids, floating windows left out.
 func strip(of space: UInt64, _ listed: [Listed]) -> [UInt32] {
     let current = rules
-    let here = listed.filter { $0.spaces.contains(space) && rule(for: $0.win.pid, in: current)?.floating != true }.map(\.win.id)
+    let here = listed.filter { $0.spaces.contains(space) && rule(for: $0, in: current)?.floating != true }.map(\.win.id)
     guard let saved = space == currentSpace ? columns : savedStrips[space]?.columns else { return here.sorted() }
     return saved.filter(here.contains)
 }
@@ -312,7 +324,7 @@ func queryWindows(_ opts: [String: String]) -> [[String: Any]] {
             "id": id, "pid": w.win.pid, "app": appName(w), "bundleId": app?.bundleIdentifier, "title": title,
             "space": numbers[space], "spaceId": space, "column": strips[space]?.firstIndex(of: id).map { $0 + 1 },
             "isFocused": id == focused, "isOnScreen": w.info[kCGWindowIsOnscreen as String] as? Bool ?? false,
-            "isFloating": rule(for: w.win.pid, in: current)?.floating == true,
+            "isFloating": rule(for: w, in: current)?.floating == true,
             "frame": ["x": frame.minX, "y": frame.minY, "width": frame.width, "height": frame.height],
         ]
         return fields.compactMapValues { $0 }
@@ -340,13 +352,19 @@ func focusWindow(_ listed: Listed, instant: Bool = false) {
         if let index = columns.firstIndex(of: listed.win.id) { focusColumn(at: index) } else { focus(listed.win) }
         return
     }
-    // Accessibility only sees windows of the current Space, so go there first. A fullscreen Space or one without
-    // a shortcut: activating the app may switch Spaces by itself.
-    // ponytail: fixed wait for the Space slide; wait for the active Space to change if 0.5 s is too short or too long.
+    // Accessibility only sees windows of the current Space, so go there first, and focus once Dock has made it active
+    // (the active Space id changes at the start of its slide). A fullscreen Space or one without a shortcut:
+    // activating the app may switch Spaces by itself.
     if let number = spaces().first(where: { listed.spaces.contains($0.id) })?.number,
        instant ? switchSpaceInstant(to: number) : switchToSpace(number) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + (instant ? 0.3 : 0.5)) { focus(listed.win) }
+        whenSpaceChanges(from: active) { focus(listed.win) }
     } else {
         focus(listed.win)
     }
+}
+
+// Runs `then` once the active Space is no longer `space`, checked every 50 ms, or after a second regardless.
+func whenSpaceChanges(from space: UInt64, tries: Int = 20, then: @escaping () -> Void) {
+    guard CGSGetActiveSpace(cid) == space, tries > 0 else { return then() }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { whenSpaceChanges(from: space, tries: tries - 1, then: then) }
 }

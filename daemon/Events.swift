@@ -63,8 +63,11 @@ func startEvents() {
         pollSoon()
     }
     center.addObserver(forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main) { note in
-        if let pid = app(note)?.processIdentifier, let observer = axObservers.removeValue(forKey: pid) {
-            CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .defaultMode)
+        if let pid = app(note)?.processIdentifier {
+            appNamesCache[pid] = nil
+            if let observer = axObservers.removeValue(forKey: pid) {
+                CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .defaultMode)
+            }
         }
         pollSoon()
     }

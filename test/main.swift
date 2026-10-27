@@ -48,3 +48,22 @@ assert(strip(narrow, "on-overflow").rest(2, from: 350, previous: 0) == 350)
 assert(strip(wide, "on-overflow").bounds == 0...1220 && strip(wide, "on-overflow").snap(600, focused: 0) == (610, 1))
 
 print("scroll: ok")
+
+// Rules: a table needs app and an action; title must be a valid regex, width 0 < n <= 100.
+assert(makeRule(["app": .string("Safari"), "title": .string("Picture in Picture"), "floating": .bool(true)])?.title == "Picture in Picture")
+assert(makeRule(["app": .string("Ghostty"), "width": .number(50)])?.width == 50)
+assert(makeRule(["app": .string("Ghostty")]) == nil && makeRule(["app": .string("X"), "title": .string("("), "ignore": .bool(true)]) == nil)
+assert(makeRule(["app": .string("X"), "width": .number(0)]) == nil && makeRule(["app": .string("X"), "width": .number(101)]) == nil)
+
+// Matching: app names any case; a title rule skips to the next rule when the title doesn't match; the title is asked
+// for once and only when a matching app has a title rule.
+let safari = [Rule(app: "safari", title: "picture in picture", floating: true), Rule(app: "com.apple.Safari", width: 50)]
+var asked = 0
+func title(_ t: String?) -> () -> String? { { asked += 1; return t } }
+assert(ruleMatching(["Safari", "com.apple.Safari"], title: title("Picture in Picture"), in: safari)?.floating == true)
+assert(ruleMatching(["Safari", "com.apple.Safari"], title: title("Apple"), in: safari)?.width == 50)
+assert(ruleMatching(["Safari", "com.apple.Safari"], title: title(nil), in: safari)?.width == 50)
+assert(ruleMatching(["Finder"], title: title("Picture in Picture"), in: safari) == nil)
+assert(asked == 3, "\(asked)")
+
+print("rules: ok")
