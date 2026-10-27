@@ -1,35 +1,46 @@
-// ~/.config/nori/config: gaps, screen padding, resize step and key bindings. Read at start and on "Reload Config".
+// ~/.config/nori/config.toml: gaps, screen padding, resize step, key bindings and app rules.
+// Read at start and on "Reload Config".
 
 import Cocoa
 
-// "key = value" lines, # starts a comment. Missing number: 0. Missing flag: false. Missing binding: its default below.
+// Top level: numbers (missing: 0) and flags (missing: false). [bindings]: key bindings (missing: the default below).
+// [[rule]]: app rules, see Rules.swift. Unknown keys and bad values are reported and skipped.
 let numberKeys = ["gap", "padding-top", "padding-bottom", "padding-left", "padding-right", "resize-step"]
 let flagKeys = ["launch-at-login"]
 let bindingDefaults = ["overview": "option+o", "grow-width": "option+=", "shrink-width": "option+-",
                        "move-left": "option+shift+h", "move-right": "option+shift+l"]
     .merging((1...9).map { ("move-to-space-\($0)", "option+shift+\($0)") }) { a, _ in a }
-func readConfig() -> [String: String] {
-    let path = NSHomeDirectory() + "/.config/nori/config"
-    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return [:] }
-    var result: [String: String] = [:]
-    for line in text.split(separator: "\n") {
-        let body = line.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)[0]
-        guard !body.allSatisfy(\.isWhitespace) else { continue }
-        let parts = body.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
-        guard parts.count == 2,
-              numberKeys.contains(parts[0]) && Double(parts[1]) != nil || flagKeys.contains(parts[0]) && ["true", "false"].contains(parts[1])
-                  || bindingDefaults[parts[0]] != nil && chord(parts[1]) != nil
-        else {
-            fputs("config: skipping \"\(line)\"; keys: \((numberKeys + flagKeys + bindingDefaults.keys.sorted()).joined(separator: ", "))\n", stderr)
-            continue
+let configPath = NSHomeDirectory() + "/.config/nori/config.toml"
+
+// Numbers, flags and bindings as strings by key; the rules in file order.
+func readConfig() -> (values: [String: String], rules: [Rule]) {
+    guard let text = try? String(contentsOfFile: configPath, encoding: .utf8) else { return ([:], []) }
+    let report = { (line: Int, message: String) in _ = fputs("config.toml:\(line): \(message)\n", stderr) }
+    var values: [String: String] = [:]
+    var ruleTables: [Int: [String: TOMLValue]] = [:]
+    for entry in parseTOML(text, report: report) {
+        switch (entry.table, entry.value) {
+        case ("", .number(let n)) where numberKeys.contains(entry.key): values[entry.key] = String(n)
+        case ("", .bool(let b)) where flagKeys.contains(entry.key): values[entry.key] = String(b)
+        case ("bindings", .string(let s)) where bindingDefaults[entry.key] != nil && chord(s) != nil: values[entry.key] = s
+        case ("rule", _) where entry.index != nil: ruleTables[entry.index!, default: [:]][entry.key] = entry.value
+        default:
+            report(entry.line, "skipping \(entry.key): unknown key or bad value. Top level: \((numberKeys + flagKeys).joined(separator: ", ")); "
+                + "[bindings]: \(bindingDefaults.keys.sorted().joined(separator: ", ")); [[rule]]: app, space, floating, ignore")
         }
-        result[parts[0]] = parts[1]
     }
-    return result
+    let rules = ruleTables.keys.sorted().compactMap { i in
+        let rule = makeRule(ruleTables[i]!)
+        if rule == nil { fputs("config.toml: skipping [[rule]] #\(i + 1): needs app = \"…\" and space = N, floating = true or ignore = true\n", stderr) }
+        return rule
+    }
+    return (values, rules)
 }
 
-// Values below are computed on every use, so a reload reaches them all.
-var config = readConfig()
+// Values below are computed on every use, so a reload ("configFile = readConfig()") reaches them all.
+var configFile = readConfig()
+var config: [String: String] { configFile.values }
+var rules: [Rule] { configFile.rules }
 
 func number(_ key: String) -> CGFloat { CGFloat(Double(config[key] ?? "") ?? 0) }
 var launchAtLogin: Bool { config["launch-at-login"] == "true" }

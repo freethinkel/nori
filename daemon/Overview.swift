@@ -59,6 +59,8 @@ var spaceLayoutBusy: Bool { overviewOpen || CACurrentMediaTime() < spaceLayoutUn
 // spring: the overview opening and closing; otherwise the windows' ease.
 func sendLayout(open: Bool, spring: Bool) {
     spaceLayoutUntil = CACurrentMediaTime() + 1.2
+    // The Space-changed event lands while the strip is paused: look again once the pause is over.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.25) { pollSoon() }
     send(["Y \(spring ? 1 : 0) \(overviewTarget) \(open ? 1 : 0) " + overviewSpaces.map(String.init).joined(separator: " ")])
 }
 
@@ -160,11 +162,69 @@ func resetOverview() {
 }
 
 // Where Space i sits in the open overview, in CG coordinates.
-func overviewIndex(at point: CGPoint) -> Int? {
+func overviewRect(_ i: Int) -> CGRect {
     let screen = CGDisplayBounds(CGMainDisplayID())
     let size = CGSize(width: screen.width * overviewScale, height: screen.height * overviewScale)
-    return overviewSpaces.indices.first { i in
-        let centerY = screen.midY + CGFloat(i - overviewTarget) * (size.height + overviewGap)
-        return CGRect(x: screen.midX - size.width / 2, y: centerY - size.height / 2, width: size.width, height: size.height).contains(point)
+    let centerY = screen.midY + CGFloat(i - overviewTarget) * (size.height + overviewGap)
+    return CGRect(x: screen.midX - size.width / 2, y: centerY - size.height / 2, width: size.width, height: size.height)
+}
+
+func overviewIndex(at point: CGPoint) -> Int? {
+    overviewSpaces.indices.first { overviewRect($0).contains(point) }
+}
+
+// The Space under the point and the window there, if any. CGWindowList shows windows transformed now, so frames
+// come from the strips as last seen; a Space the daemon hasn't been on yet has no windows to hit.
+func overviewHit(at point: CGPoint) -> (space: Int, window: UInt32?)? {
+    guard let i = overviewIndex(at: point) else { return nil }
+    let screen = CGDisplayBounds(CGMainDisplayID()), rect = overviewRect(i)
+    let unscaled = CGPoint(x: screen.midX + (point.x - rect.midX) / overviewScale, y: screen.midY + (point.y - rect.midY) / overviewScale)
+    let sid = overviewSpaces[i]
+    let ids = sid == currentSpace ? columns : savedStrips[sid]?.columns ?? []
+    return (i, ids.first { lastSeen[$0]?.frame.contains(unscaled) == true })
+}
+
+// Mouse in the open overview (the event tap sends it here and keeps it from apps). A click picks a Space, and the
+// window under it if any. A drag moves a window: it follows the pointer inside its own Space and, dropped on
+// another Space, goes there and joins that Space's strip when it is next shown.
+// ponytail: the dragged window is clipped to its own Space while dragged; moving it into the other Space's
+// picture would need a transform on the window.
+var overviewDrag: (window: UInt32, from: Int, start: CGPoint, origin: CGPoint, moved: Bool)?
+
+func overviewMouseDown(at point: CGPoint) {
+    overviewDrag = overviewHit(at: point).flatMap { hit in
+        hit.window.flatMap { id in lastSeen[id].map { (id, hit.space, point, $0.frame.origin, false) } }
+    }
+}
+
+func overviewMouseDragged(at point: CGPoint) {
+    guard var drag = overviewDrag else { return }
+    let dx = point.x - drag.start.x, dy = point.y - drag.start.y
+    guard drag.moved || hypot(dx, dy) >= 6 else { return }
+    drag.moved = true
+    overviewDrag = drag
+    send(["M \(drag.window) \(drag.origin.x + dx / overviewScale) \(drag.origin.y + dy / overviewScale)"])
+}
+
+func overviewMouseUp(at point: CGPoint) {
+    defer { overviewDrag = nil }
+    guard overviewOpen else { return }
+    guard let drag = overviewDrag, drag.moved else { return overviewClick(at: point) }
+    send(["M \(drag.window) \(drag.origin.x) \(drag.origin.y)"])  // back in its slot, or where it lands elsewhere
+    guard let to = overviewIndex(at: point), to != drag.from else { return }
+    let sid = overviewSpaces[to]
+    movedAway.insert(drag.window)  // Move.swift: out of this strip until CGWindowList agrees
+    send(["X \(drag.window) \(sid)"])
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { movedAway.remove(drag.window) }
+}
+
+func overviewClick(at point: CGPoint) {
+    guard let hit = overviewHit(at: point) else { return closeOverview(at: overviewTarget) }
+    closeOverview(at: hit.space)
+    guard let window = hit.window else { return }
+    // Once Dock has switched (if it had to), the strip there is the current one: focus that window's column.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+        _ = syncColumns()
+        if let index = columns.firstIndex(of: window) { focusColumn(at: index) }
     }
 }

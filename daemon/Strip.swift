@@ -28,7 +28,8 @@ func focusedIndex() -> Int {
 var currentSpace: UInt64 = 0
 var savedStrips: [UInt64: (columns: [UInt32], centers: [CGFloat], offset: CGFloat)] = [:]
 
-// Windows as of the last real look, for while a Space layout runs.
+// Windows of every Space as of the last real look at them, for while a Space layout runs.
+// ponytail: entries of closed windows stay, like sizedTo's.
 var lastSeen: [UInt32: Win] = [:]
 
 // Drops closed windows and inserts new ones right of the focused column.
@@ -36,16 +37,18 @@ var lastSeen: [UInt32: Win] = [:]
 // While the overview or a Space slide is on, CGWindowList reports frames after the Space transform (scaled,
 // moved, other Spaces' windows on screen), so the strip keeps the frames it saw last and changes nothing.
 func syncColumns() -> (wins: [Win], inserted: Int?, front: UInt32?) {
-    guard !spaceLayoutBusy else { return (withPendingWidths(columns.compactMap { lastSeen[$0] }), nil, nil) }
+    // The active Space id is right even mid-slide, so the strip follows it first: keeping the old Space's strip
+    // there made Option+H/L focus a window of the old Space, and macOS switched back to it.
     let space = CGSGetActiveSpace(cid)
     if space != currentSpace {
         savedStrips[currentSpace] = (columns, columnCenters, stripOffset)
         (columns, columnCenters, stripOffset) = savedStrips[space] ?? ([], [], 0)
         currentSpace = space
     }
-    let live = windows(on: space)
+    guard !spaceLayoutBusy else { return (withPendingWidths(columns.compactMap { lastSeen[$0] }), nil, nil) }
+    let live = placeByRules(windows(on: space), on: space).filter { !movedAway.contains($0.id) }
     let byId = Dictionary(live.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-    lastSeen = byId
+    lastSeen.merge(byId) { _, new in new }
     columns.removeAll { byId[$0] == nil }
     var at = min(focusedIndex() + 1, columns.count)
     var inserted: Int?
@@ -90,6 +93,7 @@ func layout(immediate: Bool) {
         return "\(immediate ? "M" : "S") \(win.id) \(x) \(top)"
     })
     guard !immediate else { return }
+    saveStrips()
     var resized = false
     for win in wins where sizedTo[win.id] != height {
         sizedTo[win.id] = height

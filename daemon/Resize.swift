@@ -25,13 +25,19 @@ let axQueue = DispatchQueue(label: "nori.ax", qos: .userInteractive)
 let resizeSettle = 0.4  // seconds; a 300 pt stretch takes about 0.37 s at 60 Hz (a quarter of the rest per frame)
 var resizeWork: DispatchWorkItem?
 
+var usableWidth: CGFloat { CGDisplayBounds(CGMainDisplayID()).width - paddingLeft - paddingRight }
+
 func resizeFocused(by percent: CGFloat) {
     let wins = syncColumns().wins
     let index = focusedIndex()
     guard wins.indices.contains(index) else { return }
     let win = wins[index]  // its width already counts a resize still in flight, so presses add up
-    let usable = CGDisplayBounds(CGMainDisplayID()).width - paddingLeft - paddingRight
-    let width = min(max(win.frame.width + usable * percent / 100, 100), usable)
+    resizeFocused(win, at: index, to: win.frame.width + usableWidth * percent / 100)
+}
+
+// The focused window (column `index`) eases to `width`; also driven by Option + right drag, see MouseDrag.swift.
+func resizeFocused(_ win: Win, at index: Int, to width: CGFloat) {
+    let width = min(max(width, 100), usableWidth)
     guard abs(width - win.frame.width) >= 1 else { return }
     pendingWidths[win.id] = width
     stripOffset = centers(of: syncColumns().wins)[index]
@@ -48,8 +54,9 @@ func resizeFocused(by percent: CGFloat) {
         if AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &taken) == .success, let taken {
             AXValueGetValue(taken as! AXValue, .cgSize, &size)
         }
+        // Straight from here: every hop before the payload hears "W" is a frame drawn stretched twice.
+        if abs(size.width - width) < 1 { send(["W \(win.id) \(size.width)"]); return }
         DispatchQueue.main.async {
-            guard abs(size.width - width) >= 1 else { send(["W \(win.id) \(size.width)"]); return }
             pendingWidths[win.id] = size.width
             send(["R \(win.id) \(size.width)", "W \(win.id) \(size.width)"])
             layout(immediate: false)

@@ -161,6 +161,7 @@ func queryWindows(_ opts: [String: String]) -> [[String: Any]] {
     let active = CGSGetActiveSpace(cid)
     let numbers = Dictionary(spaces().compactMap { s in s.number.map { (s.id, $0) } }, uniquingKeysWith: { a, _ in a })
     let listed = listWindows([])
+    let current = rules
     // Front to back, so the first window of the current Space that is on screen has focus.
     let focused = listed.first { $0.spaces.contains(active) && $0.info[kCGWindowIsOnscreen as String] as? Bool == true }?.win.id
     return listed.compactMap { w in
@@ -178,6 +179,7 @@ func queryWindows(_ opts: [String: String]) -> [[String: Any]] {
             "id": id, "pid": w.win.pid, "app": appName(w), "bundleId": app?.bundleIdentifier, "title": title,
             "space": numbers[space], "spaceId": space, "column": strip(of: space)?.firstIndex(of: id).map { $0 + 1 },
             "isFocused": id == focused, "isOnScreen": w.info[kCGWindowIsOnscreen as String] as? Bool ?? false,
+            "isFloating": rule(for: w.win.pid, in: current)?.floating == true,
             "frame": ["x": frame.minX, "y": frame.minY, "width": frame.width, "height": frame.height],
         ]
         return fields.compactMapValues { $0 }

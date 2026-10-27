@@ -11,9 +11,10 @@ typealias Listed = (win: Win, spaces: [UInt64], info: [String: Any])
 let cid = CGSMainConnectionID()
 
 // Windows from other apps that are on some Space, front to back, normal layer only, with their Spaces.
-// Skips invisible and tiny helper windows.
+// Skips invisible and tiny helper windows, and apps with an ignore rule.
 func listWindows(_ options: CGWindowListOption) -> [Listed] {
     let list = CGWindowListCopyWindowInfo(options.union(.excludeDesktopElements), kCGNullWindowID) as? [[String: Any]] ?? []
+    let current = rules
     return list.compactMap { info in
         guard info[kCGWindowLayer as String] as? Int == 0,
               (info[kCGWindowAlpha as String] as? Double ?? 1) > 0,
@@ -23,15 +24,18 @@ func listWindows(_ options: CGWindowListOption) -> [Listed] {
               let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary),
               frame.width >= 50, frame.height >= 50,
               let spaces = CGSCopySpacesForWindows(cid, 7, [id] as CFArray)?.takeRetainedValue() as? [UInt64],
-              !spaces.isEmpty
+              !spaces.isEmpty,
+              rule(for: pid, in: current)?.ignore != true
         else { return nil }
         return ((id, pid, frame), spaces, info)
     }
 }
 
-// On-screen windows of one Space. The Space check matters during a Space switch, when both Spaces' windows are on screen.
+// On-screen windows of one Space that belong in the strip: floating rules keep theirs out.
+// The Space check matters during a Space switch, when both Spaces' windows are on screen.
 func windows(on space: UInt64) -> [Win] {
-    listWindows(.optionOnScreenOnly).filter { $0.spaces.contains(space) }.map(\.win)
+    let current = rules
+    return listWindows(.optionOnScreenOnly).filter { $0.spaces.contains(space) && rule(for: $0.win.pid, in: current)?.floating != true }.map(\.win)
 }
 
 // Resize goes through Accessibility: SLS in Dock can move a window, but an app only relayouts when it resizes itself.

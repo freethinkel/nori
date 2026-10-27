@@ -8,7 +8,7 @@ import Cocoa
 
 startApp()  // menu bar item, SIP check, Accessibility, payload: see App.swift
 
-var swallowMouseUp = false  // the click that closed the overview
+var swallowMouseUp = false  // a press that began in the overview: its drag and release are the overview's too
 
 // Ctrl+Opt+Left / Right, Option+h/j/k/l, the overview binding. 3-finger scroll events are swallowed: the swipe is handled from raw touches.
 // While the overview is open, clicks pick a Space and Escape closes it; the clicks don't reach apps.
@@ -18,6 +18,7 @@ let tap = CGEvent.tapCreate(
     options: .defaultTap,
     eventsOfInterest: 1 << CGEventType.keyDown.rawValue | 1 << CGEventType.scrollWheel.rawValue
         | 1 << CGEventType.leftMouseDown.rawValue | 1 << CGEventType.leftMouseUp.rawValue
+        | 1 << CGEventType.leftMouseDragged.rawValue
         | 1 << 29 | 1 << 30,  // gesture and Dock-control events (no CGEventType case for either)
     callback: { _, type, event, _ in
         if type.rawValue == 29 || type.rawValue == 30 {
@@ -25,12 +26,18 @@ let tap = CGEvent.tapCreate(
             return fingerCount == overviewFingers || fingerCount == gestureFingers ? nil : Unmanaged.passUnretained(event)
         }
         if overviewOpen && type == .leftMouseDown {
-            closeOverview(at: overviewIndex(at: event.location) ?? overviewTarget)
+            overviewMouseDown(at: event.location)
             swallowMouseUp = true
+            return nil
+        }
+        if type == .leftMouseDragged {
+            guard swallowMouseUp else { return Unmanaged.passUnretained(event) }
+            overviewMouseDragged(at: event.location)
             return nil
         }
         if type == .leftMouseUp && swallowMouseUp {
             swallowMouseUp = false
+            overviewMouseUp(at: event.location)
             return nil
         }
         if type == .keyDown, let number = desktopNumber(for: event) {
@@ -109,11 +116,13 @@ let quitSources = [SIGINT, SIGTERM].map { sig in
 }
 startControl()
 startMultitouch()
+startMouseDrag()
+loadStrips()
 layout(immediate: false)
 // New window: scroll to it. Window focused by click or Cmd+Tab: scroll to it. Closed window: close the gap.
-// ponytail: focus changes are seen by the same 4x/s poll; observe NSWorkspace activation if that feels slow.
+// Runs on every app / window / Space event (Events.swift), and once a second for whatever those miss.
 var lastFront: UInt32?
-Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { _ in
+func poll() {
     guard !gestureActive, !spaceLayoutBusy else { return }
     let before = columns
     let sync = syncColumns()
@@ -127,4 +136,6 @@ Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { _ in
         layout(immediate: false)
     }
 }
+startEvents()
+Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in poll() }
 NSApp.run()

@@ -401,7 +401,20 @@ static void handle_line(char *line)
         double width;
         if (sscanf(line + 1, "%u %lf", &wid, &width) == 2 && width > 0) {
             resize_t *r = resize_for(wid);
-            if (r) r->real = width;
+            if (!r) break;
+            r->real = width;
+            // The app already shows the new width, and the stretch on top of it would draw it scaled twice until
+            // the next frame: if the stretch has settled there, drop it and recenter now.
+            CGRect b;
+            if (fabs(r->goal - r->drawn) >= 0.5 || fabs(r->real - r->goal) >= 1 || SLSGetWindowBounds(cid, wid, &b) != kCGErrorSuccess) break;
+            CFTypeRef transaction = SLSTransactionCreate(cid);
+            if (!transaction) break;
+            double identity[16] = { 1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  0, 0, 0, 1 };
+            SLSTransactionMoveWindowWithGroup(transaction, wid, CGPointMake(r->cx - r->real / 2, b.origin.y));
+            SLSTransactionSetWindowTransform3D(transaction, wid, identity);
+            SLSTransactionCommit(transaction, 0);
+            CFRelease(transaction);
+            *r = resizes[--resize_count];
         }
         break;
     }

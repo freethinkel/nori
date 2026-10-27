@@ -50,7 +50,10 @@ icon:
 	done
 	iconutil -c icns $(BUILD)/AppIcon.iconset -o assets/AppIcon.icns
 
+test: | $(BUILD)
+	swiftc daemon/TOML.swift test/main.swift -o $(BUILD)/test && $(BUILD)/test
+
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all run app icon clean
+.PHONY: all run app icon test clean

@@ -38,14 +38,14 @@ func statusIcon() -> NSImage {
 
 final class MenuActions: NSObject {
     @objc func openConfig() {
-        let path = NSHomeDirectory() + "/.config/nori/config"
+        let path = configPath
         try? FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
         if !FileManager.default.fileExists(atPath: path) { FileManager.default.createFile(atPath: path, contents: nil) }
         _ = shell("/usr/bin/open", ["-t", path])
     }
 
     @objc func reloadConfig() {
-        config = readConfig()
+        configFile = readConfig()
         applyLaunchAtLogin()
         layout(immediate: false)
     }

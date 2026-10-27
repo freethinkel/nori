@@ -53,7 +53,7 @@ Then nori lives in the menu bar:
 
 | Menu item | What it does |
 |---|---|
-| Open Config | opens `~/.config/nori/config` in the text editor, creating it if needed |
+| Open Config | opens `~/.config/nori/config.toml` in the text editor, creating it if needed |
 | Reload Config (⌘R) | reads the config again and lays the windows out with it |
 | Restart Dock and Reload Payload | after a rebuild, so Dock runs the new payload |
 | Quit nori (⌘Q) | puts Spaces back and quits; the payload stays in Dock but goes idle |
@@ -101,30 +101,66 @@ A repair at Apple or an authorized service provider may turn SIP back on as well
 | Opt+= / Opt+- | focused window wider / narrower by `resize-step` (animated) |
 | Opt+Shift+H / Opt+Shift+L (`move-left`, `move-right`) | move the focused window one column left / right |
 | Opt+Shift+1…9 (`move-to-space-N`) | send the focused window to Desktop N; focus stays on this Space |
+| Opt + left drag | move the window under the pointer; it trades places with a neighbour once past its center |
+| Opt + right drag | resize the window under the pointer (it takes focus, both edges follow the pointer) |
 | Opt+1…5 | Space 1…5. These are the system "Switch to Desktop N" shortcuts: the daemon intercepts them and animates the switch itself |
-| Opt+O (`overview`) | overview: all Spaces scaled down and stacked; a click picks a Space, Esc or Opt+O closes it |
+| Opt+O (`overview`) | overview: all Spaces scaled down and stacked; a click picks a Space and the window under it, dragging a window onto another Space moves it there, Esc or Opt+O closes it |
 | 4 fingers up / down | the overview follows the swipe and settles open / closed on lift (overrides Mission Control on four fingers) |
 
 ## Config
 
-`~/.config/nori/config`, `key = value` lines, `#` starts a comment. Paddings are in points, 0 by default. The config is read at start and again on "Reload Config" in the menu bar.
+`~/.config/nori/config.toml`, in [TOML](https://toml.io). It is read at start and again on "Reload Config" in the menu bar. A key nori doesn't know, or a value of the wrong kind, is reported to stderr and skipped; the rest still applies.
 
-Key bindings are modifiers and one key joined by `+`: `option`/`alt`, `ctrl`, `cmd`, `shift` and a letter or digit (the physical key of the US layout). A binding missing from the config keeps its default.
-
-```
-gap = 16             # between windows
-padding-top = 40     # from the menu bar
-padding-bottom = 0   # from the Dock / bottom of the screen
+```toml
+gap = 16                  # between windows, points
+padding-top = 40          # from the menu bar
+padding-bottom = 0        # from the Dock / bottom of the screen
 padding-left = 24
 padding-right = 24
 resize-step = 10          # width step, % of screen width (default 10)
-grow-width = option+=     # keys: modifiers + a letter, digit, - or =
-shrink-width = option+-
-overview = option+o  # overview of all Spaces
 launch-at-login = true    # start Nori.app at login (default false)
+
+[bindings]
+overview = "option+o"     # overview of all Spaces
+grow-width = "option+="
+shrink-width = "option+-"
+move-left = "option+shift+h"
+move-right = "option+shift+l"
+move-to-space-1 = "option+shift+1"   # … up to move-to-space-9
+
+[[rule]]
+app = "Telegram"
+space = 3
 ```
 
+Numbers default to 0 except `resize-step`. A binding missing from `[bindings]` keeps its default (the values above). A binding is modifiers and one key joined by `+`: `option`/`alt`, `ctrl`, `cmd`, `shift` and a letter, a digit, `-` or `=` (the physical key of the US layout).
+
 `launch-at-login` adds or removes Nori.app in System Settings → General → Login Items, at launch and on "Reload Config". It works only for the app, not for `build/nori` run from a terminal. Move the app where it will stay (e.g. /Applications) before turning it on: the login item points at the bundle's current path.
+
+The TOML reader is nori's own and covers what this file needs: comments, plain keys, `"strings"` and `'literal strings'`, numbers, `true`/`false`, `[tables]` and `[[arrays of tables]]`. Dotted or quoted keys, arrays, inline tables, multi-line strings and dates are reported and skipped.
+
+### App rules
+
+One `[[rule]]` table per app. `app` is the app's name or bundle id, any case; the first rule that matches an app wins, and one rule can have several actions.
+
+```toml
+[[rule]]
+app = "Telegram"
+space = 3              # a new Telegram window goes to Desktop 3
+
+[[rule]]
+app = "com.apple.finder"
+floating = true        # Finder windows stay out of the strip, where you put them
+
+[[rule]]
+app = "Raycast"
+ignore = true          # nori neither moves nor lists Raycast's windows
+```
+
+- `space = N` places a window once, when nori first sees it (also the windows already open when nori starts), so you can still move it elsewhere by hand. Focus stays on the current Space unless the strip there is empty.
+- `floating = true`: the windows aren't columns; nori doesn't move or resize them, and they show in `nori-msg query windows` with `"isFloating": true`.
+- `ignore = true` hides the app's windows from nori completely, `nori-msg` included.
+- "Reload Config" applies changed `floating` and `ignore` rules to open windows right away; `space` rules only affect windows nori hasn't seen yet.
 
 ## CLI
 
@@ -142,7 +178,7 @@ nori-msg query windows --space 2 | jq -r '.[].app'
 nori-msg focus window "$(nori-msg query windows --app Telegram | jq '.[0].id')"
 ```
 
-Window fields: `id`, `pid`, `app`, `bundleId`, `title`, `space` (Desktop number), `spaceId`, `column` (from 1, if the window is in the strip), `isFocused`, `isOnScreen`, `frame`. `--app` matches the app name or bundle id, case-insensitive. Desktops are numbered from 1 across all displays, like the system shortcuts. Fullscreen Spaces have no number; their `type` is `fullscreen`.
+Window fields: `id`, `pid`, `app`, `bundleId`, `title`, `space` (Desktop number), `spaceId`, `column` (from 1, if the window is in the strip), `isFocused`, `isOnScreen`, `isFloating`, `frame`. `--app` matches the app name or bundle id, case-insensitive. Desktops are numbered from 1 across all displays, like the system shortcuts. Fullscreen Spaces have no number; their `type` is `fullscreen`.
 
 Titles of windows on other Spaces are visible only if the terminal running the daemon has Screen Recording permission. For windows of the current Space the title comes from Accessibility.
 
@@ -154,18 +190,23 @@ Socket: `/tmp/nori-ctl_$USER.socket`, owner only. One request per connection: th
 daemon/          Swift daemon, one process
   main.swift       event tap (keys, mouse release), startup, window poll 4 times a second
   Strip.swift      the strip: columns, focus, layout, rubber band, Spaces
-  Overview.swift   Spaces overview
+  Overview.swift   Spaces overview, its clicks and drags, Space switches
+  Events.swift     Accessibility and NSWorkspace notifications that trigger the window sync
+  Persist.swift    column order of every Space kept across restarts
   Trackpad.swift   three-finger strip / Space swipes and four-finger overview swipe from raw MultitouchSupport touches
   Windows.swift    window list (CGWindowList), resize (Accessibility)
   Spaces.swift     Option+J/K: neighbouring Space through the system shortcut
   Resize.swift     Option+=/-: animated width change of the focused window
   Config.swift     config reading
+  TOML.swift       the TOML subset the config is written in
+  Rules.swift      app rules from the config: space, floating, ignore
   Payload.swift    sending commands to the payload
   Control.swift    socket for bin/nori-msg: queries and actions
   App.swift        menu bar item and the setup on launch: SIP, boot-args, Accessibility, payload
 app/Info.plist     Nori.app bundle info (make app)
 assets/            icon.svg and AppIcon.icns built from it (make icon)
 bin/nori-msg       CLI
+test/main.swift    checks of the TOML reader (make test)
 payload/payload.m  dylib inside Dock: socket, window animation on CVDisplayLink, vertical Space switching
 loader/loader.m    loads the payload into Dock (from yabai, MIT)
 docs/PLAN.md       the original PoC plan
@@ -177,6 +218,6 @@ The daemon sends lines like `S <wid> <x> <y>` (move the window smoothly) or `M <
 ## Limitations
 
 - One window per column; column widths can't be changed.
-- New windows and focus changes are found by polling, up to 0.25 s late.
+- New windows and focus changes come from Accessibility and NSWorkspace notifications; a window closing without a focus change is only seen by the once-a-second poll.
 - Main display only.
 - Original window sizes are not restored on exit.

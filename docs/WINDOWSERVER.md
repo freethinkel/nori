@@ -76,8 +76,18 @@ Turning them on without the UI: `defaults write com.apple.symbolichotkeys AppleS
 - `SLSSetWindowWarp` / `SLSTransactionSetWindowWarp` — mesh warp of a window (the genie effect). Not verified.
 - `SLSSetSessionSwitchCubeAnimation` — the fast-user-switching cube. Not explored.
 - Also available: `SLSSetWindowTransforms` (batched), `SLSTransactionSetSpaceAlpha`, `SLSCreateGenieWindowAnimation`, `SLSSetWindowAnimationProgress`, `SLSAddWindowFilter` / `SLSNewCIFilterByName` (CI filters on windows).
+- **WindowServer notifications don't reach a plain process (macOS 27).** A probe registered every type 100…2000 with `SLSRegisterConnectionNotifyProc(cid, handler, type, NULL)` (all returned 0) and with `SLSRegisterNotifyProc(handler, type, NULL)` (412 types refused), with and without `NSApplicationLoad()`, then opened and closed a Finder window through AppleScript: no callback fired at all. Dock gets these as the universal owner; forwarding them from the payload would need a channel from Dock back to the daemon. The daemon uses Accessibility observers per app plus NSWorkspace notifications instead (`daemon/Events.swift`). Not verified that the Finder window really opened during the probe.
 - **`CGWindowListCopyWindowInfo` reports window bounds after the Space transform.** Verified: with the overview open (scale 0.4) a 1512×1567 window at (748, 40) was listed as 692×188 at (1158, 825), and windows of the other shown Spaces became "on screen" with negative y. While a Space has a transform, CGWindowList frames can't be trusted: the daemon's strip keeps the frames from its last normal poll then (`syncColumns`, `spaceLayoutBusy`). Otherwise windows really move and shrink (the resize took its width from such a frame).
 - `CGWindowListCopyWindowInfo` with `.optionOnScreenOnly` shows only windows of the current Space; a window on another Space may have bounds (0, 0) in `.optionAll`.
+
+### Moving a window to another Space (macOS 27)
+
+- From Dock's connection (the payload's `X wid sid`): `SLSMoveWindowsToManagedSpace(cid, [wid], sid)` works. Verified: a test window of a separate process moved from Space 157 to 5.
+- From an ordinary process (the daemon's own connection): `SLSMoveWindowsToManagedSpace` and yabai's compat-ID trick (`SLSSpaceSetCompatID` + `SLSSetWindowListWorkspace` + reset) do nothing (see `daemon/Move.swift`).
+- **But the bridged operation works from an ordinary process**, also on another process's window:
+  `[[SLSBridgedMoveWindowsToManagedSpaceOperation alloc] initWithWindows:@[@(wid)] spaceID:sid]`, then `-performWithWMBridgeDelegate`. Verified with a test window of a separate process: moved to another Space and back, about immediately (checked after 0.7 s with `SLSCopySpacesForWindows`).
+  yabai calls `SLSPerformAsynchronousBridgedWindowManagementOperation(op)`, which SkyLight no longer exports on macOS 27; the classes are still there. `SLSAsynchronousBridgedWindowManagementOperation` (the superclass) has `-performWithWMBridgeDelegate` and `-invokeFallback`; the fallback was not needed, not checked what it does.
+  nori moves windows through the payload anyway; this is the way to do it without Dock.
 
 ## Ideas, not done yet
 
