@@ -6,12 +6,13 @@
 
 import Cocoa
 
+if CommandLine.arguments.count > 1 { runClient(Array(CommandLine.arguments.dropFirst())) }  // nori query …, see Control.swift
 startApp()  // menu bar item, SIP check, Accessibility, payload: see App.swift
 
 var swallowMouseUp = false  // a press that began in the overview: its drag and release are the overview's too
 
 // Ctrl+Opt+Left / Right, Option+h/j/k/l, the overview binding. 3-finger scroll events are swallowed: the swipe is handled from raw touches.
-// While the overview is open, clicks pick a Space and Escape closes it; the clicks don't reach apps.
+// While the overview is open, clicks pick a Space and Escape closes it; the clicks don't reach apps. Keys: see below.
 let tap = CGEvent.tapCreate(
     tap: .cgSessionEventTap,
     place: .headInsertEventTap,
@@ -63,6 +64,18 @@ let tap = CGEvent.tapCreate(
         if type == .keyDown && overviewOpen && event.getIntegerValueField(.keyboardEventKeycode) == 53 {  // Escape
             closeOverview(at: overviewTarget)
             return nil
+        }
+        // Overview, plain keys like niri's: H/L or ←/→ move through the centered Space's columns (live in its
+        // picture), J/K or ↓/↑ bring the Space below / above to the center, Return picks it. Other keys reach the app.
+        if type == .keyDown && overviewOpen && event.flags.intersection(chordModifiers).isEmpty {
+            switch event.getIntegerValueField(.keyboardEventKeycode) {
+            case 4, 123: focusColumn(by: -1); return nil   // h, ←
+            case 37, 124: focusColumn(by: 1); return nil   // l, →
+            case 38, 125: switchSpace(by: 1); return nil   // j, ↓
+            case 40, 126: switchSpace(by: -1); return nil  // k, ↑
+            case 36, 76: closeOverview(at: overviewTarget); return nil  // Return, keypad Enter
+            default: break
+            }
         }
         if type == .leftMouseDown { return Unmanaged.passUnretained(event) }
         if type == .leftMouseUp {

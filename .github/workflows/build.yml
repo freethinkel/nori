@@ -1,0 +1,98 @@
+# Every push and PR: test and build Nori.app, ad-hoc signed, as a workflow artifact.
+# A push to main whose app/Info.plist version has no release yet: the app is signed with Developer ID, notarized,
+# stapled, tagged v<version> and published as Nori.zip, which the app's updater looks for: bump the version to
+# release (/make-new-release).
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the tags, for the release notes
+
+      - name: Release or not
+        run: |
+          version=$(make -s version)
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          if [ "$GITHUB_REF" = refs/heads/main ] && ! gh release view "v$version" >/dev/null 2>&1; then
+            echo "RELEASE=true" >> "$GITHUB_ENV"
+          fi
+
+      - run: make test
+
+      - name: Import the Developer ID certificate
+        if: env.RELEASE == 'true'
+        env:
+          CERT: ${{ secrets.MACOS_CERTIFICATE }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN=$RUNNER_TEMP/sign.keychain-db
+          KEYCHAIN_PASSWORD=$(uuidgen)
+          echo "$CERT" | base64 --decode > $RUNNER_TEMP/cert.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN
+          security set-keychain-settings -lut 3600 $KEYCHAIN
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN
+          security import $RUNNER_TEMP/cert.p12 -P "$CERT_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" $KEYCHAIN
+          security list-keychains -d user -s $KEYCHAIN $(security list-keychains -d user | tr -d '"')
+          rm $RUNNER_TEMP/cert.p12
+
+      - name: Build
+        run: |
+          if [ "$RELEASE" = true ]; then
+            sed -i '' "/CFBundleVersion/{n;s|<string>.*</string>|<string>$GITHUB_RUN_NUMBER</string>|;}" app/Info.plist
+            make app SIGN="Developer ID Application"
+          else
+            make app
+          fi
+          codesign --verify --deep --strict --verbose=2 build/Nori.app
+
+      - name: Notarize
+        if: env.RELEASE == 'true'
+        env:
+          NOTARY_KEY: ${{ secrets.NOTARY_KEY }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          echo "$NOTARY_KEY" > $RUNNER_TEMP/notary.p8
+          ditto -c -k --keepParent build/Nori.app $RUNNER_TEMP/Nori.zip
+          xcrun notarytool submit $RUNNER_TEMP/Nori.zip --key $RUNNER_TEMP/notary.p8 \
+            --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" --wait
+          xcrun stapler staple build/Nori.app
+          rm $RUNNER_TEMP/notary.p8
+
+      - run: ditto -c -k --keepParent build/Nori.app Nori.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Nori
+          path: Nori.zip
+
+      - name: Release
+        if: env.RELEASE == 'true'
+        run: |
+          tag="v$VERSION"
+          # The notes are the commits since the last release, docs and the version bump left out.
+          prev="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+          {
+            git log --no-merges --format='- %s' ${prev:+"$prev"..}HEAD | grep -vE '^- (docs|release):' || true
+            [ -n "$prev" ] && printf '\n**Full Changelog**: %s/compare/%s...%s\n' "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "$prev" "$tag"
+          } > "$RUNNER_TEMP/notes.md"
+          gh release create "$tag" Nori.zip --target "$GITHUB_SHA" --title "$tag" --notes-file "$RUNNER_TEMP/notes.md"

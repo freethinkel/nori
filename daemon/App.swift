@@ -20,19 +20,19 @@ func startApp() {
     statusItem.menu = menu()
     guard bootSetupDone() else { exit(1) }
     waitForAccessibility()
-    if !payloadAlive() { loadPayload() }
+    // After an update Dock still runs the old payload.
+    if !payloadAlive() || CommandLine.arguments.contains("--updated") { loadPayload() }
     applyLaunchAtLogin()
+    startUpdates()
 }
 
-// Three columns, the middle one in focus, like the app icon. A template image, so it follows the menu bar's color.
-func statusIcon() -> NSImage {
-    let image = NSImage(size: NSSize(width: 18, height: 14), flipped: false) { _ in
-        NSBezierPath(roundedRect: NSRect(x: 5, y: 0, width: 8, height: 14), xRadius: 1.5, yRadius: 1.5).fill()
-        NSBezierPath(roundedRect: NSRect(x: 0, y: 2.5, width: 3.5, height: 9), xRadius: 1, yRadius: 1).fill()
-        NSBezierPath(roundedRect: NSRect(x: 14.5, y: 2.5, width: 3.5, height: 9), xRadius: 1, yRadius: 1).fill()
-        return true
-    }
-    image.isTemplate = true
+// The two nori sheets of the app icon as a silhouette: status.png (36px, 18pt @2x) in the bundle's
+// Resources, or next to build/nori. Not in Contents/MacOS: codesign takes anything there for unsigned code.
+// A template image, so it follows the menu bar's color.
+func statusIcon() -> NSImage? {
+    let image = NSImage(contentsOf: Bundle.main.url(forResource: "status", withExtension: "png") ?? helpers.appendingPathComponent("status.png"))
+    image?.size = NSSize(width: 18, height: 18)
+    image?.isTemplate = true
     return image
 }
 
@@ -62,6 +62,7 @@ let menuActions = MenuActions()
 func menu() -> NSMenu {
     let menu = NSMenu()
     menu.addItem(withTitle: "nori", action: nil, keyEquivalent: "")
+    menu.addItem(updateItem)
     menu.addItem(.separator())
     for (title, action, key) in [
         ("Open Config", #selector(MenuActions.openConfig), ","),

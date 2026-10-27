@@ -2,7 +2,8 @@
 // window minimized, app hidden) and NSWorkspace ones (app launched, quit, activated; Space changed) run poll() at once.
 // WindowServer's own notifications (SLSRegisterConnectionNotifyProc, SLSRegisterNotifyProc) deliver nothing to a plain
 // process on macOS 27: none of the types 100…2000 fired while a window opened and closed (docs/WINDOWSERVER.md).
-// ponytail: the poll stays, once a second, for what these miss (a window closing without a focus change).
+// Each window also reports its own destruction, so a window closing without a focus change is seen at once too.
+// ponytail: the poll stays, once a second, for whatever these still miss.
 
 import Cocoa
 
@@ -30,16 +31,24 @@ func observe(_ app: NSRunningApplication) {
     let pid = app.processIdentifier
     guard app.activationPolicy == .regular, axObservers[pid] == nil else { return }
     var observer: AXObserver?
-    let created = AXObserverCreate(pid, { _, _, notification, _ in
+    let created = AXObserverCreate(pid, { observer, element, notification, _ in
         pollSoon()
         // A new window may reach CGWindowList a little after its notification.
         if notification as String == kAXWindowCreatedNotification {
+            AXObserverAddNotification(observer, element, kAXUIElementDestroyedNotification as CFString, nil)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { pollSoon() }
         }
     }, &observer)
     guard created == .success, let observer else { return }
     let element = AXUIElementCreateApplication(pid)
+    AXUIElementSetMessagingTimeout(element, 0.25)  // a hung app must not stall the daemon
     guard axNotifications.map({ AXObserverAddNotification(observer, element, $0 as CFString, nil) }).first == .success else { return }
+    var windows: CFTypeRef?
+    if AXUIElementCopyAttributeValue(element, kAXWindowsAttribute as CFString, &windows) == .success {
+        for window in windows as? [AXUIElement] ?? [] {
+            AXObserverAddNotification(observer, window, kAXUIElementDestroyedNotification as CFString, nil)
+        }
+    }
     CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .defaultMode)
     axObservers[pid] = observer
 }

@@ -5,7 +5,15 @@ SKYLIGHT = -F/System/Library/PrivateFrameworks -framework SkyLight
 
 APP = $(BUILD)/Nori.app
 
-all: $(BUILD)/nori $(BUILD)/payload.dylib $(BUILD)/loader
+# Ad-hoc by default. A real identity (make app SIGN="Developer ID Application") also gets the hardened runtime
+# and a secure timestamp, which notarization requires.
+SIGN ?= -
+CODESIGN = codesign --force --sign "$(SIGN)" $(if $(filter -,$(SIGN)),,--options runtime --timestamp)
+
+all: $(BUILD)/nori $(BUILD)/payload.dylib $(BUILD)/loader $(BUILD)/status.png
+
+$(BUILD)/status.png: assets/status.png | $(BUILD)
+	cp $< $@
 
 $(BUILD)/nori: $(wildcard daemon/*.swift) | $(BUILD)
 	swiftc -O $^ -o $@.tmp && mv -f $@.tmp $@
@@ -29,26 +37,29 @@ run: all
 
 # The menu bar app: the same three binaries, side by side in Contents/MacOS. It sets itself up on launch, see App.swift.
 # Built next to the old bundle and swapped in, so Dock keeps its mapped payload until it restarts.
-# ponytail: ad-hoc signed, so macOS may ask for Accessibility again after a rebuild; sign with a real identity to stop that.
+# Ad-hoc signed, macOS may ask for Accessibility again after a rebuild; a real SIGN identity stops that.
 app: all
 	rm -rf $(APP).tmp
 	mkdir -p $(APP).tmp/Contents/MacOS $(APP).tmp/Contents/Resources
 	cp app/Info.plist $(APP).tmp/Contents/
-	cp assets/AppIcon.icns $(APP).tmp/Contents/Resources/
+	cp assets/AppIcon.icns assets/status.png $(APP).tmp/Contents/Resources/
 	cp $(BUILD)/nori $(BUILD)/loader $(BUILD)/payload.dylib $(APP).tmp/Contents/MacOS/
-	codesign --force --sign - $(APP).tmp/Contents/MacOS/loader $(APP).tmp/Contents/MacOS/payload.dylib
-	codesign --force --sign - $(APP).tmp
+	$(CODESIGN) $(APP).tmp/Contents/MacOS/loader $(APP).tmp/Contents/MacOS/payload.dylib
+	$(CODESIGN) $(APP).tmp
 	rm -rf $(APP)
 	mv $(APP).tmp $(APP)
 
-# Regenerates the app icon from assets/icon.svg. Needs rsvg-convert (brew install librsvg).
+# Regenerates the app icon from assets/icon.png (1024, already masked to the macOS squircle).
 icon:
 	rm -rf $(BUILD)/AppIcon.iconset && mkdir -p $(BUILD)/AppIcon.iconset
 	for n in 16 32 128 256 512; do \
-		rsvg-convert -w $$n -h $$n assets/icon.svg -o $(BUILD)/AppIcon.iconset/icon_$${n}x$${n}.png; \
-		rsvg-convert -w $$((n * 2)) -h $$((n * 2)) assets/icon.svg -o $(BUILD)/AppIcon.iconset/icon_$${n}x$${n}@2x.png; \
+		sips -z $$n $$n assets/icon.png --out $(BUILD)/AppIcon.iconset/icon_$${n}x$${n}.png >/dev/null; \
+		sips -z $$((n * 2)) $$((n * 2)) assets/icon.png --out $(BUILD)/AppIcon.iconset/icon_$${n}x$${n}@2x.png >/dev/null; \
 	done
 	iconutil -c icns $(BUILD)/AppIcon.iconset -o assets/AppIcon.icns
+
+version:  # app/Info.plist's version, which a push to main releases (.github/workflows/build.yml)
+	@plutil -extract CFBundleShortVersionString raw app/Info.plist
 
 test: | $(BUILD)
 	swiftc daemon/TOML.swift test/main.swift -o $(BUILD)/test && $(BUILD)/test
@@ -56,4 +67,4 @@ test: | $(BUILD)
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all run app icon test clean
+.PHONY: all run app icon version test clean

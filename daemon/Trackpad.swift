@@ -17,7 +17,7 @@ var swipeIgnored = false  // this touch went vertical: it moves through Spaces i
 
 // 3-finger vertical swipe: Spaces, like niri's workspaces. They follow the fingers (rubber past the first and last);
 // on lift the nearest one, or the next one for a flick, slides to the center like windows do, and Dock switches to it.
-let spaceSwipeDistance: CGFloat = 0.25  // trackpad heights per Space
+let spaceSwipeDistance: CGFloat = 0.5  // trackpad heights per Space
 var spaceSwiping = false
 var spaceSwipeFocus: CGFloat = 0     // index of the Space at the center, fractional
 var spaceSwipeVelocity: CGFloat = 0  // Spaces per second, smoothed

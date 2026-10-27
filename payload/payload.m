@@ -10,6 +10,10 @@
 //                              (overview) or 0 to ease like windows (a Space switch)
 //        "G progress velocity" a running Space layout follows a swipe: progress held there until the next "Y"
 //        "F focus velocity"    the same for the (fractional) index of the Space at the center
+//        "Q seq"               number of the next "Y", echoed back in its "layout-done"
+// Back to the daemon, on its control socket (daemon/Control.swift), see notify_daemon:
+//        "payload\tlayout-done\t<seq>"             a Space layout ended; the strip may look at windows again
+//        "payload\tresize-settled\t<wid>\t<width>"  a width stretch reached its goal; the app can be resized now
 //        "R wid width"         width animation, see resize_t. S and M for that window move its center meanwhile.
 //        "W wid width"         the app has resized that window to `width` (the end of a width animation)
 //        "X wid sid"           move the window to Space sid
@@ -30,6 +34,7 @@
 #include <ptrauth.h>
 #include <math.h>
 #include <pthread.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -97,6 +102,33 @@ static bool layout_follow;  // a 4-finger swipe holds progress ("G"); the next "
 static bool focus_follow;   // a 3-finger swipe holds focus ("F"); the next "Y" lets go
 static double layout_focus, layout_progress, focus_velocity, progress_velocity;
 static uint64_t layout_started;  // ns
+static long layout_seq;          // from "Q", for "layout-done"
+static char control_path[256];   // the daemon's control socket
+static dispatch_queue_t notify_queue;
+
+// One request per connection, like nori-msg. Off the animation queue, and dropped if the daemon isn't listening.
+// The reply (none for these) is read to the end before closing, so the daemon never writes to a closed socket.
+static void notify_daemon(const char *format, ...)
+{
+    char *line;
+    va_list args;
+    va_start(args, format);
+    if (vasprintf(&line, format, args) < 0) line = NULL;
+    va_end(args);
+    if (!line) return;
+    dispatch_async(notify_queue, ^{
+        int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+        struct sockaddr_un addr = { .sun_family = AF_UNIX };
+        snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", control_path);
+        if (fd >= 0 && connect(fd, (struct sockaddr *) &addr, sizeof(addr)) == 0) {
+            write(fd, line, strlen(line));
+            char buf[256];
+            while (read(fd, buf, sizeof(buf)) > 0) {}
+        }
+        if (fd >= 0) close(fd);
+        free(line);
+    });
+}
 
 static int anim_count;
 
@@ -110,6 +142,7 @@ typedef struct {
     double drawn, goal, real;  // widths
     double cx, cx_goal;        // screen x of the center
     uint64_t started;
+    bool notified;             // "resize-settled" sent for this goal
 } resize_t;
 static resize_t resizes[MAX_ANIMS];
 static int resize_count;
@@ -199,6 +232,7 @@ static void step_layout(double dt)
         overview_active = false;
         overview_count = 0;
         layout_count = 0;
+        notify_daemon("payload\tlayout-done\t%ld\n", layout_seq);
     }
     SLSTransactionCommit(transaction, 0);
     CFRelease(transaction);
@@ -240,6 +274,10 @@ static void tick(double frame)
         }
         // Done once the app has the width; after two seconds without "W" the daemon is gone or the app is stuck.
         bool done = settled && (fabs(r.real - r.goal) < 1 || now - r.started > 2000000000);
+        if (settled && !done && !r.notified) {
+            r.notified = true;
+            notify_daemon("payload\tresize-settled\t%u\t%.1f\n", r.wid, r.goal);
+        }
         double s = done ? 1 : r.drawn / r.real;
         SLSTransactionMoveWindowWithGroup(transaction, r.wid, CGPointMake(r.cx - r.real / 2, b.origin.y));
         // Screen -> window matrix, origin at the window's top-left (docs/WINDOWSERVER.md): x scaled about the center.
@@ -368,6 +406,9 @@ static void handle_line(char *line)
     case 'P':
         daemon_pid = atoi(line + 1);
         break;
+    case 'Q':
+        layout_seq = atol(line + 1);
+        break;
     case 'R': {
         double width;
         if (sscanf(line + 1, "%u %lf", &wid, &width) == 2 && width > 0) {
@@ -380,6 +421,7 @@ static void handle_line(char *line)
                 *r = (resize_t){ wid, b.size.width, width, b.size.width, CGRectGetMidX(b), CGRectGetMidX(b), 0 };
             }
             r->goal = width;
+            r->notified = false;
             r->started = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
             anim_drop(wid);  // the resize moves this window now
         }
@@ -606,6 +648,8 @@ static void nori_payload_init(void)
 {
     static char path[256];
     snprintf(path, sizeof(path), "/tmp/nori_%s.socket", getenv("USER") ?: "user");
+    snprintf(control_path, sizeof(control_path), "/tmp/nori-ctl_%s.socket", getenv("USER") ?: "user");
+    notify_queue = dispatch_queue_create("nori.notify", DISPATCH_QUEUE_SERIAL);
     queue = dispatch_queue_create("nori.anim", dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INTERACTIVE, 0));
     hook("SLSTransactionSetSpaceTransform", nori_transform_prologue, nori_transform_stub, &nori_transform_resume);
     hook("SLSTransactionSetSpaceShape", nori_shape_prologue, nori_shape_stub, &nori_shape_resume);

@@ -1,6 +1,6 @@
-// Control socket for bin/nori-msg: queries about Spaces and windows, and the same actions as the hotkeys.
+// Control socket for "nori query …" and "nori focus …": queries about Spaces and windows, and the same actions as the hotkeys.
 // One request per connection: the arguments joined by tabs, one line. Reply: JSON for a query, nothing for an action
-// that worked, "error: …" otherwise. Then the daemon closes the connection.
+// that worked, "error: …" otherwise. Then the daemon closes the connection. runClient is the other end.
 
 import Cocoa
 
@@ -9,14 +9,44 @@ var controlSource: DispatchSourceRead?
 
 let usage = """
     error: usage:
-      query spaces [--current]
-      query windows [--space N] [--current] [--app NAME] [--id WID] [--focused]
-      focus left|right
-      focus column N
-      focus space N
-      focus window WID
+      nori                    run nori itself
+      nori query spaces [--current]
+      nori query windows [--space N] [--current] [--app NAME] [--id WID] [--focused]
+      nori focus left|right
+      nori focus column N
+      nori focus space N
+      nori focus window WID
 
     """
+
+// nori with arguments: send them to the running nori, print its reply, exit 1 on an error.
+func runClient(_ args: [String]) -> Never {
+    if ["help", "-h", "--help"].contains(args[0]) {
+        print(usage.dropFirst("error: ".count), terminator: "")
+        exit(0)
+    }
+    let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+    guard fd >= 0, withAddress(controlPath, { connect(fd, $0, $1) }) == 0 else {
+        fputs("nori is not running\n", stderr)
+        exit(1)
+    }
+    var request = Array((args.joined(separator: "\t") + "\n").utf8)[...]
+    while !request.isEmpty {
+        let n = request.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
+        guard n > 0 else { break }
+        request = request.dropFirst(n)
+    }
+    var reply: [UInt8] = []
+    var buffer = [UInt8](repeating: 0, count: 65536)
+    while case let n = read(fd, &buffer, buffer.count), n > 0 { reply += buffer[..<n] }
+    let text = String(decoding: reply, as: UTF8.self)
+    if text.hasPrefix("error:") {
+        fputs(text, stderr)
+        exit(1)
+    }
+    print(text, terminator: "")
+    exit(0)
+}
 
 // Requests run on the main queue, between polls, so they see the same state as the hotkeys.
 func startControl() {
@@ -79,6 +109,13 @@ func handle(_ args: [String]) -> String {
     case ("focus", "space"):
         guard let n = number else { break }
         return switchToSpace(n) ? "" : "error: no Desktop \(n), or its shortcut is off in Keyboard Shortcuts → Mission Control\n"
+    // From the payload in Dock, see its header.
+    case ("payload", "layout-done"):
+        if let n = number { spaceLayoutDone(n) }
+        return ""
+    case ("payload", "resize-settled") where args.count == 4:
+        if let window = UInt32(args[2]), let width = Double(args[3]) { resizeSettled(window, CGFloat(width)) }
+        return ""
     case ("focus", "window"):
         guard let n = number else { break }
         guard let listed = listWindows([]).first(where: { $0.win.id == n }) else { return "error: no window \(n)\n" }

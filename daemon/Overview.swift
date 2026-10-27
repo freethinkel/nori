@@ -51,20 +51,29 @@ func desktopSpaces() -> (ids: [UInt64], current: Int) {
     return ([active], 0)
 }
 
-// The strip must not look at windows while a Space layout is on (see syncColumns). The payload gives up on
-// a layout 1 s after the last "Y"; a spring close settles well before that.
+// The strip must not look at windows while a Space layout is on (see syncColumns). The payload says when one
+// ends ("layout-done", Control.swift); the deadline is only for a payload that doesn't (an old one, or Dock gone).
 var spaceLayoutUntil: CFTimeInterval = 0
 var spaceLayoutBusy: Bool { overviewOpen || CACurrentMediaTime() < spaceLayoutUntil }
+var layoutSeq = 0
+let spaceLayoutFallback = 3.0
+
+func spaceLayoutDone(_ seq: Int) {
+    guard seq == layoutSeq else { return }  // a later "Y" is still running
+    spaceLayoutUntil = 0
+    pollSoon()
+}
 
 // spring: the overview opening and closing; otherwise the windows' ease.
 func sendLayout(open: Bool, spring: Bool) {
-    spaceLayoutUntil = CACurrentMediaTime() + 1.2
-    // The Space-changed event lands while the strip is paused: look again once the pause is over.
-    DispatchQueue.main.asyncAfter(deadline: .now() + 1.25) { pollSoon() }
-    send(["Y \(spring ? 1 : 0) \(overviewTarget) \(open ? 1 : 0) " + overviewSpaces.map(String.init).joined(separator: " ")])
+    spaceLayoutUntil = CACurrentMediaTime() + spaceLayoutFallback
+    layoutSeq += 1
+    // The Space-changed event lands while the strip is paused; layout-done polls, this is in case it never comes.
+    DispatchQueue.main.asyncAfter(deadline: .now() + spaceLayoutFallback + 0.05) { pollSoon() }
+    send(["Q \(layoutSeq)", "Y \(spring ? 1 : 0) \(overviewTarget) \(open ? 1 : 0) " + overviewSpaces.map(String.init).joined(separator: " ")])
 }
 
-// Every "Switch to Desktop N" press lands here (keys, Option+J/K, nori-msg), and Dock switches under our slide.
+// Every "Switch to Desktop N" press lands here (keys, Option+J/K, nori focus space), and Dock switches under our slide.
 func switchSpaceAnimated(to number: Int) {
     guard let sid = spaces().first(where: { $0.number == number })?.id else { return }
     if overviewOpen {
@@ -107,7 +116,7 @@ func beginOverviewSwipe() {
 // progress: 0 closed, 1 open, past either end it stretches like rubber. velocity: progress per second.
 func followOverviewSwipe(progress: CGFloat, velocity: CGFloat) {
     let clamped = min(max(progress, 0), 1)
-    spaceLayoutUntil = CACurrentMediaTime() + 1.2
+    spaceLayoutUntil = CACurrentMediaTime() + spaceLayoutFallback
     send(["G \(clamped + rubberBand(progress - clamped, 0.5)) \(velocity)"])
 }
 
@@ -130,13 +139,16 @@ func beginSpaceSwipe() -> CGFloat {
 // focus: index of the Space at the center; past the first or last Space it stretches like rubber.
 func followSpaceSwipe(focus: CGFloat, velocity: CGFloat) {
     let clamped = min(max(focus, 0), CGFloat(overviewSpaces.count - 1))
-    spaceLayoutUntil = CACurrentMediaTime() + 1.2
+    spaceLayoutUntil = CACurrentMediaTime() + spaceLayoutFallback
     send(["F \(clamped + rubberBand(focus - clamped, 0.5)) \(velocity)"])
 }
 
 // A flick goes on to the next Space in its direction; a slow lift picks the nearest. Dock then switches to it.
+// The flick speed is in Spaces per second: 0.75 is the same finger speed as 1.5 was before a Space took twice the travel.
+let spaceFlickSpeed: CGFloat = 0.75
+
 func endSpaceSwipe(focus: CGFloat, velocity: CGFloat) {
-    let index = abs(velocity) > 1.5 ? Int(focus.rounded(velocity > 0 ? .up : .down)) : Int(focus.rounded())
+    let index = abs(velocity) > spaceFlickSpeed ? Int(focus.rounded(velocity > 0 ? .up : .down)) : Int(focus.rounded())
     overviewTarget = min(max(index, 0), overviewSpaces.count - 1)
     sendLayout(open: overviewOpen, spring: overviewOpen)
     let sid = overviewSpaces[overviewTarget]

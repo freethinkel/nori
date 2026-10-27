@@ -22,8 +22,24 @@ func withPendingWidths(_ wins: [Win]) -> [Win] {
 }
 
 let axQueue = DispatchQueue(label: "nori.ax", qos: .userInteractive)
-let resizeSettle = 0.4  // seconds; a 300 pt stretch takes about 0.37 s at 60 Hz (a quarter of the rest per frame)
+// The payload says when the stretch has settled ("resize-settled", Control.swift), and the app is resized then.
+// The delay is a fallback for a payload that doesn't; a 300 pt stretch takes about 0.37 s at 60 Hz.
+let resizeSettle = 0.8
 var resizeWork: DispatchWorkItem?
+var resizeWorkFor: (window: UInt32, width: CGFloat)?
+
+// Main thread. Runs the pending AX resize once, whichever comes first: the payload's word or the fallback.
+func runResize(_ work: DispatchWorkItem) {
+    guard resizeWork === work else { return }
+    resizeWork = nil
+    resizeWorkFor = nil
+    axQueue.async(execute: work)
+}
+
+func resizeSettled(_ window: UInt32, _ width: CGFloat) {
+    guard let work = resizeWork, let pending = resizeWorkFor, pending.window == window, abs(pending.width - width) < 1 else { return }
+    runResize(work)
+}
 
 var usableWidth: CGFloat { CGDisplayBounds(CGMainDisplayID()).width - paddingLeft - paddingRight }
 
@@ -63,5 +79,6 @@ func resizeFocused(_ win: Win, at index: Int, to width: CGFloat) {
         }
     }
     resizeWork = work
-    axQueue.asyncAfter(deadline: .now() + resizeSettle, execute: work)
+    resizeWorkFor = (win.id, width)
+    DispatchQueue.main.asyncAfter(deadline: .now() + resizeSettle) { runResize(work) }
 }
