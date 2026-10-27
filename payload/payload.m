@@ -4,6 +4,7 @@
 //        "M wid x y"           move (immediate)
 //        "A wid alpha"         alpha
 //        "O wid order rel"     order
+//        "D wid m11 m12 … m44"  3D transform (CATransform3D, row by row); identity resets
 // Also turns the native Spaces slide vertical, see hook_space_transform.
 // Animation runs here on a user-interactive queue, so the daemon sends one line per window, not one per frame.
 // Frames come from CVDisplayLink (vsync), and each frame moves all windows in one SLS transaction.
@@ -37,6 +38,8 @@ extern CGError SLSTransactionMoveWindowWithGroup(CFTypeRef transaction, uint32_t
 extern CGError SLSTransactionCommit(CFTypeRef transaction, int synchronous);
 extern CGError SLSSetWindowAlpha(int cid, uint32_t wid, float alpha);
 extern CGError SLSOrderWindow(int cid, uint32_t wid, int order, uint32_t rel_wid);
+// The matrix is 16 doubles, same layout as CATransform3D.
+extern CGError SLSTransactionSetWindowTransform3D(CFTypeRef transaction, uint32_t wid, const double *m);
 
 #define MAX_ANIMS 128
 
@@ -143,6 +146,19 @@ static void handle_line(char *line)
         uint32_t rel;
         if (sscanf(line + 1, "%u %d %u", &wid, &order, &rel) == 3) {
             SLSOrderWindow(cid, wid, order, rel);
+        }
+        break;
+    }
+    case 'D': {
+        double m[16];
+        if (sscanf(line + 1, "%u %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf", &wid,
+                   &m[0], &m[1], &m[2], &m[3], &m[4], &m[5], &m[6], &m[7],
+                   &m[8], &m[9], &m[10], &m[11], &m[12], &m[13], &m[14], &m[15]) == 17) {
+            CFTypeRef transaction = SLSTransactionCreate(cid);
+            if (!transaction) break;
+            SLSTransactionSetWindowTransform3D(transaction, wid, m);
+            SLSTransactionCommit(transaction, 0);
+            CFRelease(transaction);
         }
         break;
     }
