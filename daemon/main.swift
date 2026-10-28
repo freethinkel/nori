@@ -7,6 +7,7 @@
 import Cocoa
 
 if CommandLine.arguments.count > 1 { runClient(Array(CommandLine.arguments.dropFirst())) }  // nori query …, see Control.swift
+atexit(restoreSystemGesturesOnExit)
 startApp()  // menu bar item, SIP check, Accessibility, payload: see App.swift
 
 var swallowMouseUp = false  // a press that began in the overview: its drag and release are the overview's too
@@ -21,16 +22,17 @@ let tap = CGEvent.tapCreate(
     eventsOfInterest: 1 << CGEventType.keyDown.rawValue | 1 << CGEventType.scrollWheel.rawValue
         | 1 << CGEventType.leftMouseDown.rawValue | 1 << CGEventType.leftMouseUp.rawValue
         | 1 << CGEventType.leftMouseDragged.rawValue
-        | 1 << 29 | 1 << 30,  // gesture and Dock-control events (no CGEventType case for either)
+        | 1 << 29 | 1 << 30 | 1 << 31,  // gesture, magnify and swipe (NSEventTypeGesture, Magnify, Swipe)
     callback: { _, type, event, _ in
         // macOS turns a tap off when a callback runs late (or for secure input); off, macOS gestures fight ours.
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let mainTap { CGEvent.tapEnable(tap: mainTap, enable: true) }
             return Unmanaged.passUnretained(event)
         }
-        if type.rawValue == 29 || type.rawValue == 30 {
+        if type.rawValue == 29 || type.rawValue == 30 || type.rawValue == 31 {
             // Three and four fingers are ours (strip, Spaces, overview): keep Mission Control and friends from seeing them.
-            return fingerCount == overviewFingers || fingerCount == gestureFingers ? nil : Unmanaged.passUnretained(event)
+            // A swipe arrives after the fingers lift, when the raw count is already 0, so the latch counts too.
+            return swallowSystemGesture() ? nil : Unmanaged.passUnretained(event)
         }
         if overviewOpen && type == .leftMouseDown {
             overviewMouseDown(at: event.location)
@@ -87,7 +89,8 @@ let tap = CGEvent.tapCreate(
             return Unmanaged.passUnretained(event)
         }
         if type == .scrollWheel {
-            return fingerCount == gestureFingers ? nil : Unmanaged.passUnretained(event)
+            // Three fingers scroll the strip, four drive the overview; two-finger scrolling stays the app's.
+            return swallowSystemGesture() ? nil : Unmanaged.passUnretained(event)
         }
         return Unmanaged.passUnretained(event)
     },
@@ -95,12 +98,18 @@ let tap = CGEvent.tapCreate(
 )
 
 guard let tap = tap else {
+    restoreSystemGestures()
     fputs("event tap failed: grant Accessibility to this binary\n", stderr)
     exit(1)
 }
 mainTap = tap
 CFRunLoopAddSource(CFRunLoopGetCurrent(), CFMachPortCreateRunLoopSource(nil, tap, 0), .commonModes)
 CGEvent.tapEnable(tap: tap, enable: true)
+// Secure input turns the tap off, and the gesture that arrives while it is off goes to Mission Control. Retry, since
+// the disable event itself is only delivered with the next event.
+Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+    if !CGEvent.tapIsEnabled(tap: tap) { CGEvent.tapEnable(tap: tap, enable: true) }
+}
 // A peer gone mid-write (Dock restarting under the payload socket, a subscriber) must not kill the daemon: EPIPE instead.
 signal(SIGPIPE, SIG_IGN)
 // The payload turns its Space hooks off once this pid is gone. Repeated so a restarted Dock learns it too.
@@ -111,7 +120,7 @@ signal(SIGINT, SIG_IGN)
 signal(SIGTERM, SIG_IGN)
 let quitSources = [SIGINT, SIGTERM].map { sig in
     let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
-    source.setEventHandler { resetOverview(); restoreWindows(); exit(0) }
+    source.setEventHandler { resetOverview(); restoreWindows(); restoreSystemGestures(); exit(0) }
     source.resume()
     return source
 }

@@ -1,5 +1,6 @@
 // Trackpad gestures from raw touches: 3 fingers move the strip (horizontal) or Spaces (vertical), 4 drive the overview.
-// macOS's own 3- and 4-finger gestures are swallowed in the event tap, so they can stay on in System Settings.
+// The event tap swallows macOS's own 3- and 4-finger gesture events as far as it can; Mission Control and App Exposé
+// still have to be off in System Settings (App.swift asks, README has the steps).
 
 import Cocoa
 
@@ -8,6 +9,16 @@ import Cocoa
 // ponytail: one trackpad at a time; frames from a second trackpad would interleave with the first.
 var fingerCount: Int32 = 0
 let gestureFingers: Int32 = 3
+
+// Mission Control and App Exposé get their swipe as NSEventTypeSwipe (31) after the fingers lift, when fingerCount is
+// already 0. Keep swallowing for a moment after a 3- or 4-finger frame, so the end of our gesture reaches nobody else.
+let systemGestureLinger: CFTimeInterval = 0.25
+var systemGestureUntil: CFTimeInterval = 0
+
+func swallowSystemGesture() -> Bool {
+    fingerCount == gestureFingers || fingerCount == overviewFingers || CACurrentMediaTime() < systemGestureUntil
+}
+
 let swipeSpeed: CGFloat = 1.3  // strip points per point of finger travel; above 1 the strip outruns the fingers
 let swipeScale = CGDisplayBounds(CGMainDisplayID()).width * swipeSpeed  // points per full trackpad width
 let swipeThreshold: CGFloat = 0.02  // trackpad widths before the direction is decided
@@ -28,7 +39,7 @@ var swipeVelocity: CGFloat = 0  // points per frame, smoothed
 
 // 4-finger vertical swipe drives the overview like niri's: up opens, down closes, and it follows the fingers.
 // On lift it springs open or closed, thrown by the finger speed. macOS's own 4-finger gestures (Mission Control,
-// App Exposé, Spaces) are swallowed in the event tap while four fingers are down, so they don't fire too.
+// App Exposé, Spaces) are swallowed in the event tap while four fingers are down and just after, so they don't fire too.
 let overviewFingers: Int32 = 4
 let overviewSwipeDistance: CGFloat = 0.3  // trackpad heights from closed to open
 var overviewSwiping = false
@@ -148,6 +159,9 @@ let contactCallback: ContactCallback = { _, touches, contacts, time, _, _ in
         }
     }
     fingerCount = count
+    if count == gestureFingers || count == overviewFingers {
+        systemGestureUntil = CACurrentMediaTime() + systemGestureLinger
+    }
     let center = count > 0 ? CGPoint(x: CGFloat(x / Float(count)), y: CGFloat(y / Float(count))) : nil
     DispatchQueue.main.async { touchFrame(count: count, center: center, time: time) }
     return 0

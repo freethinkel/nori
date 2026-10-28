@@ -13,7 +13,7 @@ It's a prototype. WindowServer moves the windows, not Accessibility. A dylib loa
 - Clicking a window or switching to it with Cmd+Tab scrolls the strip to it.
 - nori stretches a window to the full screen height when it joins the strip.
 - Three fingers sideways drag the strip. Lift, and it settles on the nearest column. Past either end it stretches like rubber.
-- Three fingers up or down move through Spaces the same way. The Spaces follow your fingers, and on lift the nearest one slides to the center, or the next one if you flicked. nori swallows macOS's own three-finger gestures.
+- Three fingers up or down move through Spaces the same way. The Spaces follow your fingers, and on lift the nearest one slides to the center, or the next one if you flicked. nori swallows the three- and four-finger gesture events it can, and turns Mission Control and App Exposé off while it runs, putting them back when it quits, see [macOS settings](#3-macos-settings).
 - Drop a window you dragged with the mouse and it eases back into its column.
 - Every Space has its own strip.
 - Spaces switch vertically, on the same curve as windows. nori catches every "Switch to Desktop N" press, from the keyboard, from Opt+J/K or from `nori focus space`. Dock still switches the Space and the payload draws the slide. If nori quits or crashes, Dock goes back to its usual horizontal animation.
@@ -65,7 +65,7 @@ After that nori lives in the menu bar.
 ### 3. macOS settings
 
 - **Desktop shortcuts.** Turn on "Switch to Desktop 1…N" in System Settings → Keyboard → Keyboard Shortcuts → Mission Control. Opt+J/K, the overview and `nori focus space` press them to switch Spaces.
-- **Trackpad.** In System Settings → Trackpad → More Gestures, set "Swipe between full-screen applications" to four fingers or turn it off. Otherwise macOS flips Spaces along with the strip.
+- **Trackpad.** In System Settings → Trackpad → More Gestures, set "Swipe between full-screen applications" to four fingers or turn it off. Otherwise macOS flips Spaces along with the strip. **Mission Control** and **App Exposé** use the same 3- and 4-finger swipes, and macOS can act on them before nori's event tap sees the gesture. nori turns both off while it runs (`showMissionControlGestureEnabled` and `showAppExposeGestureEnabled` in `com.apple.dock`) and restores them when it quits, restarting Dock to apply each change, so the next launch loads the payload again (password); Mission Control stays on its keyboard shortcut. If nori crashes they stay off until the next launch or quit.
 - **yabai.** If you have it, stop it while nori runs with `yabai --stop-service`, or at least run `yabai -m config layout float`.
 
 ### Check by hand
@@ -135,7 +135,7 @@ Every row with a config name can be rebound in `[bindings]`, or unbound with `"n
 | Opt+F | every window of this Space outside the strip (floating rules, dialogs, panels, PiP) comes above the strip's. Focus stays where it was. Config name `show-floating` |
 | Opt+Shift+V | the focused window leaves the strip and floats in the middle of the screen at 2/3 of its width and height; again on that window puts it back right of the focused column, at its old width. nori remembers it across restarts. Config name `toggle-floating` |
 | in the overview: H/L or ←/→, J/K or ↓/↑, Return | move through the centered Space's columns, bring the Space below or above to the center, pick it |
-| 4 fingers up / down | the overview follows the swipe and settles open or closed on lift. This replaces Mission Control on four fingers |
+| 4 fingers up / down | the overview follows the swipe and settles open or closed on lift. This replaces Mission Control on four fingers, with Mission Control's gesture turned off while nori runs |
 
 ## Config
 
