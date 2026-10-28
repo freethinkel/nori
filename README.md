@@ -11,11 +11,12 @@ It's a prototype. WindowServer moves the windows, not Accessibility. A dylib loa
 - Every window of the current Space is a column. The focused window sits in the center, the others line up left and right, `gap` apart. With `center-focused-column` the strip scrolls only as far as it takes to show the focused window whole, as in niri and OmniWM.
 - A new window opens right of the focused one and the strip scrolls to it. When a window closes, its neighbours close the gap.
 - Clicking a window or switching to it with Cmd+Tab scrolls the strip to it.
-- nori stretches a window to the full screen height when it joins the strip.
+- nori stretches a window to the full screen height when it joins the strip, and keeps it there: resized by hand, it goes back. A window that won't take that height (fixed size, min/max limits) keeps the height it took.
 - Three fingers sideways drag the strip. Lift, and it settles on the nearest column. Past either end it stretches like rubber.
 - Three fingers up or down move through Spaces the same way. The Spaces follow your fingers, and on lift the nearest one slides to the center, or the next one if you flicked. nori swallows the three- and four-finger gesture events it can, and turns Mission Control and App Exposé off while it runs, putting them back when it quits, see [macOS settings](#3-macos-settings).
 - Drop a window you dragged with the mouse and it eases back into its column.
-- Every Space has its own strip.
+- Every Space has its own strip. A fullscreen app's Space has none: nori leaves its window as macOS made it.
+- Fullscreen Spaces sit in the vertical stack where Mission Control has them, so Opt+J/K, the swipes and the overview reach them. nori switches to one with Dock's "Move left/right a space" shortcut, see [macOS settings](#3-macos-settings).
 - Spaces switch vertically, on the same curve as windows. nori catches every "Switch to Desktop N" press, from the keyboard, from Opt+J/K or from `nori focus space`. Dock still switches the Space and the payload draws the slide. If nori quits or crashes, Dock goes back to its usual horizontal animation.
 - An overview like niri's shows all Spaces of the display stacked and scaled down, with live windows. Four fingers drive it. It follows the swipe, stretches past fully open or closed, and on lift springs open or shut depending on how fast you threw it.
 
@@ -64,7 +65,7 @@ After that nori lives in the menu bar.
 
 ### 3. macOS settings
 
-- **Desktop shortcuts.** Turn on "Switch to Desktop 1…N" in System Settings → Keyboard → Keyboard Shortcuts → Mission Control. Opt+J/K, the overview and `nori focus space` press them to switch Spaces.
+- **Desktop shortcuts.** Turn on "Switch to Desktop 1…N" in System Settings → Keyboard → Keyboard Shortcuts → Mission Control. Opt+J/K, the overview and `nori focus space` press them to switch Spaces. A fullscreen app's Space has no such shortcut: to reach one nori presses "Move left a space" / "Move right a space" from the same list, so turn those on too (any keys, they don't have to stay Ctrl+←/→). Without them nori brings the app to the front, which finds its fullscreen Space only if that is the app's front window.
 - **Trackpad.** In System Settings → Trackpad → More Gestures, set "Swipe between full-screen applications" to four fingers or turn it off. Otherwise macOS flips Spaces along with the strip. **Mission Control** and **App Exposé** use the same 3- and 4-finger swipes, and macOS can act on them before nori's event tap sees the gesture. nori turns both off while it runs (`showMissionControlGestureEnabled` and `showAppExposeGestureEnabled` in `com.apple.dock`) and restores them when it quits, restarting Dock to apply each change, so the next launch loads the payload again (password); Mission Control stays on its keyboard shortcut. If nori crashes they stay off until the next launch or quit.
 - **yabai.** If you have it, stop it while nori runs with `yabai --stop-service`, or at least run `yabai -m config layout float`.
 
@@ -279,7 +280,7 @@ A Space has `id`, `number`, `display`, `type`, `isFocused`, `isVisible`, `isAnim
 
 A bar can skip the CLI and talk to the socket `/tmp/nori-ctl_$USER.socket` itself. A request is the CLI's arguments joined by tabs, one line, like `query\tspaces\n` or `subscribe\n`. nori answers and closes the connection, except after `subscribe`. The socket path and this format are public: they change only with a note in the release.
 
-A window has `id`, `pid`, `app`, `bundleId`, `title`, `space`, `spaceId`, `column`, `isFocused`, `isOnScreen`, `isFloating` and `frame`. `space` is the Desktop number. `column` counts from 1 and is missing for windows outside the strip. `--app` matches the app name or bundle id in any case. Desktops count from 1 across all displays, like the system shortcuts. Fullscreen Spaces have no number, and their `type` is `fullscreen`.
+A window has `id`, `pid`, `app`, `bundleId`, `title`, `space`, `spaceId`, `spaceType`, `column`, `isFocused`, `isOnScreen`, `isFloating` and `frame`. `space` is the Desktop number, missing for a window in a fullscreen app's Space. `spaceType` is that Space's `type`, `desktop` or `fullscreen`. `column` counts from 1 and is missing for windows outside the strip. `--app` matches the app name or bundle id in any case. Desktops count from 1 across all displays, like the system shortcuts. Fullscreen Spaces have no number, and their `type` is `fullscreen`.
 
 nori sees the titles of windows on other Spaces only with Screen Recording permission. When you run it from a terminal, the terminal needs that permission. Titles on the current Space come from Accessibility.
 

@@ -2,7 +2,8 @@
 // A plain Space switch is the same layout at scale 1: the Space at the center slides to the new one.
 // The payload animates both on vsync (step_layout in payload.m); the daemon only says where to go with "Y".
 // Dock still owns which Space is current: picking another Space presses its "Switch to Desktop N" shortcut
-// (switchToSpace in Control.swift), and Dock's switch runs hidden under ours.
+// (switchToSpace in Control.swift), or activates the app of a fullscreen Space (pressSpace), and Dock's switch runs
+// hidden under ours.
 // ponytail: main display only; a click picks a Space, not a window. Scale and gap live in payload.m.
 
 import Cocoa
@@ -11,7 +12,7 @@ let overviewScale: CGFloat = 0.4  // same as OVERVIEW_SCALE and OVERVIEW_GAP in 
 let overviewGap: CGFloat = 48
 
 var overviewOpen = false
-var overviewSpaces: [UInt64] = []  // desktops of the display, top to bottom
+var overviewSpaces: [UInt64] = []  // Spaces of the display, fullscreen ones included, top to bottom
 var overviewTarget = 0             // index of the Space at the center once the animation settles
 var passDesktopHotkeys = 0  // our own presses of "Switch to Desktop N", let through to Dock
 
@@ -44,6 +45,26 @@ func pressDesktop(_ number: Int) {
     }
 }
 
+// Every switch to a Space nori starts. A Desktop: its "Switch to Desktop N" shortcut. A fullscreen Space has none:
+// "Move right a space" / "Move left a space" (symbolic hotkeys 81 / 79, Ctrl+→/← by default) as many times as it
+// is away in Mission Control order, the same order as displaySpaces. Dock merges quick presses into one switch
+// (Desktop 1 to a fullscreen Space four steps away: one switch, 0.77 s). With those shortcuts off, the app is
+// brought to the front (bringAppFront), which reaches the Space only if the app's front window is the one there.
+func pressSpace(_ sid: UInt64) {
+    guard sid != CGSGetActiveSpace(cid) else { return }
+    if let number = spaces().first(where: { $0.id == sid })?.number { return pressDesktop(number) }
+    let stack = displaySpaces()
+    guard let index = stack.ids.firstIndex(of: sid) else { return }
+    let steps = index - stack.current
+    if !postSymbolicHotkey(steps > 0 ? 81 : 79, times: abs(steps)) {
+        fputs("fullscreen Space: turn on \"Move left a space\" and \"Move right a space\" in System Settings → Keyboard → Shortcuts → Mission Control (any keys)\n", stderr)
+        guard let win = listWindows([]).first(where: { $0.spaces == [sid] })?.win else { return }  // not a sticky one
+        bringAppFront(win)
+    }
+    pendingSpace = (sid, CACurrentMediaTime() + spaceLayoutFallback)
+    publishSoon()
+}
+
 // `nori focus space N --instant`: no slide. Dock switches as usual, but the payload hands its frames identity
 // transforms, so the new Space is just there. ponytail: "I 0" after a fixed second, Dock's switch takes ~250 ms.
 func switchSpaceInstant(to number: Int) -> Bool {
@@ -54,13 +75,14 @@ func switchSpaceInstant(to number: Int) -> Bool {
     return true
 }
 
-// Desktops (not full-screen Spaces) of the display that shows the active Space, in Mission Control order.
-func desktopSpaces() -> (ids: [UInt64], current: Int) {
+// Desktops and fullscreen Spaces of the display that shows the active Space, in Mission Control order: the stack the
+// overview shows and Space switches slide through.
+func displaySpaces() -> (ids: [UInt64], current: Int) {
     let active = CGSGetActiveSpace(cid)
     let displays = CGSCopyManagedDisplaySpaces(cid).takeRetainedValue() as? [[String: Any]] ?? []
     for display in displays {
         let spaces = (display["Spaces"] as? [[String: Any]] ?? [])
-            .filter { $0["type"] as? Int == 0 }
+            .filter { [0, 4].contains($0["type"] as? Int) }  // 0 desktop, 4 fullscreen
             .compactMap { ($0["id64"] as? NSNumber)?.uint64Value }
         if let current = spaces.firstIndex(of: active) { return (spaces, current) }
     }
@@ -92,20 +114,24 @@ func sendLayout(open: Bool, spring: Bool) {
     publishSoon()  // isAnimating, for subscribers
 }
 
-// Every "Switch to Desktop N" press lands here (keys, Option+J/K, nori focus space), and Dock switches under our slide.
-func switchSpaceAnimated(to number: Int) {
-    guard let sid = spaces().first(where: { $0.number == number })?.id else { return }
+// Every "Switch to Desktop N" press lands here (keys, nori focus space), and Dock switches under our slide.
+func switchSpaceAnimated(toDesktop number: Int) {
+    if let sid = spaces().first(where: { $0.number == number })?.id { switchSpaceAnimated(to: sid) }
+}
+
+// Option+J/K too, which may land on a fullscreen Space.
+func switchSpaceAnimated(to sid: UInt64) {
     if overviewOpen {
         if let index = overviewSpaces.firstIndex(of: sid) { closeOverview(at: index) }
         return
     }
-    let desktops = desktopSpaces()
-    guard let index = desktops.ids.firstIndex(of: sid) else { pressDesktop(number); return }  // another display: Dock's slide
+    let stack = displaySpaces()
+    guard let index = stack.ids.firstIndex(of: sid) else { pressSpace(sid); return }  // another display: Dock's slide
     guard sid != CGSGetActiveSpace(cid) || index != overviewTarget else { return }
-    overviewSpaces = desktops.ids
+    overviewSpaces = stack.ids
     overviewTarget = index
     sendLayout(open: false, spring: false)
-    pressDesktop(number)
+    pressSpace(sid)
 }
 
 func toggleOverview() {
@@ -114,9 +140,9 @@ func toggleOverview() {
 
 func openOverview() {
     guard !overviewOpen else { return }
-    let desktops = desktopSpaces()
-    overviewSpaces = desktops.ids
-    overviewTarget = desktops.current
+    let stack = displaySpaces()
+    overviewSpaces = stack.ids
+    overviewTarget = stack.current
     overviewOpen = true
     showBackdrop()
     sendLayout(open: true, spring: true)
@@ -125,9 +151,9 @@ func openOverview() {
 // 4-finger swipe (Trackpad.swift): the overview follows the fingers, then the lift springs it open or closed.
 func beginOverviewSwipe() {
     if !overviewOpen {
-        let desktops = desktopSpaces()
-        overviewSpaces = desktops.ids
-        overviewTarget = desktops.current
+        let stack = displaySpaces()
+        overviewSpaces = stack.ids
+        overviewTarget = stack.current
         showBackdrop()
     }
     sendLayout(open: overviewOpen, spring: true)  // starts the layout if it isn't running
@@ -149,9 +175,9 @@ func endOverviewSwipe(open: Bool) {
 // Returns the index the swipe starts from.
 func beginSpaceSwipe() -> CGFloat {
     if !overviewOpen {
-        let desktops = desktopSpaces()
-        overviewSpaces = desktops.ids
-        overviewTarget = desktops.current
+        let stack = displaySpaces()
+        overviewSpaces = stack.ids
+        overviewTarget = stack.current
         sendLayout(open: false, spring: false)  // starts the layout if it isn't running
     }
     return CGFloat(overviewTarget)
@@ -172,8 +198,7 @@ func endSpaceSwipe(focus: CGFloat, velocity: CGFloat) {
     let index = abs(velocity) > spaceFlickSpeed ? Int(focus.rounded(velocity > 0 ? .up : .down)) : Int(focus.rounded())
     overviewTarget = min(max(index, 0), overviewSpaces.count - 1)
     sendLayout(open: overviewOpen, spring: overviewOpen)
-    let sid = overviewSpaces[overviewTarget]
-    if sid != CGSGetActiveSpace(cid), let number = spaces().first(where: { $0.id == sid })?.number { pressDesktop(number) }
+    pressSpace(overviewSpaces[overviewTarget])
 }
 
 // Zooms into Space `index`, switching to it if it isn't the current one.
@@ -182,8 +207,7 @@ func closeOverview(at index: Int) {
     overviewOpen = false
     overviewTarget = index
     sendLayout(open: false, spring: true)
-    let sid = overviewSpaces[index]
-    if sid != CGSGetActiveSpace(cid), let number = spaces().first(where: { $0.id == sid })?.number { pressDesktop(number) }
+    pressSpace(overviewSpaces[index])
 }
 
 // Quitting with the overview open would leave Spaces scaled in Dock; the payload finishes closing on its own.
@@ -294,7 +318,7 @@ func overviewMouseUp(at point: CGPoint) {
     guard overviewOpen else { return }
     guard let drag = overviewDrag, drag.moved else { return overviewClick(at: point) }
     send(["M \(drag.window) \(drag.origin.x) \(drag.origin.y)"])  // back in its slot, or where it lands elsewhere
-    guard let to = overviewIndex(at: point), to != drag.from else { return }
+    guard let to = overviewIndex(at: point), to != drag.from, !isFullscreen(overviewSpaces[to]) else { return }
     let sid = overviewSpaces[to]
     movedAway.insert(drag.window)  // Move.swift: out of this strip until CGWindowList agrees
     send(["X \(drag.window) \(sid)"])

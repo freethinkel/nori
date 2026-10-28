@@ -69,11 +69,19 @@ func syncColumns() -> (wins: [Win], inserted: Int?, front: UInt32?) {
     return (withPendingWidths(columns.compactMap { byId[$0] }), inserted, live.first?.id)
 }
 
-// Height each window was last resized to. One try per window and height, so a window that refuses
-// (fixed size, min/max limits) or that the user resized by hand is left alone. The first try also sets the width
-// a `width` rule asks for, counted like the presets so 50 + 50 fill the usable width exactly.
+// Strip windows keep the strip's height. Per window: the height it was last asked for, and the height it took then
+// (read back; nil until the app answers). A window at another height is asked again, so one resized by hand goes
+// back; one that refuses or clamps (fixed size, min/max limits, a terminal's cell steps) stays at what it took and
+// isn't asked over and over. The first ask also sets the width a `width` rule asks for, counted like the presets
+// so 50 + 50 fill the usable width exactly.
 // ponytail: entries of closed windows stay; window ids are not reused within a session.
-var sizedTo: [UInt32: CGFloat] = [:]
+var sizedTo: [UInt32: (height: CGFloat, took: CGFloat?)] = [:]
+
+func needsHeight(_ win: Win, _ height: CGFloat) -> Bool {
+    guard let asked = sizedTo[win.id], asked.height == height else { return true }
+    guard let took = asked.took else { return false }  // the app hasn't answered yet
+    return abs(win.frame.height - height) >= 1 && abs(win.frame.height - took) >= 1
+}
 
 func ruleWidth(_ win: Win) -> CGFloat? {
     let current = rules
@@ -120,14 +128,20 @@ func layout(immediate: Bool) {
     publishSoon()
     dimUnfocused(wins)
     var resized = false
-    for win in wins where sizedTo[win.id] != height {
+    for win in wins where needsHeight(win, height) {
         let width = sizedTo[win.id] == nil ? ruleWidth(win) ?? win.frame.width : win.frame.width
-        sizedTo[win.id] = height
-        if abs(win.frame.height - height) >= 1 || abs(win.frame.width - width) >= 1 {
-            pendingWidths[win.id] = width
-            axQueue.async { setSize(win, width: width, height: height) }  // off the main thread: a hung app must not stall the strip
-            resized = true
+        guard abs(win.frame.height - height) >= 1 || abs(win.frame.width - width) >= 1 else {
+            sizedTo[win.id] = (height, height)
+            continue
         }
+        sizedTo[win.id] = (height, nil)
+        pendingWidths[win.id] = width
+        axQueue.async {  // off the main thread: a hung app must not stall the strip
+            let took = setSize(win, width: width, height: height)
+            // No answer: the height it had counts as taken, so a hung app isn't asked on every layout.
+            DispatchQueue.main.async { if sizedTo[win.id]?.height == height { sizedTo[win.id]?.took = took?.height ?? win.frame.height } }
+        }
+        resized = true
     }
     // An app that resizes may commit its frame at the position it last knew; put it back in its column.
     if resized { DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { layout(immediate: false) } }

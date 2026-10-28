@@ -60,7 +60,10 @@ func listWindows(_ options: CGWindowListOption) -> [Listed] {
 
 // On-screen windows of one Space that belong in the strip: floating rules and non-standard windows keep theirs out.
 // The Space check matters during a Space switch, when both Spaces' windows are on screen.
+// A fullscreen Space has no strip: its window already fills the screen, and laid out as a column it slid down below
+// padding-top and was resized to the strip's height.
 func windows(on space: UInt64) -> [Win] {
+    guard !isFullscreen(space) else { return [] }
     let current = rules
     return listWindows(.optionOnScreenOnly)
         .filter { $0.spaces.contains(space) && floatingByHand[$0.win.id] == nil && rule(for: $0, in: current)?.floating != true && isStandard($0.win) }
@@ -104,12 +107,18 @@ func axID(_ element: AXUIElement) -> CGWindowID? {
 
 func axElement(_ win: Win) -> AXUIElement? { axWindows(win.pid)?.first { axID($0) == win.id } }
 
-func setSize(_ win: Win, width: CGFloat, height: CGFloat) {
-    guard let element = axElement(win) else { return }
+// Returns the size the app took (it may clamp), or nil if it didn't answer.
+@discardableResult
+func setSize(_ win: Win, width: CGFloat, height: CGFloat) -> CGSize? {
+    guard let element = axElement(win) else { return nil }
     var size = CGSize(width: width, height: height)
     if let axSize = AXValueCreate(.cgSize, &size) {
         AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, axSize)
     }
+    var taken: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &taken) == .success, let taken,
+          AXValueGetValue(taken as! AXValue, .cgSize, &size) else { return nil }
+    return size
 }
 
 // Size first: an app may keep a window on screen by moving it as it grows.
@@ -124,6 +133,46 @@ func setFrame(_ win: Win, _ frame: CGRect) {
 func focus(_ win: Win) {
     if let element = axElement(win) { AXUIElementPerformAction(element, kAXRaiseAction as CFString) }
     NSRunningApplication(processIdentifier: win.pid)?.activate()
+}
+
+// Brings the app of a window on another Space to the front with all its windows, and Dock switches to the Space of
+// the app's front window: pressSpace's way to a fullscreen Space when "Move left/right a space" is off.
+// NSRunningApplication.activate() doesn't switch Spaces (macOS 27: the app came to the front, the Space stayed), and
+// does nothing when the app is frontmost already; _SLPSSetFrontProcessWithOptions(psn, 0, kCPSAllWindows) switched
+// every time. But to the app's front window: one with a window on a Desktop too (Finder) may go there instead.
+// Raising the window first doesn't help: Accessibility lists only the current Space's windows, and the remote-token
+// search (AltTab's) found the window in 2 of 6 tries; ordering it front from Dock or making it key changed nothing.
+func bringAppFront(_ win: Win) {
+    var psn = ProcessSerialNumber()
+    guard let setFront = SkyLight.setFrontProcess, GetProcessForPID(win.pid, &psn) == noErr else { return focus(win) }
+    _ = setFront(&psn, 0, 0x100)  // 0x100: kCPSAllWindows
+    makeKey(win, &psn)
+}
+
+@_silgen_name("GetProcessForPID") func GetProcessForPID(_ pid: pid_t, _ psn: inout ProcessSerialNumber) -> OSStatus
+
+// SkyLight's process calls, looked up at run time: the daemon doesn't link SkyLight, AppKit has it loaded.
+enum SkyLight {
+    typealias SetFront = @convention(c) (UnsafeMutablePointer<ProcessSerialNumber>, UInt32, UInt32) -> Int32
+    typealias PostEvent = @convention(c) (UnsafeMutablePointer<ProcessSerialNumber>, UnsafeMutablePointer<UInt8>) -> Int32
+    static let setFrontProcess = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "_SLPSSetFrontProcessWithOptions")
+        .map { unsafeBitCast($0, to: SetFront.self) }  // -2: RTLD_DEFAULT
+    static let postEventRecord = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "SLPSPostEventRecordTo")
+        .map { unsafeBitCast($0, to: PostEvent.self) }
+}
+
+// The event records that make a window its app's key window (as yabai and AltTab send them).
+private func makeKey(_ win: Win, _ psn: inout ProcessSerialNumber) {
+    guard let post = SkyLight.postEventRecord else { return }
+    var bytes = [UInt8](repeating: 0, count: 0xf8)
+    bytes[0x04] = 0xf8
+    bytes[0x3a] = 0x10
+    withUnsafeBytes(of: win.id) { for i in 0..<4 { bytes[0x3c + i] = $0[i] } }
+    for i in 0x20..<0x30 { bytes[i] = 0xff }
+    for kind: UInt8 in [1, 2] {
+        bytes[0x08] = kind
+        _ = post(&psn, &bytes)
+    }
 }
 
 // Every window of the current Space outside the strip (floating rules, dialogs, panels, PiP) above the strip's, in the

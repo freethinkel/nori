@@ -278,6 +278,9 @@ func appName(_ listed: Listed) -> String {
     NSRunningApplication(processIdentifier: listed.win.pid)?.localizedName ?? listed.info[kCGWindowOwnerName as String] as? String ?? ""
 }
 
+// A Space's `type` in `query spaces`, and its window's `spaceType` in `query windows`.
+func spaceType(_ fullscreen: Bool) -> String { fullscreen ? "fullscreen" : "desktop" }
+
 func querySpaces(_ opts: [String: String]) -> [[String: Any]] {
     let all = spaces()
     let focused = focusedSpace()
@@ -294,7 +297,7 @@ func querySpaces(_ opts: [String: String]) -> [[String: Any]] {
         }
         let fields: [String: Any?] = [
             "id": space.id, "number": space.number, "display": space.display,
-            "type": space.fullscreen ? "fullscreen" : "desktop", "isFocused": space.id == focused, "isVisible": space.visible,
+            "type": spaceType(space.fullscreen), "isFocused": space.id == focused, "isVisible": space.visible,
             "isAnimating": spaceLayoutBusy && overviewSpaces.contains(space.id),
             "windows": wins.map(\.win.id), "columns": strip(of: space.id, listed), "apps": apps,
             "focusedWindow": focusedWins[space.id],
@@ -307,6 +310,7 @@ func queryWindows(_ opts: [String: String]) -> [[String: Any]] {
     let active = CGSGetActiveSpace(cid)
     let all = spaces()
     let numbers = Dictionary(all.compactMap { s in s.number.map { (s.id, $0) } }, uniquingKeysWith: { a, _ in a })
+    let types = Dictionary(all.map { ($0.id, spaceType($0.fullscreen)) }, uniquingKeysWith: { a, _ in a })
     let listed = listWindows([])
     let strips = Dictionary(all.map { ($0.id, strip(of: $0.id, listed)) }, uniquingKeysWith: { a, _ in a })
     let current = rules
@@ -324,7 +328,8 @@ func queryWindows(_ opts: [String: String]) -> [[String: Any]] {
         let frame = w.win.frame
         let fields: [String: Any?] = [
             "id": id, "pid": w.win.pid, "app": appName(w), "bundleId": app?.bundleIdentifier, "title": title,
-            "space": numbers[space], "spaceId": space, "column": strips[space]?.firstIndex(of: id).map { $0 + 1 },
+            "space": numbers[space], "spaceId": space, "spaceType": types[space],  // a fullscreen Space has no number
+            "column": strips[space]?.firstIndex(of: id).map { $0 + 1 },
             "isFocused": id == focused, "isOnScreen": w.info[kCGWindowIsOnscreen as String] as? Bool ?? false,
             "isFloating": floatingByHand[id] != nil || rule(for: w, in: current)?.floating == true,
             "frame": ["x": frame.minX, "y": frame.minY, "width": frame.width, "height": frame.height],
@@ -335,15 +340,23 @@ func queryWindows(_ opts: [String: String]) -> [[String: Any]] {
 
 // Posts the system "Switch to Desktop N" shortcut (symbolic hotkeys 118…133), whatever keys it is bound to.
 func switchToSpace(_ number: Int) -> Bool {
+    guard (1...16).contains(number), spaces().contains(where: { $0.number == number }) else { return false }
+    return postSymbolicHotkey(117 + number)
+}
+
+// Posts a system shortcut by its com.apple.symbolichotkeys id, whatever keys it is bound to; false if it is off.
+// Read each time, so turning one on in System Settings works without a restart.
+func postSymbolicHotkey(_ id: Int, times: Int = 1) -> Bool {
     let hotkeys = UserDefaults(suiteName: "com.apple.symbolichotkeys")?.dictionary(forKey: "AppleSymbolicHotKeys")
-    guard (1...16).contains(number), spaces().contains(where: { $0.number == number }),
-          let entry = hotkeys?[String(117 + number)] as? [String: Any], entry["enabled"] as? Bool == true,
+    guard let entry = hotkeys?[String(id)] as? [String: Any], entry["enabled"] as? Bool == true,
           let keys = (entry["value"] as? [String: Any])?["parameters"] as? [Int], keys.count == 3
     else { return false }
-    for down in [true, false] {
-        let event = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(keys[1]), keyDown: down)
-        event?.flags = CGEventFlags(rawValue: UInt64(keys[2]))  // NSEvent modifier bits, same as CGEventFlags
-        event?.post(tap: .cghidEventTap)
+    for _ in 0..<times {
+        for down in [true, false] {
+            let event = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(keys[1]), keyDown: down)
+            event?.flags = CGEventFlags(rawValue: UInt64(keys[2]))  // NSEvent modifier bits, same as CGEventFlags
+            event?.post(tap: .cghidEventTap)
+        }
     }
     return true
 }
@@ -355,11 +368,13 @@ func focusWindow(_ listed: Listed, instant: Bool = false) {
         return
     }
     // Accessibility only sees windows of the current Space, so go there first, and focus once Dock has made it active
-    // (the active Space id changes at the start of its slide). A fullscreen Space or one without a shortcut:
-    // activating the app may switch Spaces by itself.
+    // (the active Space id changes at the start of its slide). A fullscreen Space is its window's, so getting there
+    // is enough (pressSpace); a Desktop without a shortcut: activating the app may switch Spaces by itself.
     if let number = spaces().first(where: { listed.spaces.contains($0.id) })?.number,
        instant ? switchSpaceInstant(to: number) : switchToSpace(number) {
         whenSpaceChanges(from: active) { focus(listed.win) }
+    } else if let fullscreen = listed.spaces.first(where: isFullscreen) {
+        pressSpace(fullscreen)
     } else {
         focus(listed.win)
     }

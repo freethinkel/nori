@@ -6,7 +6,7 @@
 //        "E wid from to"       alpha eases from `from` to `to`, on the same curve as S
 //        "O wid order rel"     order
 //        "D wid m11 m12 … m44"  3D transform (CATransform3D, row by row); identity resets
-//        "Y spring target goal sid0 sid1 …"  Space layout, see step_layout: desktops of the display top to bottom,
+//        "Y spring target goal sid0 sid1 …"  Space layout, see step_layout: Spaces of the display top to bottom,
 //                              the index to center, overview goal (1 open, 0 plain), and 1 to move on a spring
 //                              (overview) or 0 to ease like windows (a Space switch)
 //        "G progress velocity" a running Space layout follows a swipe: progress held there until the next "Y"
@@ -67,6 +67,7 @@ extern CFTypeRef CGRegionCreateWithRect(CGRect rect);
 extern bool CGRegionIsEmpty(CFTypeRef region);
 extern CGError CGSGetRegionBounds(CFTypeRef region, CGRect *bounds);
 extern uint64_t SLSGetActiveSpace(int cid);
+extern int SLSSpaceGetType(int cid, uint64_t sid);  // 0 desktop, 4 fullscreen (an app's own Space)
 extern CFArrayRef SLSCopySpacesForWindows(int cid, int mask, CFArrayRef wids);
 
 #define MAX_ANIMS 128
@@ -95,6 +96,9 @@ static int sticky_count;
 static __thread bool in_step_layout;  // the hook is called from step_layout, not by Dock
 static bool dock_switching;           // Dock's frames came in during this layout: its own switch has begun
 static uint64_t dock_current;         // the Space Dock made current during this layout (nori_current_space), or 0
+static uint64_t dock_from;            // the current Space when Dock's switch began (dock_switch_began)
+static CFTypeRef dock_first;          // Dock's transaction in which its switch began, until step_layout's next frame
+static __thread bool own_call;        // the payload's own SLSTransactionHideSpace from a hook: not Dock's, let it through
 static bool instant;                  // "I 1": Dock's switch gets identity transforms, so the new Space just appears
 
 // Space layout: the overview and Space switches, animated here on vsync like windows.
@@ -149,9 +153,10 @@ static int anim_count;
 
 // Width animations ("R"). The window is stretched by a transform from its real width to the drawn one, which eases
 // to `goal`; the real window is kept centered on cx by a move in the same transaction.
-// The real width is never read back: SLSGetWindowBounds reports the window with a transform applied a frame or two
-// late, and guessing the real width from it made the stretch run away and the window land off center. The app keeps
-// its width until the stretch settles; then the daemon resizes it and says so with "W", and the stretch is dropped.
+// While the stretch eases, the real width is not read back: guessing it from SLSGetWindowBounds then made the stretch
+// run away and the window land off center. The app keeps its width until the stretch settles; then the daemon
+// resizes it and says so with "W", and the stretch is dropped. Once settled, the window's own width is watched too
+// (see tick): the app draws its new width before "W" can come.
 typedef struct {
     uint32_t wid;
     double drawn, goal, real;  // widths
@@ -219,10 +224,28 @@ static void chase(double *x, double value, double velocity, uint64_t at, uint64_
 // The Space the sticky windows go with: the one that last became shown (step_layout makes that the target), but
 // once Dock's own switch has begun the current one until it is the target, as in Dock's slide (seen: they
 // vanished while Dock's frames had stopped and the current Space was still the old one).
+// A fullscreen Space doesn't take them in Dock's switch: they stay with the desktop side of it. Leaving one, they
+// were drawn with the target desktop from the switch's start, while the current Space was still the fullscreen one
+// (recorded: a status bar a whole Space off, -1692 pt, or -725 in the overview, for ~0.3 s until the change).
+// ponytail: entering one, they are held with the desktop it came from; only seen as a 0.12 s jump, not traced.
+static bool is_fullscreen(uint64_t sid) { return SLSSpaceGetType(SLSMainConnectionID(), sid) == 4; }
+
 static uint64_t held_space(void)
 {
-    if (!dock_switching) return layout_spaces[layout_target];
-    return dock_current ? dock_current : SLSGetActiveSpace(SLSMainConnectionID());
+    uint64_t target = layout_spaces[layout_target];
+    if (!dock_switching) return target;
+    uint64_t current = dock_current ? dock_current : SLSGetActiveSpace(SLSMainConnectionID());
+    if (!is_fullscreen(current)) return current;
+    if (!is_fullscreen(target)) return target;
+    return dock_from && !is_fullscreen(dock_from) ? dock_from : current;
+}
+
+// Dock's frames came in during this layout: its own switch has begun. Called from Dock's threads (the hooks).
+static void dock_switch_began(void)
+{
+    if (dock_switching) return;
+    dock_from = SLSGetActiveSpace(SLSMainConnectionID());
+    dock_switching = true;
 }
 
 // One frame of the Space layout. It ends once it has settled back at plain Spaces and Dock's switch is over
@@ -231,6 +254,7 @@ static uint64_t held_space(void)
 static void step_layout(double dt)
 {
     uint64_t now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+    dock_first = NULL;  // Dock's first switch frame is behind us; its transaction's address may be reused
     if (layout_follow) chase(&layout_progress, finger_progress, progress_velocity, finger_progress_at, now);
     if (focus_follow) chase(&layout_focus, finger_focus, focus_velocity, finger_focus_at, now);
     if (layout_spring) {
@@ -308,6 +332,57 @@ static void step_layout(double dt)
     CFRelease(region);
 }
 
+// Drops a settled stretch whose app has the goal width now, recentered, in a transaction of its own right away.
+// from_bounds: take the real width from the window's bounds (the app's resize shows there the frame it lands, see
+// tick); otherwise it was just set from "W". Returns true if dropped: the entry is gone, resizes[i] is another one.
+static bool finish_resize(int i, int cid, bool from_bounds)
+{
+    resize_t *r = &resizes[i];
+    CGRect b;
+    if (fabs(r->goal - r->drawn) >= 0.5 || SLSGetWindowBounds(cid, r->wid, &b) != kCGErrorSuccess) return false;
+    if (from_bounds && fabs(b.size.width - r->real) >= 1) r->real = b.size.width;
+    if (fabs(r->real - r->goal) >= 1) return false;
+    CFTypeRef transaction = SLSTransactionCreate(cid);
+    if (!transaction) return false;
+    double identity[16] = { 1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  0, 0, 0, 1 };
+    SLSTransactionMoveWindowWithGroup(transaction, r->wid, CGPointMake(r->cx - r->real / 2, b.origin.y));
+    SLSTransactionSetWindowTransform3D(transaction, r->wid, identity);
+    SLSTransactionCommit(transaction, 0);
+    CFRelease(transaction);
+    *r = resizes[--resize_count];
+    return true;
+}
+
+// While a settled stretch waits for its app, its width is checked every millisecond, not once a frame: an app commits
+// its resize mid-frame, and a frame composited before the next tick drew the new width stretched again, wider than
+// the goal (seen as a flicker at the end of an Option+drag resize). Runs only while one waits.
+static dispatch_source_t resize_watch;
+
+static void watch_resizes(void)
+{
+    int cid = SLSMainConnectionID();
+    bool waiting = false;
+    for (int i = 0; i < resize_count;) {
+        if (finish_resize(i, cid, true)) continue;
+        if (fabs(resizes[i].goal - resizes[i].drawn) < 0.5) waiting = true;
+        i++;
+    }
+    if (!waiting && resize_watch) {
+        dispatch_source_cancel(resize_watch);
+        dispatch_release(resize_watch);
+        resize_watch = NULL;
+    }
+}
+
+static void start_resize_watch(void)
+{
+    if (resize_watch) return;
+    resize_watch = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, queue);
+    dispatch_source_set_timer(resize_watch, DISPATCH_TIME_NOW, NSEC_PER_MSEC, 100 * NSEC_PER_USEC);
+    dispatch_source_set_event_handler(resize_watch, ^{ watch_resizes(); });
+    dispatch_resume(resize_watch);
+}
+
 static void tick(double frame)
 {
     if (layout_count) step_layout(frame);
@@ -348,6 +423,10 @@ static void tick(double frame)
         if (settled) {
             r.drawn = r.goal;
             r.cx = r.cx_goal;
+            // The app's resize shows in its bounds the frame it lands (SLSGetWindowBounds leaves window transforms out:
+            // 600 under a 1.5x stretch, 900 within ~12 ms of the app's setFrame, measured). "W" comes an AX round trip
+            // later, and each frame until then was drawn stretched twice: wider than the goal for a frame or more.
+            if (fabs(b.size.width - r.real) >= 1) r.real = b.size.width;
         }
         // Done once the app has the width; after two seconds without "W" the daemon is gone or the app is stuck.
         bool done = settled && (fabs(r.real - r.goal) < 1 || now - r.started > 2000000000);
@@ -361,6 +440,7 @@ static void tick(double frame)
         double m[16] = { 1 / s, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  r.real / 2 * (1 - 1 / s), 0, 0, 1 };
         SLSTransactionSetWindowTransform3D(transaction, r.wid, m);
         if (!done) resizes[kept++] = r;
+        if (!done && settled) start_resize_watch();
     }
     resize_count = kept;
     SLSTransactionCommit(transaction, 0);
@@ -496,6 +576,8 @@ static void handle_line(char *line)
             sticky_count = 0;
             dock_switching = false;
             dock_current = 0;
+            dock_from = 0;
+            dock_first = NULL;
         }
         find_sticky(cid);  // every "Y": one opened meanwhile (a PiP) is held from here on
         memcpy(layout_spaces, spaces, sizeof(spaces));
@@ -578,16 +660,7 @@ static void handle_line(char *line)
             r->real = width;
             // The app already shows the new width, and the stretch on top of it would draw it scaled twice until
             // the next frame: if the stretch has settled there, drop it and recenter now.
-            CGRect b;
-            if (fabs(r->goal - r->drawn) >= 0.5 || fabs(r->real - r->goal) >= 1 || SLSGetWindowBounds(cid, wid, &b) != kCGErrorSuccess) break;
-            CFTypeRef transaction = SLSTransactionCreate(cid);
-            if (!transaction) break;
-            double identity[16] = { 1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  0, 0, 0, 1 };
-            SLSTransactionMoveWindowWithGroup(transaction, wid, CGPointMake(r->cx - r->real / 2, b.origin.y));
-            SLSTransactionSetWindowTransform3D(transaction, wid, identity);
-            SLSTransactionCommit(transaction, 0);
-            CFRelease(transaction);
-            *r = resizes[--resize_count];
+            finish_resize((int) (r - resizes), cid, false);
         }
         break;
     }
@@ -644,9 +717,9 @@ static void *serve(void *arg)
 // Works because Dock is CS_DEBUGGED after injection, so a modified code page doesn't kill it.
 // ponytail: prologues are checked byte for byte; another macOS build with different ones keeps horizontal spaces.
 // ponytail: main display aspect only; spaces on a display with another aspect slide the wrong distance.
-__attribute__((visibility("hidden"))) void *nori_transform_resume, *nori_shape_resume, *nori_current_resume;
+__attribute__((visibility("hidden"))) void *nori_transform_resume, *nori_shape_resume, *nori_current_resume, *nori_hide_resume;
 extern char nori_transform_stub[], nori_transform_prologue[], nori_shape_stub[], nori_shape_prologue[];
-extern char nori_current_stub[], nori_current_prologue[];
+extern char nori_current_stub[], nori_current_prologue[], nori_hide_stub[], nori_hide_prologue[];
 
 static bool daemon_alive(void)
 {
@@ -672,8 +745,12 @@ const CGAffineTransform *nori_space_transform(const CGAffineTransform *t, uint64
     static __thread CGAffineTransform vertical;
     // A layout runs to its end even if the daemon is gone, so the sticky windows get their identity back.
     if (overview_active) {
-        if (!in_step_layout) dock_switching = true;
-        uint64_t held = held_space();
+        // Dock's first frame: the sticky windows still go with the Space that last became shown (the target), and
+        // over to the current one from the next frame (recorded in the overview: a frame one slot off, -725, when
+        // this frame already undid the current one). Dock transforms both Spaces in that transaction.
+        if (!in_step_layout && !dock_switching) dock_first = transaction;
+        if (!in_step_layout) dock_switch_began();
+        uint64_t held = transaction == dock_first ? layout_spaces[layout_target] : held_space();
         for (int i = 0; i < overview_count; i++) {
             if (overview[i].sid != sid) continue;
             if (sid == held) hold_sticky(transaction, &overview[i].t);
@@ -698,9 +775,31 @@ __attribute__((visibility("hidden"), used))
 void nori_current_space(CFTypeRef transaction, uint64_t sid)
 {
     if (!overview_active) return;
-    dock_switching = true;
+    dock_switch_began();  // before dock_current: dock_from is the Space being left
     dock_current = sid;
-    for (int i = 0; i < overview_count; i++) if (overview[i].sid == sid) hold_sticky(transaction, &overview[i].t);
+    uint64_t held = held_space();  // sid, unless it is a fullscreen Space
+    // Hidden and shown again in this transaction, so the sticky windows go over to it with this commit, as the
+    // undo assumes: in the overview they went a frame late (recorded: +724, one slot off, at the change).
+    if (held == sid) {
+        own_call = true;
+        SLSTransactionHideSpace(transaction, sid);
+        SLSTransactionShowSpace(transaction, sid);
+        own_call = false;
+    }
+    for (int i = 0; i < overview_count; i++) if (overview[i].sid == held) hold_sticky(transaction, &overview[i].t);
+}
+
+// SLSTransactionHideSpace(transaction, sid): Dock hides the Space it leaves in the transaction that ends its switch,
+// and entering a fullscreen Space it hides every desktop. Mid-layout that blanked those Spaces for a frame, until
+// step_layout showed them again (recorded in the overview: one Space, or all desktops, gone for one sample). While
+// a layout runs its Spaces are ours: Dock's hides of them are dropped, and step_layout hides them when it ends.
+// Returns 1 to drop the call (the stub returns kCGErrorSuccess without running it).
+__attribute__((visibility("hidden"), used))
+uint64_t nori_hide_space(uint64_t sid)
+{
+    if (!overview_active || in_step_layout || own_call) return 0;
+    for (int i = 0; i < overview_count; i++) if (overview[i].sid == sid) return 1;
+    return 0;
 }
 
 // A full-height clip narrower than the screen (the slide) becomes a full-width one, scaled like the transform.
@@ -793,6 +892,32 @@ __asm__(
     "    adrp x16, _nori_current_resume@PAGE\n"
     "    ldr x16, [x16, _nori_current_resume@PAGEOFF]\n"
     "    br x16\n"
+    // Not a swap: nori_hide_space says whether to skip the call. Skipped, it returns 0 (kCGErrorSuccess) to the
+    // caller straight away; nothing was signed yet (pacibsp is in the prologue), so a plain ret is right.
+    ".p2align 2\n"
+    ".private_extern _nori_hide_stub\n"
+    "_nori_hide_stub:\n"
+    "    stp x29, x30, [sp, #-32]!\n"
+    "    mov x29, sp\n"
+    "    stp x0, x1, [sp, #16]\n"
+    "    mov x0, x1\n"  // the sid
+    "    bl _nori_hide_space\n"
+    "    mov x9, x0\n"
+    "    ldp x0, x1, [sp, #16]\n"
+    "    ldp x29, x30, [sp], #32\n"
+    "    cbz x9, Lnori_hide_run\n"  // a conditional branch needs an assembler-local label
+    "    mov x0, #0\n"
+    "    ret\n"
+    ".private_extern _nori_hide_prologue\n"
+    "_nori_hide_prologue:\n"
+    "Lnori_hide_run:\n"
+    "    pacibsp\n"
+    "    stp x20, x19, [sp, #-0x20]!\n"
+    "    stp x29, x30, [sp, #0x10]\n"
+    "    add x29, sp, #0x10\n"
+    "    adrp x16, _nori_hide_resume@PAGE\n"
+    "    ldr x16, [x16, _nori_hide_resume@PAGEOFF]\n"
+    "    br x16\n"
 );
 
 static void hook(const char *name, char *prologue, void *stub, void **resume)
@@ -840,6 +965,7 @@ static void nori_payload_init(void)
     hook("SLSTransactionSetSpaceTransform", nori_transform_prologue, nori_transform_stub, &nori_transform_resume);
     hook("SLSTransactionSetSpaceShape", nori_shape_prologue, nori_shape_stub, &nori_shape_resume);
     hook("SLSTransactionSetManagedDisplayCurrentSpace", nori_current_prologue, nori_current_stub, &nori_current_resume);
+    hook("SLSTransactionHideSpace", nori_hide_prologue, nori_hide_stub, &nori_hide_resume);
     CVDisplayLinkCreateWithActiveCGDisplays(&display_link);
     CVDisplayLinkSetOutputCallback(display_link, on_frame, NULL);
     CVDisplayLinkStart(display_link);
