@@ -12,6 +12,7 @@
 //        "G progress velocity" a running Space layout follows a swipe: progress held there until the next "Y"
 //        "F focus velocity"    the same for the (fractional) index of the Space at the center
 //        "Q seq"               number of the next "Y", echoed back in its "layout-done"
+//        "Z scale"             size of the Spaces in the overview, from the next frame on; comes before each "Y"
 // Back to the daemon, on its control socket (daemon/Control.swift), see notify_daemon:
 //        "payload\tlayout-done\t<seq>"             a Space layout ended; the strip may look at windows again
 //        "payload\tresize-settled\t<wid>\t<width>"  a width stretch reached its goal; the app can be resized now
@@ -93,14 +94,14 @@ static int overview_count;
 static struct { uint32_t wid; CGPoint origin; } sticky[MAX_ANIMS];
 static int sticky_count;
 static __thread bool in_step_layout;  // the hook is called from step_layout, not by Dock
-static bool dock_switching;           // Dock's frames came in during this layout: its own switch has begun
-static uint64_t dock_current;         // the Space Dock made current during this layout (nori_current_space), or 0
+static bool dock_switching;           // Dock's own switch has begun and the current Space hasn't changed yet
+static uint64_t dock_current;         // the Space Dock is making current (nori_current_space) until that is committed, or 0
 static bool instant;                  // "I 1": Dock's switch gets identity transforms, so the new Space just appears
 
 // Space layout: the overview and Space switches, animated here on vsync like windows.
 // focus is the (fractional) index at the screen center; progress 0 is plain Spaces, 1 the overview.
 // Dock still switches the current Space: the daemon presses its shortcut, and the hooks give Dock's frames ours.
-#define OVERVIEW_SCALE 0.4
+static double overview_scale = 0.4;
 #define OVERVIEW_GAP 48.0
 #define SPRING_RESPONSE 0.28  // seconds per oscillation, like SwiftUI's .spring(response:dampingFraction:)
 #define SPRING_DAMPING 0.78
@@ -217,12 +218,11 @@ static void chase(double *x, double value, double velocity, uint64_t at, uint64_
 }
 
 // The Space the sticky windows go with: the one that last became shown (step_layout makes that the target), but
-// once Dock's own switch has begun the current one until it is the target, as in Dock's slide (seen: they
+// from the start of Dock's own switch until the current Space changes the current one, as in Dock's slide (seen: they
 // vanished while Dock's frames had stopped and the current Space was still the old one).
 static uint64_t held_space(void)
 {
-    if (!dock_switching) return layout_spaces[layout_target];
-    return dock_current ? dock_current : SLSGetActiveSpace(SLSMainConnectionID());
+    return dock_switching ? SLSGetActiveSpace(SLSMainConnectionID()) : layout_spaces[layout_target];
 }
 
 // One frame of the Space layout. It ends once it has settled back at plain Spaces and Dock's switch is over
@@ -251,6 +251,11 @@ static void step_layout(double dt)
         layout_focus = layout_target;
     }
     uint64_t current = SLSGetActiveSpace(SLSMainConnectionID());
+    // Dock's change is committed: this frame takes the sticky windows to the target, see nori_current_space.
+    if (current == dock_current) {
+        dock_switching = false;
+        dock_current = 0;
+    }
     bool done = settled && layout_goal == 0 && (current == layout_spaces[layout_target] || now - layout_started > 1000000000);
     // Our slide is over, Dock's switch isn't: the sticky windows still go with the old Space (held_space). It is put
     // where the target is, under it, so that when the current Space changes they pass from one untransformed Space
@@ -261,7 +266,7 @@ static void step_layout(double dt)
     if (!transaction) return;
     CGRect screen = CGDisplayBounds(CGMainDisplayID());
     CFTypeRef region = CGRegionCreateWithRect(screen);
-    double scale = 1 - (1 - OVERVIEW_SCALE) * layout_progress;
+    double scale = 1 - (1 - overview_scale) * layout_progress;
     overview_count = layout_count;  // before the transforms: the hook looks each one up, the first frame's too
     // Their own frames every frame: one may move meanwhile (a PiP dragged), and the hook undoes from these.
     for (int i = 0; i < sticky_count; i++) {
@@ -540,6 +545,11 @@ static void handle_line(char *line)
     case 'Q':
         layout_seq = atol(line + 1);
         break;
+    case 'Z': {
+        double scale = strtod(line + 1, NULL);
+        if (scale > 0 && scale <= 1) overview_scale = scale;  // the transforms divide by it
+        break;
+    }
     case 'R': {
         double width;
         if (sscanf(line + 1, "%u %lf", &wid, &width) == 2 && width > 0) {
@@ -644,9 +654,9 @@ static void *serve(void *arg)
 // Works because Dock is CS_DEBUGGED after injection, so a modified code page doesn't kill it.
 // ponytail: prologues are checked byte for byte; another macOS build with different ones keeps horizontal spaces.
 // ponytail: main display aspect only; spaces on a display with another aspect slide the wrong distance.
-__attribute__((visibility("hidden"))) void *nori_transform_resume, *nori_shape_resume, *nori_current_resume;
+__attribute__((visibility("hidden"))) void *nori_transform_resume, *nori_shape_resume, *nori_current_resume, *nori_hide_resume;
 extern char nori_transform_stub[], nori_transform_prologue[], nori_shape_stub[], nori_shape_prologue[];
-extern char nori_current_stub[], nori_current_prologue[];
+extern char nori_current_stub[], nori_current_prologue[], nori_hide_stub[], nori_hide_prologue[];
 
 static bool daemon_alive(void)
 {
@@ -655,12 +665,21 @@ static bool daemon_alive(void)
 }
 
 // Undoing the held Space's transform (held_space), ours or Dock's, puts the sticky windows back where they are.
+// WindowServer draws a window of a transformed Space from a whole point, so that is what gets undone: undoing the
+// exact place left them a fraction of a point off, blurred, and shaking as the fraction changed. Up to 1/256 below a
+// whole point counts as that point (docs/WINDOWSERVER.md).
+static double undo_offset(double origin, double t, double a)
+{
+    double o = floor(origin);
+    return floor((o - t) / a + 1.0 / 256) - o;
+}
+
 static void hold_sticky(CFTypeRef transaction, const CGAffineTransform *t)
 {
     for (int i = 0; i < sticky_count; i++) {
         CGPoint o = sticky[i].origin;
         // Screen -> window, origin at the window's top-left (docs/WINDOWSERVER.md), after t (screen -> Space): t undone.
-        double m[16] = { 1 / t->a, 0, 0, 0,  0, 1 / t->d, 0, 0,  0, 0, 1, 0,  (o.x - t->tx) / t->a - o.x, (o.y - t->ty) / t->d - o.y, 0, 1 };
+        double m[16] = { 1 / t->a, 0, 0, 0,  0, 1 / t->d, 0, 0,  0, 0, 1, 0,  undo_offset(o.x, t->tx, t->a), undo_offset(o.y, t->ty, t->d), 0, 1 };
         SLSTransactionSetWindowTransform3D(transaction, sticky[i].wid, m);
     }
 }
@@ -690,17 +709,27 @@ const CGAffineTransform *nori_space_transform(const CGAffineTransform *t, uint64
     return &vertical;
 }
 
-// SLSTransactionSetManagedDisplayCurrentSpace(transaction, display uuid, sid): Dock's switch makes sid current.
-// The sticky windows go over to it once this transaction is committed, but SLSGetActiveSpace answers the old Space
-// until then, so the undo set in this same transaction was the old Space's: the windows were off screen for one
-// frame, until the next step_layout (recorded, on most switches). The new Space's undo goes in with the change.
+// SLSTransactionSetManagedDisplayCurrentSpace(transaction, display uuid, sid): the last call of Dock's switch. The old
+// Space stays shown (nori_hide_space), so the sticky windows stay on it once this is committed, and they stay undone
+// for it: undoing the new Space here left them off screen until the next step_layout, 25-30 ms later (recorded), and
+// hiding and showing it here does nothing, it comes before the change. That step_layout takes them over in one
+// transaction. The switch ends then, not at the next "Y": the overview is one layout through many switches.
 __attribute__((visibility("hidden"), used))
 void nori_current_space(CFTypeRef transaction, uint64_t sid)
 {
-    if (!overview_active) return;
-    dock_switching = true;
-    dock_current = sid;
-    for (int i = 0; i < overview_count; i++) if (overview[i].sid == sid) hold_sticky(transaction, &overview[i].t);
+    (void) transaction;
+    if (overview_active) dock_current = sid;
+}
+
+// Dock hides the old Space in the transaction of its last frame. One the layout still shows stayed gone until the next
+// step_layout showed it again: a one-frame blink, when the two fell on different frames. So it stays, and the layout
+// hides it at its end.
+__attribute__((visibility("hidden"), used))
+int nori_hide_space(uint64_t sid)
+{
+    if (!overview_active || in_step_layout) return 0;
+    for (int i = 0; i < overview_count; i++) if (overview[i].sid == sid) return 1;
+    return 0;
 }
 
 // A full-height clip narrower than the screen (the slide) becomes a full-width one, scaled like the transform.
@@ -793,6 +822,31 @@ __asm__(
     "    adrp x16, _nori_current_resume@PAGE\n"
     "    ldr x16, [x16, _nori_current_resume@PAGEOFF]\n"
     "    br x16\n"
+    ".p2align 2\n"
+    ".private_extern _nori_hide_stub\n"
+    "_nori_hide_stub:\n"
+    "    stp x29, x30, [sp, #-32]!\n"
+    "    mov x29, sp\n"
+    "    stp x0, x1, [sp, #16]\n"
+    "    mov x0, x1\n"  // sid
+    "    bl _nori_hide_space\n"
+    "    mov x9, x0\n"
+    "    ldp x0, x1, [sp, #16]\n"
+    "    ldp x29, x30, [sp], #32\n"
+    "    cbnz w9, 1f\n"
+    "    b _nori_hide_prologue\n"
+    "1:\n"
+    "    mov w0, #0\n"  // kept shown: no hide, no error
+    "    ret\n"
+    ".private_extern _nori_hide_prologue\n"
+    "_nori_hide_prologue:\n"
+    "    pacibsp\n"
+    "    stp x20, x19, [sp, #-0x20]!\n"
+    "    stp x29, x30, [sp, #0x10]\n"
+    "    add x29, sp, #0x10\n"
+    "    adrp x16, _nori_hide_resume@PAGE\n"
+    "    ldr x16, [x16, _nori_hide_resume@PAGEOFF]\n"
+    "    br x16\n"
 );
 
 static void hook(const char *name, char *prologue, void *stub, void **resume)
@@ -840,6 +894,7 @@ static void nori_payload_init(void)
     hook("SLSTransactionSetSpaceTransform", nori_transform_prologue, nori_transform_stub, &nori_transform_resume);
     hook("SLSTransactionSetSpaceShape", nori_shape_prologue, nori_shape_stub, &nori_shape_resume);
     hook("SLSTransactionSetManagedDisplayCurrentSpace", nori_current_prologue, nori_current_stub, &nori_current_resume);
+    hook("SLSTransactionHideSpace", nori_hide_prologue, nori_hide_stub, &nori_hide_resume);
     CVDisplayLinkCreateWithActiveCGDisplays(&display_link);
     CVDisplayLinkSetOutputCallback(display_link, on_frame, NULL);
     CVDisplayLinkStart(display_link);
