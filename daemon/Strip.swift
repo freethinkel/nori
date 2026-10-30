@@ -125,7 +125,8 @@ func layout(immediate: Bool) {
         sizedTo[win.id] = height
         if abs(win.frame.height - height) >= 1 || abs(win.frame.width - width) >= 1 {
             pendingWidths[win.id] = width
-            axQueue.async { setSize(win, width: width, height: height) }  // off the main thread: a hung app must not stall the strip
+            // Off the main thread: a hung app must not stall the strip.
+            axQueue.async { setFrame(win, CGRect(x: win.frame.minX, y: top, width: width, height: height)) }
             resized = true
         }
     }
