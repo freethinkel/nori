@@ -103,6 +103,15 @@ Prototyped from a plain process (macOS 27) for window borders, which were then d
   yabai calls `SLSPerformAsynchronousBridgedWindowManagementOperation(op)`, which SkyLight no longer exports on macOS 27; the classes are still there. `SLSAsynchronousBridgedWindowManagementOperation` (the superclass) has `-performWithWMBridgeDelegate` and `-invokeFallback`; the fallback was not needed, not checked what it does.
   nori moves windows through the payload anyway; this is the way to do it without Dock.
 
+## Granting Accessibility (macOS 27)
+
+- With Filesystem Protections off, root can write `kTCCServiceAccessibility` rows into `/Library/Application Support/com.apple.TCC/TCC.db` (schema version 36, journal mode `delete`). Rows aren't signed; the `integrity_flag` table is only `_sqlite3_integrity_check`'s result. Verified with an ad hoc signed probe app: `client` the bundle id, `client_type` 0, `auth_value` 2, `auth_reason` 4, `auth_version` 1, `flags` 0, `csreq` from `SecCodeCopyDesignatedRequirement` + `SecRequirementCopyData`, same as a row System Settings writes. Not tried with a Developer ID signature.
+- `tccd` needs no restart. A new event tap and a fresh process saw the grant at once.
+- **`AXIsProcessTrusted` in a running process does not.** It stayed false for 10 s and through a `tccd` restart, and a real Accessibility call right after the write failed with `kAXErrorAPIDisabled` (-25211). `hasAuthorizationForControlComputer` in HIServices caches the answer per pid and responsible pid, and `apiNotifyCallback` clears it on the distributed notification `com.apple.accessibility.api` (static reading). Posting that notification from the process itself, then running the run loop, flipped it in about 25 ms, both ways, and `AXUIElementCopyAttributeValue` on Finder went from -25211 to success. Verified.
+- Once, after the probe's row was deleted, a row with `auth_value` 0 appeared for it; what wrote it wasn't traced. `INSERT OR REPLACE` overwrites such a row, the primary key being service, client, client type and indirect object.
+- `tccutil reset All <bundle id>` gave OSStatus -10814 for the probe, also after `lsregister -f`, so removing that row takes root and sqlite3. `TCCAccessSetForBundle` wasn't tried: it should need `com.apple.private.tcc.manager`, which nori can't have.
+- Each `do shell script … with administrator privileges` from a new `NSAppleScript` took seconds, so it seems to ask for the password again. Inferred from the timing, not watched.
+
 ## Ideas, not done yet
 
 - Our own effect for switching real Spaces: keep Dock's switch itself (its state: Mission Control, the menu bar), and replace the transform and shape of both Spaces in the hook; for a cube, zero out the Space transform and rotate the windows of both Spaces through `SetWindowTransform3D`, taking progress from Dock's `tx`.

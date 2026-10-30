@@ -38,7 +38,7 @@ run: all
 
 # The menu bar app: the same three binaries, side by side in Contents/MacOS. It sets itself up on launch, see App.swift.
 # Built next to the old bundle and swapped in, so Dock keeps its mapped payload until it restarts.
-# Ad-hoc signed, macOS may ask for Accessibility again after a rebuild; a real SIGN identity stops that.
+# Ad-hoc signed, the app asks for the password to grant itself Accessibility again after a rebuild; a real SIGN identity stops that.
 app: all
 	rm -rf $(APP).tmp
 	mkdir -p $(APP).tmp/Contents/MacOS $(APP).tmp/Contents/Resources

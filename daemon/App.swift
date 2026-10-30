@@ -145,8 +145,11 @@ func bootSetupDone() -> Bool {
     return false
 }
 
-// The event tap needs it. macOS shows its own prompt; keep the menu working until the permission is granted.
+// The event tap needs it. If nori can't grant it itself, macOS shows its own prompt; keep the menu working until the
+// permission is granted.
 func waitForAccessibility() {
+    guard !AXIsProcessTrusted() else { return }
+    grantAccessibility()
     let prompt = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
     guard !AXIsProcessTrustedWithOptions(prompt) else { return }
     statusItem.button?.appearsDisabled = true
@@ -154,6 +157,36 @@ func waitForAccessibility() {
         if let event = NSApp.nextEvent(matching: .any, until: Date() + 1, inMode: .default, dequeue: true) { NSApp.sendEvent(event) }
     }
     statusItem.button?.appearsDisabled = false
+}
+
+// With Filesystem Protections off root can write the row the switch in System Settings writes, and replace the old row of
+// an earlier signature. build/nori has no bundle id: from a terminal the permission is the terminal's.
+// AXIsProcessTrusted keeps its answer until the notification below. See "Granting Accessibility" in docs/WINDOWSERVER.md.
+func grantAccessibility() {
+    let sip = shell("/usr/bin/csrutil", ["status"])
+    guard sip.contains("status: disabled") || sip.contains("Filesystem Protections: disabled"),
+          let client = Bundle.main.bundleIdentifier, let requirement = designatedRequirement() else { return }
+    let hex = requirement.map { String(format: "%02x", $0) }.joined()
+    let sql = """
+        INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, csreq, flags) \
+        VALUES ('kTCCServiceAccessibility', '\(client)', 0, 2, 4, 1, X'\(hex)', 0)
+        """
+    let database = "/Library/Application Support/com.apple.TCC/TCC.db"
+    guard runAsAdmin("/usr/bin/sqlite3 -cmd '.timeout 2000' \(shellQuoted(database)) \(shellQuoted(sql))",
+                     prompt: "nori is adding itself to Accessibility.") == .done else { return }
+    DistributedNotificationCenter.default().postNotificationName(.init("com.apple.accessibility.api"), object: nil, userInfo: nil, deliverImmediately: true)
+    for _ in 0..<50 where !AXIsProcessTrusted() { RunLoop.current.run(until: Date() + 0.02) }
+}
+
+// What this build's signature must satisfy to hold the permission: the team for a Developer ID build, so updates keep it,
+// and the exact code for an ad hoc one.
+func designatedRequirement() -> Data? {
+    var code: SecCode?, staticCode: SecStaticCode?, requirement: SecRequirement?, data: CFData?
+    guard SecCodeCopySelf([], &code) == errSecSuccess, let code,
+          SecCodeCopyStaticCode(code, [], &staticCode) == errSecSuccess, let staticCode,
+          SecCodeCopyDesignatedRequirement(staticCode, [], &requirement) == errSecSuccess, let requirement,
+          SecRequirementCopyData(requirement, [], &data) == errSecSuccess else { return nil }
+    return data as Data?
 }
 
 // launch-at-login in the config: a Login Item for this bundle, so it stays in System Settings → General → Login Items

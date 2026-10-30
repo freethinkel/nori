@@ -36,7 +36,7 @@ The app can't do this step for you. If SIP is still on, the app shows these step
    It warns about an unsupported configuration. That's expected.
 3. Restart.
 
-This turns off three protections. Without Debugging Restrictions the loader may call `task_for_pid` on Dock. Without NVRAM Protections the app can set the boot argument below. Filesystem Protections go too, as for yabai. The rest of SIP stays on.
+This turns off three protections. Without Debugging Restrictions the loader may call `task_for_pid` on Dock. Without NVRAM Protections the app can set the boot argument below. Without Filesystem Protections the app can grant itself Accessibility. The rest of SIP stays on.
 
 ### 2. Build and open the app
 
@@ -48,7 +48,7 @@ open build/Nori.app     # or copy it to /Applications first
 On launch the app checks the rest and fixes what it can. It asks for your password when it needs root.
 
 1. **Boot argument.** Dock is an arm64e process and loads a third-party arm64e dylib only with `-arm64e_preview_abi` in `boot-args`. If the argument is missing, the app adds it and asks you to restart the Mac.
-2. **Accessibility.** The event tap and window resizing need it. macOS shows its own prompt. Allow nori in System Settings → Privacy & Security → Accessibility and the app carries on by itself. The app has an ad hoc signature, so macOS may ask again after a rebuild. Remove the old nori entry and allow the new one.
+2. **Accessibility.** The event tap and window resizing need it. The app asks for your password and adds itself to the system's permission database. An app you built yourself has an ad hoc signature, so it does this again after each rebuild, and the new entry replaces the old one. If you cancel, or Filesystem Protections are on, macOS shows its own prompt: allow nori in System Settings → Privacy & Security → Accessibility and the app carries on by itself.
 3. **Payload.** If Dock doesn't have it, which happens on first launch and after a reboot or a Dock restart, the app restarts Dock and loads it.
 
 After that nori lives in the menu bar.
