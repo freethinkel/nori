@@ -8,33 +8,56 @@ struct SettingsPage: View {
 
     var body: some View {
         let query = page.rawValue.localizedCaseInsensitiveContains(query) ? "" : query
-        Form {
+        Cards {
+            if page == .about && query.isEmpty { AboutCard() }
             ForEach(cards(page), id: \.title) { card in
                 let keys = card.keys.filter { matches($0, query) }
                 if !keys.isEmpty {
-                    Section(card.title) {
+                    Card(title: card.title) {
                         ForEach(keys, id: \.self) { SettingRow(key: $0) }
                     }
                 }
             }
-            if page == .general && query.isEmpty { ConfigFileSection() }
+            if page == .general && query.isEmpty { ConfigFileCard() }
         }
-        .formStyle(.grouped)
     }
 }
 
-struct ConfigFileSection: View {
+// What runs, the way Rex shows its server. Only a Developer ID build updates itself: Update.swift hides the item elsewhere.
+struct AboutCard: View {
     var body: some View {
-        Section("Config file") {
-            LabeledContent {
-                HStack {
-                    Button("Open in Editor") { menuActions.openConfig() }
-                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: configPath)]) }
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+        Card {
+            HStack(spacing: 10) {
+                // build/nori has no bundle, and AppKit would give it a folder.
+                Image(nsImage: Bundle.main.image(forResource: "AppIcon") ?? statusIcon() ?? NSImage()).resizable().frame(width: 36, height: 36)
+                Labels(title: "nori", help: version.map { "Version \($0)" } ?? "Development build")
+                Spacer(minLength: 0)
+                if !updateItem.isHidden {
+                    // Not menuActions.update(): with a release found it installs, and this button doesn't say so.
+                    Button("Check for Updates…") { checkForUpdate(byHand: true) }
+                        .buttonStyle(.bordered)
+                        .buttonBorderShape(.capsule)
+                        .controlSize(.small)
                 }
-            } label: {
-                Text((configPath as NSString).abbreviatingWithTildeInPath).monospaced()
-                Text("Every change here goes into this file. Comments, rules and keys you wrote stay as they are")
             }
+            .cardRow()
+        }
+    }
+}
+
+struct ConfigFileCard: View {
+    var body: some View {
+        Card(title: "Config file", footer: "Every change here goes into this file. Comments, rules and keys you wrote stay as they are.") {
+            Row(title: "config.toml", help: (configPath as NSString).abbreviatingWithTildeInPath) {
+                Button("Open in Editor") { menuActions.openConfig() }
+                    .fixedSize()  // a long path gives way, not the button
+                Button { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: configPath)]) } label: { Image(systemName: "folder") }
+                    .help("Show in Finder")
+            }
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
+            .controlSize(.small)
         }
     }
 }
@@ -46,26 +69,20 @@ struct RulesPage: View {
     var body: some View {
         let rules = settingsModel.rules
         ScrollViewReader { proxy in
-            Form {
-                Section {
-                    Text("Each rule is for an app, by name or bundle id, and can be narrowed to windows whose title matches a regular expression. The first rule that matches a window wins.")
-                        .foregroundStyle(.secondary)
-                }
-                ForEach(rules.indices.filter { ruleWords(query) || ruleMatches($0, query) }, id: \.self) { index in
-                    RuleSection(index: index, table: rules[index], expanded: Binding(
-                        get: { expanded.contains(index) }, set: { if $0 { expanded.insert(index) } else { expanded.remove(index) } }
-                    ))
-                    .id(index)
-                }
-                if rules.isEmpty {
-                    Section { Text("No rules yet. Add one with + in the toolbar.").foregroundStyle(.secondary) }
-                }
-                Section {
-                    Text("\(builtinNames()) are ignored without a rule. A rule of your own for one of them comes first.")
-                        .foregroundStyle(.secondary)
+            Cards {
+                Card(footer: "Each rule is for an app, by name or bundle id, and can be narrowed to windows whose title matches a regular expression, any case. The first rule that matches a window wins. \(builtinNames()) are ignored without a rule; a rule of your own for one of them comes first.") {
+                    ForEach(rules.indices.filter { ruleWords(query) || ruleMatches($0, query) }, id: \.self) { index in
+                        RuleSection(index: index, table: rules[index], expanded: Binding(
+                            get: { expanded.contains(index) }, set: { if $0 { expanded.insert(index) } else { expanded.remove(index) } }
+                        ))
+                        .id(index)
+                    }
+                    if rules.isEmpty {
+                        ContentUnavailableView("No App Rules", systemImage: "macwindow.on.rectangle", description: Text("Add one with + in the toolbar."))
+                            .frame(maxWidth: .infinity)
+                    }
                 }
             }
-            .formStyle(.grouped)
             .onChange(of: rules.count) { old, new in
                 // A new rule opens for editing; after a delete the indices shift, so all close.
                 expanded = new > old ? [new - 1] : []

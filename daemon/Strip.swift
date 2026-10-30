@@ -137,7 +137,7 @@ func layout(immediate: Bool) {
         sizedTo[win.id] = (height, nil)
         pendingWidths[win.id] = width
         axQueue.async {  // off the main thread: a hung app must not stall the strip
-            let took = setSize(win, width: width, height: height)
+            let took = setFrame(win, CGRect(x: win.frame.minX, y: top, width: width, height: height))
             // No answer: the height it had counts as taken, so a hung app isn't asked on every layout.
             DispatchQueue.main.async { if sizedTo[win.id]?.height == height { sizedTo[win.id]?.took = took?.height ?? win.frame.height } }
         }

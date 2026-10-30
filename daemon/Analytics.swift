@@ -1,6 +1,7 @@
 // Aptabase (self-hosted, aptabase.freethinkel.dev): how many people use nori each day, on which macOS. Anonymous: an
 // `active` event a day, at launch and then on each new UTC day, the way Shepherd does it. Nothing else leaves the
-// machine. DO_NOT_TRACK=1 turns it off. A build without a Developer ID (make app, build/nori) reports as debug.
+// machine. `analytics = false` turns it off, on the next hourly look too, and so does DO_NOT_TRACK=1. A build without a
+// Developer ID (make app, build/nori) reports as debug.
 
 import Foundation
 
@@ -23,7 +24,7 @@ func startAnalytics() {
 private func sendActive(isDebug: Bool) {
     let now = Date()
     let secs = Int(now.timeIntervalSince1970)
-    guard sentDay != secs / 86_400 else { return }
+    guard analyticsOn, sentDay != secs / 86_400 else { return }
     sentDay = secs / 86_400
     let os = ProcessInfo.processInfo.operatingSystemVersion
     let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""

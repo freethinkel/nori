@@ -107,26 +107,21 @@ func axID(_ element: AXUIElement) -> CGWindowID? {
 
 func axElement(_ win: Win) -> AXUIElement? { axWindows(win.pid)?.first { axID($0) == win.id } }
 
+// Position first: macOS stops a growing window at the bottom of the screen, going by where the app thinks the window
+// is, and the payload's moves don't tell it. Position again last: an app may keep a window on screen by moving it as it grows.
 // Returns the size the app took (it may clamp), or nil if it didn't answer.
 @discardableResult
-func setSize(_ win: Win, width: CGFloat, height: CGFloat) -> CGSize? {
+func setFrame(_ win: Win, _ frame: CGRect) -> CGSize? {
     guard let element = axElement(win) else { return nil }
-    var size = CGSize(width: width, height: height)
-    if let axSize = AXValueCreate(.cgSize, &size) {
-        AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, axSize)
-    }
+    var size = frame.size, origin = frame.origin
+    guard let position = AXValueCreate(.cgPoint, &origin), let axSize = AXValueCreate(.cgSize, &size) else { return nil }
+    AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, position)
+    AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, axSize)
+    AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, position)
     var taken: CFTypeRef?
     guard AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &taken) == .success, let taken,
           AXValueGetValue(taken as! AXValue, .cgSize, &size) else { return nil }
     return size
-}
-
-// Size first: an app may keep a window on screen by moving it as it grows.
-func setFrame(_ win: Win, _ frame: CGRect) {
-    guard let element = axElement(win) else { return }
-    var size = frame.size, origin = frame.origin
-    if let value = AXValueCreate(.cgSize, &size) { AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, value) }
-    if let value = AXValueCreate(.cgPoint, &origin) { AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, value) }
 }
 
 // Raises this window, then activates its app: activating alone brings up the app's last used window instead.

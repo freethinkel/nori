@@ -1,136 +1,144 @@
-// Trackpad gestures from raw touches: 3 fingers move the strip (horizontal) or Spaces (vertical), 4 drive the overview.
-// The event tap swallows macOS's own 3- and 4-finger gesture events as far as it can; Mission Control and App Exposé
-// still have to be off in System Settings (App.swift asks, README has the steps).
+// Trackpad gestures from raw touches: the strip, Spaces and the overview follow the swipes the gesture keys give them,
+// see Config.swift. The event tap swallows macOS's own gesture events on those finger counts as far as it can; Mission
+// Control and App Exposé still have to be off in System Settings (App.swift asks, README has the steps).
 
 import Cocoa
 
-// Trackpad: the strip follows the 3-finger centroid. A swipe that starts vertical moves through Spaces instead.
-// On lift the strip is thrown by the last finger speed and snaps to the nearest rest point (Scroll.snap).
+// The strip follows the centroid of the fingers. On lift it is thrown by the last finger speed and snaps to the nearest
+// rest point (Scroll.snap).
 // ponytail: one trackpad at a time; frames from a second trackpad would interleave with the first.
 var fingerCount: Int32 = 0
-let gestureFingers: Int32 = 3
 
 // Mission Control and App Exposé get their swipe as NSEventTypeSwipe (31) after the fingers lift, when fingerCount is
-// already 0. Keep swallowing for a moment after a 3- or 4-finger frame, so the end of our gesture reaches nobody else.
+// already 0. Keep swallowing for a moment after a frame of ours, so the end of our gesture reaches nobody else.
 let systemGestureLinger: CFTimeInterval = 0.25
 var systemGestureUntil: CFTimeInterval = 0
+var systemGestureFingers: Int32 = 0  // the fingers of that frame
 
+// macOS keeps the swipes of a finger count no action is on.
 func swallowSystemGesture() -> Bool {
-    fingerCount == gestureFingers || fingerCount == overviewFingers || CACurrentMediaTime() < systemGestureUntil
+    ourGesture(fingerCount) || CACurrentMediaTime() < systemGestureUntil && ourGesture(systemGestureFingers)
 }
 
-let swipeSpeed: CGFloat = 1.3  // strip points per point of finger travel; above 1 the strip outruns the fingers
-let swipeScale = CGDisplayBounds(CGMainDisplayID()).width * swipeSpeed  // points per full trackpad width
+var swipeScale: CGFloat { CGDisplayBounds(CGMainDisplayID()).width * swipeSpeed }  // points per full trackpad width
 let swipeThreshold: CGFloat = 0.02  // trackpad widths before the direction is decided
 
 var gestureActive = false
-var swipeIgnored = false  // this touch went vertical: it moves through Spaces instead
+var swipeIgnored = false  // no action is on this swipe
 
-// 3-finger vertical swipe: Spaces, like niri's workspaces. They follow the fingers (rubber past the first and last);
+// Spaces, like niri's workspaces. They follow the fingers (rubber past the first and last);
 // on lift the nearest one, or the next one for a flick, slides to the center like windows do, and Dock switches to it.
-let spaceSwipeDistance: CGFloat = 0.5  // trackpad heights per Space
 var spaceSwiping = false
 var spaceSwipeFocus: CGFloat = 0     // index of the Space at the center, fractional
 var spaceSwipeVelocity: CGFloat = 0  // Spaces per second, smoothed
 var spaceSwipeTime: CFTimeInterval = 0
 var lastCenter: CGPoint?
+var lastSpread: CGFloat = 0
 var swipeTravel = CGPoint.zero
+var swipePinch: CGFloat = 0  // before the swipe starts, fingers closing in counting up
 var swipeVelocity: CGFloat = 0  // points per frame, smoothed
 
-// 4-finger vertical swipe drives the overview like niri's: up opens, down closes, and it follows the fingers.
-// On lift it springs open or closed, thrown by the finger speed. macOS's own 4-finger gestures (Mission Control,
-// App Exposé, Spaces) are swallowed in the event tap while four fingers are down and just after, so they don't fire too.
-let overviewFingers: Int32 = 4
-let overviewSwipeDistance: CGFloat = 0.3  // trackpad heights from closed to open
+// The overview follows a swipe like niri's, up opens and down closes, or a pinch, closing in opens and spreading closes.
+// On lift it springs open or closed, thrown by the finger speed. macOS's own gestures (Mission Control, App Exposé,
+// Spaces) are swallowed in the event tap on that finger count and just after, so they don't fire too.
 var overviewSwiping = false
-var overviewSwipeTravel: CGFloat = 0  // before the swipe starts
+var overviewPinch = false  // this one goes by how far apart the fingers are
 var overviewSwipeProgress: CGFloat = 0
 var overviewSwipeVelocity: CGFloat = 0  // progress per second, smoothed
 var overviewSwipeTime: CFTimeInterval = 0
 var lastTouchCount: Int32 = 0
 
-// Main thread. center is the normalized (0...1) centroid of the touches, or nil when there are none.
-// time is the trackpad's own (seconds): frames reach the main thread in bunches, which made speeds jump.
-func touchFrame(count: Int32, center: CGPoint?, time: CFTimeInterval = 0) {
-    defer { lastTouchCount = count }
-    if count == overviewFingers, let center {
-        // The centroid jumps when a finger lands, so the swipe counts from the first frame with four.
-        if lastTouchCount == overviewFingers, let last = lastCenter {
-            let dy = center.y - last.y  // normalized y grows towards the top of the trackpad
-            if !overviewSwiping {
-                overviewSwipeTravel += dy
-                if abs(overviewSwipeTravel) >= swipeThreshold {
-                    overviewSwiping = true
-                    overviewSwipeProgress = overviewOpen ? 1 : 0
-                    overviewSwipeVelocity = 0
-                    overviewSwipeTime = time
-                    beginOverviewSwipe()
-                    // The travel before the threshold counts too, so the overview moves from the first frame.
-                    overviewSwipeProgress += overviewSwipeTravel / overviewSwipeDistance
-                    followOverviewSwipe(progress: overviewSwipeProgress, velocity: 0)
-                }
-            } else {
-                let delta = dy / overviewSwipeDistance
-                overviewSwipeProgress += delta
-                overviewSwipeVelocity = overviewSwipeVelocity * 0.5 + delta / CGFloat(max(time - overviewSwipeTime, 1.0 / 240)) * 0.5
-                overviewSwipeTime = time
-                followOverviewSwipe(progress: overviewSwipeProgress, velocity: overviewSwipeVelocity)
-            }
-        }
-        lastCenter = center
-        return
-    }
+func endSwipe() {
     if overviewSwiping {
         overviewSwiping = false
         // A flick decides by its direction; a slow lift by how far the overview is open.
         let open = abs(overviewSwipeVelocity) > 1.5 ? overviewSwipeVelocity > 0 : overviewSwipeProgress > 0.5
         endOverviewSwipe(open: open)
     }
-    overviewSwipeTravel = 0
-    guard count == gestureFingers, lastTouchCount == gestureFingers || lastCenter == nil, let center else {
-        if gestureActive {
-            gestureActive = false
-            // ponytail: fixed throw; real momentum would decay over frames
-            let rest = scroll(syncColumns().wins).snap(stripOffset - swipeVelocity * 8, focused: focusedIndex())
-            focusColumn(at: rest.index, offset: rest.offset)
-        }
-        if spaceSwiping {
-            spaceSwiping = false
-            endSpaceSwipe(focus: spaceSwipeFocus, velocity: spaceSwipeVelocity)
-        }
+    if gestureActive {
+        gestureActive = false
+        // ponytail: fixed throw; real momentum would decay over frames
+        let rest = scroll(syncColumns().wins).snap(stripOffset - swipeVelocity * 8, focused: focusedIndex())
+        focusColumn(at: rest.index, offset: rest.offset)
+    }
+    if spaceSwiping {
+        spaceSwiping = false
+        endSpaceSwipe(focus: spaceSwipeFocus, velocity: spaceSwipeVelocity)
+    }
+}
+
+// Main thread. center is the normalized (0...1) centroid of the touches, or nil when there are none; spread is how far
+// apart they are. time is the trackpad's own (seconds): frames reach the main thread in bunches, which made speeds jump.
+func touchFrame(count: Int32, center: CGPoint?, spread: CGFloat = 0, time: CFTimeInterval = 0) {
+    defer { lastTouchCount = count }
+    // A finger landing or lifting ends the swipe. The centroid jumps then, so the next one counts from the frame after.
+    guard ourGesture(count), count == lastTouchCount || lastCenter == nil, let center else {
+        endSwipe()
         swipeIgnored = false
         lastCenter = nil
         swipeTravel = .zero
+        swipePinch = 0
         swipeVelocity = 0
         return
     }
-    defer { lastCenter = center }
-    if spaceSwiping, let last = lastCenter {
+    defer {
+        lastCenter = center
+        lastSpread = spread
+    }
+    guard let last = lastCenter, !swipeIgnored else { return }
+    let dx = center.x - last.x, dy = center.y - last.y  // normalized y grows towards the top of the trackpad
+    let pinch = lastSpread - spread
+    if overviewSwiping {
+        let delta = (overviewPinch ? pinch : dy) / overviewSwipeDistance
+        overviewSwipeProgress += delta
+        overviewSwipeVelocity = overviewSwipeVelocity * 0.5 + delta / CGFloat(max(time - overviewSwipeTime, 1.0 / 240)) * 0.5
+        overviewSwipeTime = time
+        followOverviewSwipe(progress: overviewSwipeProgress, velocity: overviewSwipeVelocity)
+        return
+    }
+    if spaceSwiping {
         // Fingers up: the Space below comes up into view, so content follows the fingers.
-        let delta = (center.y - last.y) / spaceSwipeDistance
+        let delta = dy / spaceSwipeDistance
         spaceSwipeFocus += delta
         spaceSwipeVelocity = spaceSwipeVelocity * 0.5 + delta / CGFloat(max(time - spaceSwipeTime, 1.0 / 240)) * 0.5
         spaceSwipeTime = time
         followSpaceSwipe(focus: spaceSwipeFocus, velocity: spaceSwipeVelocity)
         return
     }
-    guard let last = lastCenter, !swipeIgnored else { return }
-    let dx = center.x - last.x, dy = center.y - last.y
     if !gestureActive {
         swipeTravel.x += dx
         swipeTravel.y += dy
-        guard max(abs(swipeTravel.x), abs(swipeTravel.y)) >= swipeThreshold else { return }
-        if abs(swipeTravel.y) > abs(swipeTravel.x) {
-            swipeIgnored = true
+        swipePinch += pinch
+        let pinchable = swipeAction(fingers: count, kind: "pinch") != nil
+        let moved = max(abs(swipeTravel.x), abs(swipeTravel.y))
+        guard moved >= swipeThreshold || pinchable && abs(swipePinch) >= swipeThreshold else { return }
+        let kind = pinchable && abs(swipePinch) > moved ? "pinch" : abs(swipeTravel.y) > abs(swipeTravel.x) ? "vertical" : "sideways"
+        switch swipeAction(fingers: count, kind: kind) {
+        case "gesture-overview":
+            overviewSwiping = true
+            overviewPinch = kind == "pinch"
+            overviewSwipeProgress = overviewOpen ? 1 : 0
+            overviewSwipeVelocity = 0
+            overviewSwipeTime = time
+            beginOverviewSwipe()
+            // The travel before the threshold counts too, so the overview moves from the first frame.
+            overviewSwipeProgress += (overviewPinch ? swipePinch : swipeTravel.y) / overviewSwipeDistance
+            followOverviewSwipe(progress: overviewSwipeProgress, velocity: 0)
+            return
+        case "gesture-spaces":
             spaceSwiping = true
             spaceSwipeFocus = beginSpaceSwipe() + swipeTravel.y / spaceSwipeDistance  // travel so far counts
             spaceSwipeVelocity = 0
             spaceSwipeTime = time
             followSpaceSwipe(focus: spaceSwipeFocus, velocity: 0)
             return
+        case "gesture-strip":
+            gestureActive = true
+            stripOffset -= (swipeTravel.x - dx) * swipeScale  // the travel before this frame counts too
+        default:
+            swipeIgnored = true
+            return
         }
-        gestureActive = true
-        stripOffset -= (swipeTravel.x - dx) * swipeScale  // the travel before this frame counts too
     }
     // Fingers right: strip right, so content follows the fingers like natural scrolling.
     let delta = dx * swipeScale
@@ -139,8 +147,8 @@ func touchFrame(count: Int32, center: CGPoint?, time: CFTimeInterval = 0) {
     layout(immediate: true)
 }
 
-// Touches come from MultitouchSupport (private framework, same as OmniWM). Set macOS horizontal 3-finger
-// gestures (swipe between full-screen apps) to 4 fingers or off, or macOS fires them too.
+// Touches come from MultitouchSupport (private framework, same as OmniWM). Set macOS horizontal gestures (swipe between
+// full-screen apps) to a finger count nori doesn't use, or off, or macOS fires them too.
 typealias ContactCallback = @convention(c) (OpaquePointer?, UnsafeMutableRawPointer?, Int32, Double, Int32, UnsafeMutableRawPointer?) -> Int32
 
 // Runs on a MultitouchSupport thread. Each touch is a 96-byte MTTouch; the normalized position is two floats at offset 32.
@@ -159,11 +167,22 @@ let contactCallback: ContactCallback = { _, touches, contacts, time, _, _ in
         }
     }
     fingerCount = count
-    if count == gestureFingers || count == overviewFingers {
+    if count >= 3 {  // not asking ourGesture: the config is the main thread's
         systemGestureUntil = CACurrentMediaTime() + systemGestureLinger
+        systemGestureFingers = count
     }
     let center = count > 0 ? CGPoint(x: CGFloat(x / Float(count)), y: CGFloat(y / Float(count))) : nil
-    DispatchQueue.main.async { touchFrame(count: count, center: center, time: time) }
+    // Twice the fingers' mean distance from the center, so a pinch counts about as far as a swipe of that travel.
+    var spread: Float = 0
+    if let touches, let center {
+        for i in 0..<Int(contacts) where [3, 4].contains(touches.load(fromByteOffset: i * 96 + 20, as: Int32.self)) {
+            spread += hypot(touches.load(fromByteOffset: i * 96 + 32, as: Float.self) - Float(center.x),
+                            touches.load(fromByteOffset: i * 96 + 36, as: Float.self) - Float(center.y))
+        }
+        spread *= 2 / Float(count)
+    }
+    let distance = CGFloat(spread)
+    DispatchQueue.main.async { touchFrame(count: count, center: center, spread: distance, time: time) }
     return 0
 }
 

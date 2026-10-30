@@ -20,9 +20,9 @@ func startApp() {
     statusItem.menu = menu()
     guard bootSetupDone() else { exit(1) }
     waitForAccessibility()
-    let gesturesOff = disableSystemGestures()
+    let gesturesChanged = leaveSystemGestures ? putBackSystemGestures() : disableSystemGestures()
     // After an update Dock still runs the old payload.
-    if gesturesOff || !payloadAlive() || CommandLine.arguments.contains("--updated") { loadPayload() }
+    if gesturesChanged || !payloadAlive() || CommandLine.arguments.contains("--updated") { loadPayload() }
     applyLaunchAtLogin()
     startUpdates()
 }

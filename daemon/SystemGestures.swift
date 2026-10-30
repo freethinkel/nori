@@ -2,6 +2,7 @@
 // session event tap sees the gesture. nori turns both off while it runs and puts the original values back on quit.
 // The originals live in system-gestures.json, so a crash (which skips the restore) still leaves the next launch
 // knowing what to put back, and a manual `defaults write` while nori runs is left alone on the way out.
+// leave-system-gestures keeps them on, from the next launch: changing them means a Dock restart and the admin password.
 
 import Cocoa
 
@@ -52,18 +53,24 @@ func disableSystemGestures() -> Bool {
     return changed
 }
 
-// Called on the way out. Only undo what nori turned off: if the user turned one back on meanwhile, leave it.
+// Called on the way out.
 func restoreSystemGestures() {
-    guard let originals = savedSystemGestures() else { return }
+    if putBackSystemGestures() { restartDockSoon() }
+}
+
+// Only undo what nori turned off: if the user turned one back on meanwhile, leave it. Returns true when a preference
+// changed, so Dock must restart to apply it.
+func putBackSystemGestures() -> Bool {
+    guard let originals = savedSystemGestures() else { return false }
     var changed = false, failed = false
     for (key, original) in originals where original && !dockGesture(key) {
         setDockGesture(key, true)
         if dockGesture(key) { changed = true } else { failed = true }
     }
     // Keep the file when a write failed, so the next launch can try again.
-    guard !failed else { return }
+    guard !failed else { return false }
     try? FileManager.default.removeItem(atPath: systemGesturesPath)
-    if changed { restartDockSoon() }
+    return changed
 }
 
 // Runs from atexit for an exit path that forgot to restore explicitly. The update relaunch keeps them for the new instance.

@@ -4,12 +4,11 @@
 // Dock still owns which Space is current: picking another Space presses its "Switch to Desktop N" shortcut
 // (switchToSpace in Control.swift), or activates the app of a fullscreen Space (pressSpace), and Dock's switch runs
 // hidden under ours.
-// ponytail: main display only; a click picks a Space, not a window. Scale and gap live in payload.m.
+// ponytail: main display only; a click picks a Space, not a window. The gap lives in payload.m, the scale goes along with each layout.
 
 import Cocoa
 
-let overviewScale: CGFloat = 0.4  // same as OVERVIEW_SCALE and OVERVIEW_GAP in payload.m, for hit testing
-let overviewGap: CGFloat = 48
+let overviewGap: CGFloat = 48  // same as OVERVIEW_GAP in payload.m, for hit testing
 
 var overviewOpen = false
 var overviewSpaces: [UInt64] = []  // Spaces of the display, fullscreen ones included, top to bottom
@@ -110,7 +109,7 @@ func sendLayout(open: Bool, spring: Bool) {
     layoutSeq += 1
     // The Space-changed event lands while the strip is paused; layout-done polls, this is in case it never comes.
     DispatchQueue.main.asyncAfter(deadline: .now() + spaceLayoutFallback + 0.05) { pollSoon() }
-    send(["Q \(layoutSeq)", "Y \(spring ? 1 : 0) \(overviewTarget) \(open ? 1 : 0) " + overviewSpaces.map(String.init).joined(separator: " ")])
+    send(["Q \(layoutSeq)", "Z \(overviewScale)", "Y \(spring ? 1 : 0) \(overviewTarget) \(open ? 1 : 0) " + overviewSpaces.map(String.init).joined(separator: " ")])
     publishSoon()  // isAnimating, for subscribers
 }
 

@@ -8,10 +8,101 @@ struct IconTile: View {
 
     var body: some View {
         Image(systemName: symbol)
-            .font(.system(size: 11, weight: .semibold))
+            .font(.system(size: 10.5, weight: .semibold))
             .foregroundStyle(.white)
-            .frame(width: 22, height: 22)
-            .background(color.gradient, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .frame(width: 20, height: 20)
+            .background(color.gradient, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+    }
+}
+
+// A page of Cards. It stops growing with the window, or the controls drift away from their labels.
+struct Cards<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 22) { content }
+                .frame(maxWidth: 620)
+                .padding(20)
+        }
+        // The title bar is transparent: on their way under the title the cards fade out instead of running into it.
+        .mask {
+            VStack(spacing: 0) {
+                LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom).frame(height: 20)
+                Color.black
+            }
+        }
+    }
+}
+
+// Rows on a quiet fill, with the heading and a footnote outside it, as Rex lays out its settings. Every row is a
+// cardRow(), which draws the hairline above it; the clip takes the first one away.
+struct Card<Content: View>: View {
+    var title = ""
+    var footer = ""
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            if !title.isEmpty { Text(title).fontWeight(.semibold).padding(.horizontal, 10) }
+            VStack(spacing: 0) { content }
+                .padding(.top, -0.5)
+                .background(Color.primary.opacity(0.05))
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            if !footer.isEmpty { Text(footer).font(.subheadline).foregroundStyle(.secondary).padding(.horizontal, 10) }
+        }
+    }
+}
+
+extension View {
+    func cardRow() -> some View {
+        frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            // Not a Divider: in a Button's label it stands upright.
+            .overlay(alignment: .top) { Rectangle().fill(.separator).frame(height: 0.5).padding(.horizontal, 10) }
+    }
+}
+
+// A label on the left, the control on the right.
+struct Row<Control: View>: View {
+    let title: String
+    var help = ""
+    var helpColor = Color.secondary
+    @ViewBuilder let control: Control
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Labels(title: title, help: help, color: helpColor).layoutPriority(1)  // or the Spacer takes half the room from it
+            Spacer(minLength: 0)
+            control
+        }
+        .cardRow()
+    }
+}
+
+struct Labels: View {
+    let title: String
+    let help: String
+    var color = Color.secondary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(title)
+            if !help.isEmpty { Text(help).font(.subheadline).foregroundStyle(color) }
+        }
+    }
+}
+
+struct SwitchRow: View {
+    let title: String
+    var help = ""
+    @Binding var isOn: Bool
+
+    var body: some View {
+        Row(title: title, help: help) {
+            Toggle(title, isOn: $isOn).labelsHidden().toggleStyle(.switch).controlSize(.mini)
+        }
     }
 }
 
@@ -25,45 +116,29 @@ struct SettingRow: View {
         if numberKeys.contains(key) {
             NumberRow(key: key)
         } else if flagKeys.contains(key) {
-            Toggle(isOn: Binding(get: { model.flag(key) }, set: { model.set(key, to: .bool($0)) })) { Labels(title: title, help: help) }
+            SwitchRow(title: title, help: help, isOn: Binding(get: { model.flag(key) }, set: { model.set(key, to: .bool($0)) }))
         } else if key == "overview-background" {
             BackgroundTiles(key: key)
+        } else if gestureKeys.contains(key) {
+            GestureRow(key: key)
         } else if let choices = choiceKeys[key] {
             let value = model.text(key)
-            Picker(selection: Binding(get: { value }, set: { model.set(key, to: .string($0)) })) {
-                ForEach(choices, id: \.self) { Text(choiceDescriptions["\(key)=\($0)"]?.title ?? $0).tag($0) }
-            } label: {
-                Labels(title: title, help: choiceDescriptions["\(key)=\(value)"]?.help ?? help)
+            Row(title: title, help: choiceDescriptions["\(key)=\(value)"]?.help ?? help) {
+                Picker(title, selection: Binding(get: { value }, set: { model.set(key, to: .string($0)) })) {
+                    ForEach(choices, id: \.self) { Text(choiceDescriptions["\(key)=\($0)"]?.title ?? $0).tag($0) }
+                }
+                .labelsHidden()
+                .buttonStyle(.borderless)
+                .fixedSize()
             }
-            .pickerStyle(.segmented)
         } else if modifierKeys.contains(key) {
             ModifierRow(key: key)
         } else if bindingDefaults[key] != nil {
             let conflicts = model.conflicts(key)
-            HStack(spacing: 10) {
-                Image(systemName: bindingIcon(key)).foregroundStyle(.secondary).frame(width: 20)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                    if !conflicts.isEmpty {
-                        Text("Same keys as \(conflicts.joined(separator: ", "))").font(.callout).foregroundStyle(.red)
-                    } else if !help.isEmpty {
-                        Text(help).font(.callout).foregroundStyle(.secondary)
-                    }
-                }
-                Spacer()
+            Row(title: title, help: conflicts.isEmpty ? help : "Same keys as \(conflicts.joined(separator: ", "))", helpColor: conflicts.isEmpty ? .secondary : .red) {
                 Recorder(action: key)
             }
         }
-    }
-}
-
-struct Labels: View {
-    let title: String
-    let help: String
-
-    var body: some View {
-        Text(title)
-        if !help.isEmpty { Text(help) }
     }
 }
 
@@ -73,9 +148,53 @@ let numberRanges: [String: (slider: ClosedRange<Double>, limits: ClosedRange<Dou
     "gap": (0...64, 0...500, 1),
     "resize-step": (1...50, 1...100, 1),
     "inactive-opacity": (0.1...1, 0.1...1, 0.05),
+    "overview-scale": (0.2...0.8, 0.2...0.8, 0.05),
+    "swipe-speed": (0.5...3, 0.25...5, 0.1),
+    "space-swipe-distance": (20...100, 10...100, 5),
+    "overview-swipe-distance": (10...60, 10...100, 5),
 ]
+let numberUnits = ["resize-step": "%", "inactive-opacity": "", "overview-scale": "", "swipe-speed": "×",
+                   "space-swipe-distance": "%", "overview-swipe-distance": "%"]  // the rest: pt
 
-// A number as Sleeve shows a size: slider, value, stepper. The slider writes when it is let go, not on every step:
+let gestureNames = ["sideways": "Swipe sideways", "vertical": "Swipe up or down", "pinch": "Pinch", "none": "Off"]
+
+// A trackpad action: the swipes it can take, only those, and on how many fingers. The fingers of an action turned off
+// stay greyed at its default, so the columns line up.
+struct GestureRow: View {
+    let key: String
+
+    var body: some View {
+        let model = settingsModel
+        let (title, help) = describe(key)
+        let parts = model.text(key).split(separator: " ").map(String.init)
+        let kind = parts.last!
+        let choices = choiceKeys[key]!
+        let fingers = parts.count == 2 ? parts[0] : String(choices[0].split(separator: " ")[0])
+        let kinds = choices.reduce(into: [String]()) { all, choice in
+            let kind = String(choice.split(separator: " ").last!)
+            if !all.contains(kind) { all.append(kind) }
+        }
+        let same = kind == "none" ? [] : gestureKeys.filter { $0 != key && model.text($0) == model.text(key) }.map { describe($0).title }
+        Row(title: title, help: same.isEmpty ? choiceDescriptions["\(key)=\(kind)"]?.help ?? help : "Same swipe as \(same.joined(separator: ", "))",
+            helpColor: same.isEmpty ? .secondary : .red) {
+            Picker("Gesture", selection: Binding(get: { kind }, set: { model.setGesture(key, to: $0 == "none" ? "none" : "\(fingers) \($0)") })) {
+                ForEach(kinds, id: \.self) { Text(gestureNames[$0] ?? $0).tag($0) }
+            }
+            .labelsHidden()
+            .buttonStyle(.borderless)
+            .fixedSize()
+            Picker("Fingers", selection: Binding(get: { fingers }, set: { model.setGesture(key, to: "\($0) \(kind)") })) {
+                ForEach(3...5, id: \.self) { Text("\($0) fingers").tag(String($0)) }
+            }
+            .labelsHidden()
+            .buttonStyle(.borderless)
+            .fixedSize()
+            .disabled(kind == "none")
+        }
+    }
+}
+
+// A number as a slider, the value and a stepper. The slider writes when it is let go, not on every step:
 // each write rewrites the file and lays the windows out.
 struct NumberRow: View {
     let key: String
@@ -86,29 +205,34 @@ struct NumberRow: View {
         let (title, help) = describe(key)
         let range = numberRanges[key] ?? (0...200, 0...500, 1)
         let typed = Binding(get: { draft ?? value }, set: save)
-        LabeledContent {
-            HStack(spacing: 8) {
-                // No step on the slider, which would draw tick marks; it snaps here instead.
-                Slider(value: Binding(get: { draft ?? value }, set: { draft = snap($0) }), in: range.slider, onEditingChanged: { editing in
-                    if !editing, let draft { save(draft) }
-                })
-                    .labelsHidden()
-                    .frame(width: 180)
-                TextField(title, value: typed, format: .number.precision(.fractionLength(0...2)))
-                    .labelsHidden()
-                    .textFieldStyle(.plain)
-                    .multilineTextAlignment(.center)
-                    .monospacedDigit()
-                    .frame(width: 44)
-                    .padding(.vertical, 3)
-                    .padding(.horizontal, 6)
-                    .overlay(Capsule().strokeBorder(.separator))
-                // The range takes in a value from the file beyond the limits, or the stepper would clamp it and write.
-                Stepper(title, value: typed, in: min(range.limits.lowerBound, value)...max(range.limits.upperBound, value), step: range.step)
-                    .labelsHidden()
-                    .controlSize(.small)
+        Row(title: title, help: help) {
+            // No step on the slider, which would draw tick marks; it snaps here instead.
+            Slider(value: Binding(get: { draft ?? value }, set: { draft = snap($0) }), in: range.slider, onEditingChanged: { editing in
+                if !editing, let draft { save(draft) }
+            })
+                .labelsHidden()
+                .controlSize(.small)
+                .frame(width: 120)
+            HStack(spacing: 6) {
+                HStack(spacing: 0) {
+                    TextField(title, value: typed, format: .number.precision(.fractionLength(0...2)))
+                        .labelsHidden()
+                        .textFieldStyle(.plain)
+                        .multilineTextAlignment(.trailing)
+                        .monospacedDigit()
+                        .frame(width: 30)
+                    // The range takes in a value from the file beyond the limits, or the stepper would clamp it and write.
+                    Stepper(title, value: typed, in: min(range.limits.lowerBound, value)...max(range.limits.upperBound, value), step: range.step)
+                        .labelsHidden()
+                        .controlSize(.mini)
+                }
+                .padding(.leading, 6)
+                .padding(.trailing, 3)
+                .frame(height: 26)  // the stepper is taller than the text: the box goes by it, or it sticks out
+                .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(.separator))
+                Text(numberUnits[key] ?? "pt").font(.subheadline).foregroundStyle(.secondary).frame(width: 14, alignment: .leading)
             }
-        } label: { Labels(title: title, help: help) }
+        }
         .onChange(of: value) { draft = nil }
     }
 
@@ -133,8 +257,8 @@ struct ModifierRow: View {
     var body: some View {
         let flags = modifiers(settingsModel.text(key)) ?? .maskAlternate
         let (title, help) = describe(key)
-        LabeledContent {
-            HStack(spacing: 4) {
+        Row(title: title, help: help) {
+            HStack(spacing: 2) {
                 ForEach(modifierNames, id: \.name) { modifier in
                     Toggle(modifier.glyph, isOn: Binding(get: { flags.contains(modifier.flag) }, set: { on in
                         let new = on ? flags.union(modifier.flag) : flags.subtracting(modifier.flag)
@@ -145,132 +269,86 @@ struct ModifierRow: View {
                     .help(modifier.name)
                 }
             }
-        } label: { Labels(title: title, help: help) }
+            .controlSize(.small)
+        }
     }
 }
 
-// overview-background as Sleeve shows a style: a tile per value with a swatch, its name under it, the chosen one
-// outlined in the accent color.
+// overview-background as Rex shows a color scheme: a preview per value with its name under it, the chosen one ringed
+// in the accent color.
 struct BackgroundTiles: View {
     let key: String
     @State private var wallpaper: NSImage?
 
     var body: some View {
         let value = settingsModel.text(key)
-        let (title, _) = describe(key)
-        VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                Text(choiceDescriptions["\(key)=\(value)"]?.help ?? "").font(.callout).foregroundStyle(.secondary)
-            }
-            HStack(spacing: 12) {
-                ForEach(choiceKeys[key]!, id: \.self) { choice in
-                    let on = choice == value
-                    let tile = RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    Button { settingsModel.set(key, to: .string(choice)) } label: {
-                        VStack(spacing: 6) {
-                            Group {
-                                if choice == "blur" { Background(image: wallpaper).blur(radius: 4) } else { Color.black }
-                            }
-                            .frame(width: 40, height: 40)
-                            .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(.white.opacity(0.15)))
-                            .frame(width: 96, height: 64)
-                            .background(on ? Color.accentColor.opacity(0.25) : Color.primary.opacity(0.06), in: tile)
-                            .overlay(tile.strokeBorder(on ? Color.accentColor : Color.primary.opacity(0.12), lineWidth: on ? 3 : 1))
-                            Text(choiceDescriptions["\(key)=\(choice)"]?.title ?? choice)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 2)
-                                .foregroundStyle(on ? .white : .secondary)
-                                .background(on ? Color.accentColor : .clear, in: Capsule())
+        let (title, help) = describe(key)
+        Row(title: title, help: help) {
+            ForEach(choiceKeys[key]!, id: \.self) { choice in
+                let on = choice == value
+                Button { settingsModel.set(key, to: .string(choice)) } label: {
+                    VStack(spacing: 4) {
+                        Group {
+                            if choice == "blur" { Background(image: wallpaper).blur(radius: 4) } else { Color.black }
                         }
+                        .frame(width: 68, height: 44)
+                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(.white.opacity(0.15)))
+                        .padding(3)
+                        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(on ? Color.accentColor : .clear, lineWidth: 2))
+                        Text(choiceDescriptions["\(key)=\(choice)"]?.title ?? choice)
+                            .font(.subheadline)
+                            .fontWeight(on ? .semibold : .regular)
+                            .foregroundStyle(on ? .primary : .secondary)
                     }
-                    .buttonStyle(.plain)
                 }
+                .buttonStyle(.plain)
             }
         }
         .task { wallpaper = wallpaperThumbnail() }
     }
 }
 
-// As Sleeve records hotkeys: "Record" when unbound, "REC" while it waits (the event tap hands the next press to
-// SettingsModel.record), else the keys as keycaps; click them to record again.
+// As Rex records shortcuts: a key of one width, so the column lines up. "Record Shortcut" when unbound, "Type Shortcut"
+// while it waits (the event tap hands the next press to SettingsModel.record), else the keys; click to record again.
+// The mark inside it unbinds on hover, and goes back to the default while it waits.
 struct Recorder: View {
     let action: String
+    @State private var hovering = false
 
     var body: some View {
         let model = settingsModel
         let text = model.text(action)
         let standard = bindingDefaults[action]!
-        HStack(spacing: 8) {
-            if model.recording == action {
-                Button { model.recording = nil } label: {
-                    HStack(spacing: 6) {
-                        Circle().strokeBorder(.secondary, lineWidth: 1.5).frame(width: 9, height: 9)
-                        Text("REC").fontWeight(.bold).foregroundStyle(.red)
-                    }
-                    .capsuleButton()
+        let waiting = model.recording == action
+        let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
+        Button { model.recording = waiting ? nil : action } label: {
+            Group {
+                if waiting {
+                    Text("Type Shortcut").foregroundStyle(.tint)
+                } else if text == "none" {
+                    Text("Record Shortcut").foregroundStyle(.tertiary)
+                } else {
+                    Text(chordGlyphs(text)).tracking(1.5)
                 }
-                .help("Press the shortcut. Esc cancels, Delete unbinds")
-                Button { model.recording = nil; model.set(action, to: .string(standard)) } label: {
-                    Image(systemName: "arrow.uturn.backward.circle.fill").font(.title3).foregroundStyle(.secondary)
-                }
-                .help("Back to \(chordGlyphs(standard))")
-            } else if text == "none" {
-                Button { model.recording = action } label: { Text("Record").capsuleButton() }
-            } else {
-                Button { model.recording = action } label: { Keycaps(text: text) }
-                    .help("Click to record another shortcut")
-                Button { model.set(action, to: .string("none")) } label: { Image(systemName: "trash").foregroundStyle(.secondary) }
+            }
+            .frame(width: 130, height: 24)
+            .background(Color.primary.opacity(text == "none" && !waiting ? 0.04 : 0.1), in: shape)
+            .overlay(shape.strokeBorder(waiting ? Color.accentColor : .clear))
+            .contentShape(shape)
+        }
+        .overlay(alignment: .trailing) {
+            if waiting {
+                Button { model.recording = nil; model.set(action, to: .string(standard)) } label: { Image(systemName: "arrow.uturn.backward.circle.fill") }
+                    .help("Back to \(chordGlyphs(standard)). Esc cancels, Delete unbinds")
+            } else if hovering && text != "none" {
+                Button { model.set(action, to: .string("none")) } label: { Image(systemName: "xmark.circle.fill") }
                     .help("Unbind")
             }
         }
         .buttonStyle(.plain)
+        .onHover { hovering = $0 }
     }
-}
-
-// "ctrl+option+h" as keycaps: ⌃ + ⌥ + H.
-struct Keycaps: View {
-    let text: String
-
-    var body: some View {
-        let keys = chordGlyphs(text).map(String.init)
-        HStack(spacing: 4) {
-            ForEach(Array(keys.enumerated()), id: \.offset) { i, key in
-                if i > 0 { Text("+").foregroundStyle(.secondary) }
-                Text(key)
-                    .frame(minWidth: 22, minHeight: 22)
-                    .padding(.horizontal, 4)
-                    .background(Color.primary.opacity(0.12), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-                    .shadow(color: .black.opacity(0.3), radius: 0.5, y: 1)
-            }
-        }
-        .padding(4)
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.primary.opacity(0.15)))
-    }
-}
-
-extension View {
-    func capsuleButton() -> some View {
-        frame(minWidth: 72, minHeight: 22)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .contentShape(Capsule())
-            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.2)))
-    }
-}
-
-func bindingIcon(_ action: String) -> String {
-    if action.hasPrefix("move-to-space-"), let n = Int(action.dropFirst(14)) { return "\(n).square" }
-    return [
-        "focus-left": "arrow.left", "focus-right": "arrow.right", "focus-first": "arrow.left.to.line", "focus-last": "arrow.right.to.line",
-        "center-column": "align.horizontal.center", "move-left": "arrow.left.square", "move-right": "arrow.right.square",
-        "grow-width": "arrow.left.and.right", "shrink-width": "arrow.right.and.line.vertical.and.arrow.left",
-        "cycle-width-forward": "rectangle.righthalf.inset.filled", "cycle-width-backward": "rectangle.lefthalf.inset.filled",
-        "toggle-full-width": "arrow.up.left.and.arrow.down.right", "focus-space-down": "arrow.down", "focus-space-up": "arrow.up",
-        "move-to-space-down": "arrow.down.square", "move-to-space-up": "arrow.up.square", "overview": "square.grid.2x2",
-        "show-floating": "macwindow.on.rectangle", "toggle-floating": "square.on.square",
-    ][action] ?? "keyboard"
 }
 
 // Apps for the app pickers: the running ones in the Dock, nori itself left out. Agents and helpers have no windows
@@ -372,68 +450,66 @@ struct RuleSection: View {
     var body: some View {
         let model = settingsModel
         let app = string("app")
-        // Each view a row of the card, so the Form draws the lines between them.
-        Section {
-            HStack(spacing: 10) {
-                Button { withAnimation(.snappy) { expanded.toggle() } } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .rotationEffect(.degrees(expanded ? 90 : 0))
-                        Image(nsImage: appIcon(app) ?? NSWorkspace.shared.icon(for: .application)).resizable().frame(width: 28, height: 28)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(app.isEmpty ? "New rule" : app).font(.headline)
-                            if makeRule(table) == nil { Text(problem).foregroundStyle(.orange) } else { Text(summary).foregroundStyle(.secondary) }
-                        }
-                        Spacer()
-                    }
-                    .contentShape(Rectangle())
+        let valid = makeRule(table) != nil
+        VStack(spacing: 0) {
+            Button { withAnimation(.snappy) { expanded.toggle() } } label: {
+                HStack(spacing: 10) {
+                    Image(nsImage: appIcon(app) ?? NSWorkspace.shared.icon(for: .application)).resizable().frame(width: 24, height: 24)
+                    Labels(title: app.isEmpty ? "New rule" : app, help: valid ? summary : problem, color: valid ? .secondary : .orange)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
                 }
-                .buttonStyle(.plain)
-                Button { model.edit { removingTOMLTable($0, "rule", index: index) } } label: { Image(systemName: "trash").foregroundStyle(.secondary) }
-                    .buttonStyle(.plain)
-                    .help("Delete this rule")
+                .cardRow()
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
             if expanded {
-                RuleField("App") {
-                    CommitField(value: app, prompt: "Name or bundle id") { model.setRule(index, "app", to: .string($0)) }
-                    Button { pickRunningApp { model.setRule(index, "app", to: .string($0)) } } label: { Image(systemName: "list.bullet") }
-                        .help("Pick a running app")
-                }
-                RuleField("Title", help: "A regular expression the window title must contain, any case. Empty: every window of the app") {
-                    CommitField(value: string("title"), prompt: "Any window") { model.setRule(index, "title", to: $0.isEmpty ? nil : .string($0)) }
-                    Button {
-                        popUpMenu(windowTitles(app).map { title in (title, nil, { model.setRule(index, "title", to: .string(NSRegularExpression.escapedPattern(for: title))) }) },
-                                  empty: "No open windows of \(app.isEmpty ? "this app" : app)")
-                    } label: { Image(systemName: "macwindow") }
-                        .help("Pick one of the app's open windows")
-                }
-                RuleField("Space", help: "A new window moves to this Desktop once") {
-                    Picker("Space", selection: Binding(get: { number("space").map(Int.init) ?? 0 }, set: { model.setRule(index, "space", to: $0 == 0 ? nil : .number(Double($0))) })) {
-                        Text("Where it opens").tag(0)
-                        ForEach(1...16, id: \.self) { Text("Desktop \($0)").tag($0) }
+                VStack(spacing: 0) {
+                    Row(title: "App") {
+                        CommitField(value: app, prompt: "Name or bundle id") { model.setRule(index, "app", to: .string($0)) }
+                            .frame(width: 180)
+                        Button { pickRunningApp { model.setRule(index, "app", to: .string($0)) } } label: { Image(systemName: "list.bullet").frame(width: 18) }
+                            .help("Pick a running app")
                     }
-                    .labelsHidden()
-                    .fixedSize()
-                    Spacer()
-                }
-                RuleField("Width", help: "In % of the usable width, once, when the window joins the strip") {
-                    CommitField(value: number("width").map { tomlText(.number($0)) } ?? "", prompt: "As it opens") {
-                        model.setRule(index, "width", to: Double($0).map { .number(min(max($0, 1), 100)) })
+                    Row(title: "Title", help: "A regular expression it must contain") {
+                        CommitField(value: string("title"), prompt: "Any window") { model.setRule(index, "title", to: $0.isEmpty ? nil : .string($0)) }
+                            .frame(width: 180)
+                        Button {
+                            popUpMenu(windowTitles(app).map { title in (title, nil, { model.setRule(index, "title", to: .string(NSRegularExpression.escapedPattern(for: title))) }) },
+                                      empty: "No open windows of \(app.isEmpty ? "this app" : app)")
+                        } label: { Image(systemName: "macwindow").frame(width: 18) }
+                            .help("Pick one of the app's open windows")
                     }
-                    .frame(width: 120)
-                    Text("%").foregroundStyle(.secondary)
-                    Spacer()
+                    Row(title: "Space", help: "A new window moves to this Desktop once") {
+                        Picker("Space", selection: Binding(get: { number("space").map(Int.init) ?? 0 }, set: { model.setRule(index, "space", to: $0 == 0 ? nil : .number(Double($0))) })) {
+                            Text("Where it opens").tag(0)
+                            ForEach(1...16, id: \.self) { Text("Desktop \($0)").tag($0) }
+                        }
+                        .labelsHidden()
+                        .buttonStyle(.borderless)
+                        .fixedSize()
+                    }
+                    Row(title: "Width", help: "Of the usable width, once, when it joins the strip") {
+                        CommitField(value: number("width").map { tomlText(.number($0)) } ?? "", prompt: "As it opens") {
+                            model.setRule(index, "width", to: Double($0).map { .number(min(max($0, 1), 100)) })
+                        }
+                        .frame(width: 96)
+                        Text("%").foregroundStyle(.secondary)
+                    }
+                    SwitchRow(title: "Floating", help: "Its windows stay out of the strip, where you put them",
+                              isOn: Binding(get: { flag("floating") }, set: { model.setRule(index, "floating", to: $0 ? .bool(true) : nil) }))
+                    SwitchRow(title: "Ignore", help: "nori neither moves nor lists its windows",
+                              isOn: Binding(get: { flag("ignore") }, set: { model.setRule(index, "ignore", to: $0 ? .bool(true) : nil) }))
+                    Row(title: "") {
+                        Button { model.edit { removingTOMLTable($0, "rule", index: index) } } label: { Text("Delete Rule").foregroundStyle(.red) }
+                            .buttonStyle(.plain)
+                    }
                 }
-                Toggle(isOn: Binding(get: { flag("floating") }, set: { model.setRule(index, "floating", to: $0 ? .bool(true) : nil) })) {
-                    Text("Floating")
-                    Text("Its windows stay out of the strip, where you put them")
-                }
-                Toggle(isOn: Binding(get: { flag("ignore") }, set: { model.setRule(index, "ignore", to: $0 ? .bool(true) : nil) })) {
-                    Text("Ignore")
-                    Text("nori neither moves nor lists its windows")
-                }
+                .buttonStyle(.borderless)
+                .background(Color.primary.opacity(0.03))
             }
         }
     }
@@ -461,28 +537,6 @@ struct RuleSection: View {
     private func flag(_ key: String) -> Bool { table[key] == .bool(true) }
 }
 
-// A row of a rule as Sleeve lays out its settings: the name in a column on the left, the controls beside it, a line
-// of help under them.
-struct RuleField<Content: View>: View {
-    let name: String
-    let help: String
-    @ViewBuilder let content: Content
-
-    init(_ name: String, help: String = "", @ViewBuilder content: () -> Content) {
-        (self.name, self.help, self.content) = (name, help, content())
-    }
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Text(name).foregroundStyle(.secondary).frame(width: 52, alignment: .leading)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) { content }.buttonStyle(.borderless)
-                if !help.isEmpty { Text(help).font(.callout).foregroundStyle(.secondary) }
-            }
-        }
-    }
-}
-
 // Writes when the user presses Return or leaves the field, not on every keystroke: each write rewrites the file and
 // lays the windows out again.
 struct CommitField: View {
@@ -496,9 +550,10 @@ struct CommitField: View {
         TextField(prompt, text: $draft, prompt: Text(prompt))
             .labelsHidden()
             .textFieldStyle(.plain)
-            .padding(.vertical, 4)
-            .padding(.horizontal, 10)
-            .overlay(Capsule().strokeBorder(focused ? Color.accentColor : Color.primary.opacity(0.15)))
+            .padding(.vertical, 3)
+            .padding(.horizontal, 7)
+            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(focused ? Color.accentColor : Color.primary.opacity(0.15)))
             .focused($focused)
             .onSubmit(save)
             .onChange(of: focused) { if !focused { save() } }

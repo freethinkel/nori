@@ -12,6 +12,7 @@
 //        "G progress velocity" a running Space layout follows a swipe: progress held there until the next "Y"
 //        "F focus velocity"    the same for the (fractional) index of the Space at the center
 //        "Q seq"               number of the next "Y", echoed back in its "layout-done"
+//        "Z scale"             size of the Spaces in the overview, from the next frame on; comes before each "Y"
 // Back to the daemon, on its control socket (daemon/Control.swift), see notify_daemon:
 //        "payload\tlayout-done\t<seq>"             a Space layout ended; the strip may look at windows again
 //        "payload\tresize-settled\t<wid>\t<width>"  a width stretch reached its goal; the app can be resized now
@@ -94,17 +95,16 @@ static int overview_count;
 static struct { uint32_t wid; CGPoint origin; } sticky[MAX_ANIMS];
 static int sticky_count;
 static __thread bool in_step_layout;  // the hook is called from step_layout, not by Dock
-static bool dock_switching;           // Dock's frames came in during this layout: its own switch has begun
-static uint64_t dock_current;         // the Space Dock made current during this layout (nori_current_space), or 0
+static bool dock_switching;           // Dock's own switch has begun and the current Space hasn't changed yet
+static uint64_t dock_current;         // the Space Dock is making current (nori_current_space) until that is committed, or 0
 static uint64_t dock_from;            // the current Space when Dock's switch began (dock_switch_began)
 static CFTypeRef dock_first;          // Dock's transaction in which its switch began, until step_layout's next frame
-static __thread bool own_call;        // the payload's own SLSTransactionHideSpace from a hook: not Dock's, let it through
 static bool instant;                  // "I 1": Dock's switch gets identity transforms, so the new Space just appears
 
 // Space layout: the overview and Space switches, animated here on vsync like windows.
 // focus is the (fractional) index at the screen center; progress 0 is plain Spaces, 1 the overview.
 // Dock still switches the current Space: the daemon presses its shortcut, and the hooks give Dock's frames ours.
-#define OVERVIEW_SCALE 0.4
+static double overview_scale = 0.4;
 #define OVERVIEW_GAP 48.0
 #define SPRING_RESPONSE 0.28  // seconds per oscillation, like SwiftUI's .spring(response:dampingFraction:)
 #define SPRING_DAMPING 0.78
@@ -222,7 +222,7 @@ static void chase(double *x, double value, double velocity, uint64_t at, uint64_
 }
 
 // The Space the sticky windows go with: the one that last became shown (step_layout makes that the target), but
-// once Dock's own switch has begun the current one until it is the target, as in Dock's slide (seen: they
+// from the start of Dock's own switch until the current Space changes the current one, as in Dock's slide (seen: they
 // vanished while Dock's frames had stopped and the current Space was still the old one).
 // A fullscreen Space doesn't take them in Dock's switch: they stay with the desktop side of it. Leaving one, they
 // were drawn with the target desktop from the switch's start, while the current Space was still the fullscreen one
@@ -234,7 +234,7 @@ static uint64_t held_space(void)
 {
     uint64_t target = layout_spaces[layout_target];
     if (!dock_switching) return target;
-    uint64_t current = dock_current ? dock_current : SLSGetActiveSpace(SLSMainConnectionID());
+    uint64_t current = SLSGetActiveSpace(SLSMainConnectionID());
     if (!is_fullscreen(current)) return current;
     if (!is_fullscreen(target)) return target;
     return dock_from && !is_fullscreen(dock_from) ? dock_from : current;
@@ -275,6 +275,12 @@ static void step_layout(double dt)
         layout_focus = layout_target;
     }
     uint64_t current = SLSGetActiveSpace(SLSMainConnectionID());
+    // Dock's change is committed: this frame takes the sticky windows to the target, see nori_current_space. Not into
+    // a fullscreen Space: they don't go there, and stay with the desktop side (held_space) until the next switch.
+    if (current == dock_current && !is_fullscreen(current)) {
+        dock_switching = false;
+        dock_current = 0;
+    }
     bool done = settled && layout_goal == 0 && (current == layout_spaces[layout_target] || now - layout_started > 1000000000);
     // Our slide is over, Dock's switch isn't: the sticky windows still go with the old Space (held_space). It is put
     // where the target is, under it, so that when the current Space changes they pass from one untransformed Space
@@ -285,7 +291,7 @@ static void step_layout(double dt)
     if (!transaction) return;
     CGRect screen = CGDisplayBounds(CGMainDisplayID());
     CFTypeRef region = CGRegionCreateWithRect(screen);
-    double scale = 1 - (1 - OVERVIEW_SCALE) * layout_progress;
+    double scale = 1 - (1 - overview_scale) * layout_progress;
     overview_count = layout_count;  // before the transforms: the hook looks each one up, the first frame's too
     // Their own frames every frame: one may move meanwhile (a PiP dragged), and the hook undoes from these.
     for (int i = 0; i < sticky_count; i++) {
@@ -622,6 +628,11 @@ static void handle_line(char *line)
     case 'Q':
         layout_seq = atol(line + 1);
         break;
+    case 'Z': {
+        double scale = strtod(line + 1, NULL);
+        if (scale > 0 && scale <= 1) overview_scale = scale;  // the transforms divide by it
+        break;
+    }
     case 'R': {
         double width;
         if (sscanf(line + 1, "%u %lf", &wid, &width) == 2 && width > 0) {
@@ -728,12 +739,21 @@ static bool daemon_alive(void)
 }
 
 // Undoing the held Space's transform (held_space), ours or Dock's, puts the sticky windows back where they are.
+// WindowServer draws a window of a transformed Space from a whole point, so that is what gets undone: undoing the
+// exact place left them a fraction of a point off, blurred, and shaking as the fraction changed. Up to 1/256 below a
+// whole point counts as that point (docs/WINDOWSERVER.md).
+static double undo_offset(double origin, double t, double a)
+{
+    double o = floor(origin);
+    return floor((o - t) / a + 1.0 / 256) - o;
+}
+
 static void hold_sticky(CFTypeRef transaction, const CGAffineTransform *t)
 {
     for (int i = 0; i < sticky_count; i++) {
         CGPoint o = sticky[i].origin;
         // Screen -> window, origin at the window's top-left (docs/WINDOWSERVER.md), after t (screen -> Space): t undone.
-        double m[16] = { 1 / t->a, 0, 0, 0,  0, 1 / t->d, 0, 0,  0, 0, 1, 0,  (o.x - t->tx) / t->a - o.x, (o.y - t->ty) / t->d - o.y, 0, 1 };
+        double m[16] = { 1 / t->a, 0, 0, 0,  0, 1 / t->d, 0, 0,  0, 0, 1, 0,  undo_offset(o.x, t->tx, t->a), undo_offset(o.y, t->ty, t->d), 0, 1 };
         SLSTransactionSetWindowTransform3D(transaction, sticky[i].wid, m);
     }
 }
@@ -767,26 +787,16 @@ const CGAffineTransform *nori_space_transform(const CGAffineTransform *t, uint64
     return &vertical;
 }
 
-// SLSTransactionSetManagedDisplayCurrentSpace(transaction, display uuid, sid): Dock's switch makes sid current.
-// The sticky windows go over to it once this transaction is committed, but SLSGetActiveSpace answers the old Space
-// until then, so the undo set in this same transaction was the old Space's: the windows were off screen for one
-// frame, until the next step_layout (recorded, on most switches). The new Space's undo goes in with the change.
+// SLSTransactionSetManagedDisplayCurrentSpace(transaction, display uuid, sid): the last call of Dock's switch. The old
+// Space stays shown (nori_hide_space), so the sticky windows stay on it once this is committed, and they stay undone
+// for it: undoing the new Space here left them off screen until the next step_layout, 25-30 ms later (recorded), and
+// hiding and showing it here does nothing, it comes before the change. That step_layout takes them over in one
+// transaction. The switch ends then, not at the next "Y": the overview is one layout through many switches.
 __attribute__((visibility("hidden"), used))
 void nori_current_space(CFTypeRef transaction, uint64_t sid)
 {
-    if (!overview_active) return;
-    dock_switch_began();  // before dock_current: dock_from is the Space being left
-    dock_current = sid;
-    uint64_t held = held_space();  // sid, unless it is a fullscreen Space
-    // Hidden and shown again in this transaction, so the sticky windows go over to it with this commit, as the
-    // undo assumes: in the overview they went a frame late (recorded: +724, one slot off, at the change).
-    if (held == sid) {
-        own_call = true;
-        SLSTransactionHideSpace(transaction, sid);
-        SLSTransactionShowSpace(transaction, sid);
-        own_call = false;
-    }
-    for (int i = 0; i < overview_count; i++) if (overview[i].sid == held) hold_sticky(transaction, &overview[i].t);
+    (void) transaction;
+    if (overview_active) dock_current = sid;
 }
 
 // SLSTransactionHideSpace(transaction, sid): Dock hides the Space it leaves in the transaction that ends its switch,
@@ -795,9 +805,9 @@ void nori_current_space(CFTypeRef transaction, uint64_t sid)
 // a layout runs its Spaces are ours: Dock's hides of them are dropped, and step_layout hides them when it ends.
 // Returns 1 to drop the call (the stub returns kCGErrorSuccess without running it).
 __attribute__((visibility("hidden"), used))
-uint64_t nori_hide_space(uint64_t sid)
+int nori_hide_space(uint64_t sid)
 {
-    if (!overview_active || in_step_layout || own_call) return 0;
+    if (!overview_active || in_step_layout) return 0;
     for (int i = 0; i < overview_count; i++) if (overview[i].sid == sid) return 1;
     return 0;
 }
@@ -905,12 +915,13 @@ __asm__(
     "    mov x9, x0\n"
     "    ldp x0, x1, [sp, #16]\n"
     "    ldp x29, x30, [sp], #32\n"
-    "    cbz x9, Lnori_hide_run\n"  // a conditional branch needs an assembler-local label
-    "    mov x0, #0\n"
+    "    cbnz w9, 1f\n"
+    "    b _nori_hide_prologue\n"
+    "1:\n"
+    "    mov w0, #0\n"  // kept shown: no hide, no error
     "    ret\n"
     ".private_extern _nori_hide_prologue\n"
     "_nori_hide_prologue:\n"
-    "Lnori_hide_run:\n"
     "    pacibsp\n"
     "    stp x20, x19, [sp, #-0x20]!\n"
     "    stp x29, x30, [sp, #0x10]\n"

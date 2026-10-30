@@ -36,12 +36,16 @@ import SwiftUI
         edit { settingTOML($0, table: bindingDefaults[key] == nil ? "" : "bindings", key: key, to: value) }
     }
 
+    func setGesture(_ key: String, to value: String) {
+        edit { file in gestureChanges(key, to: value, current: text).reduce(file) { settingTOML($0, key: $1.key, to: .string($1.value)) } }
+    }
+
     func setRule(_ index: Int, _ key: String, to value: TOMLValue?) {
         edit { settingTOML($0, table: "rule", index: index, key: key, to: value) }
     }
 
     func number(_ key: String) -> Double { values[key].flatMap(Double.init) ?? numberDefaults[key] ?? 0 }
-    func flag(_ key: String) -> Bool { values[key] == "true" }
+    func flag(_ key: String) -> Bool { values[key].map { $0 == "true" } ?? flagsOn.contains(key) }
     func text(_ key: String) -> String { values[key] ?? bindingDefaults[key] ?? choiceKeys[key]?.first ?? "" }
 
     // Other actions on the same keys, and a system "Switch to Desktop N" shortcut, which the event tap serves first.
