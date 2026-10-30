@@ -3,12 +3,17 @@
 
 import Cocoa
 
-// Top level: numbers (missing: numberDefaults, else 0), flags (missing: false) and choices (missing: the first). [bindings]: key bindings (missing: the default below).
+// Top level: numbers (missing: numberDefaults, else 0), flags (missing: false, or true for flagsOn) and choices (missing: the first). [bindings]: key bindings (missing: the default below).
 // [[rule]]: app rules, see Rules.swift. Unknown keys and bad values are reported and skipped.
-let numberKeys = ["gap", "padding-top", "padding-bottom", "padding-left", "padding-right", "resize-step", "inactive-opacity"]
-let numberDefaults: [String: Double] = ["resize-step": 10, "inactive-opacity": 1]  // the rest: 0
-let flagKeys = ["launch-at-login", "always-center-single-column", "wrap-around"]
-let choiceKeys = ["overview-background": ["none", "blur"], "center-focused-column": ["always", "never", "on-overflow"]]
+let numberKeys = ["gap", "padding-top", "padding-bottom", "padding-left", "padding-right", "resize-step", "inactive-opacity", "overview-scale",
+                  "swipe-speed", "space-swipe-distance", "overview-swipe-distance"]
+let numberDefaults: [String: Double] = ["resize-step": 10, "inactive-opacity": 1, "overview-scale": 0.4,
+                                         "swipe-speed": 1.3, "space-swipe-distance": 50, "overview-swipe-distance": 30]  // the rest: 0
+let flagKeys = ["launch-at-login", "always-center-single-column", "wrap-around", "analytics", "leave-system-gestures"]
+let flagsOn = ["analytics"]
+let choiceKeys = ["overview-background": ["none", "blur"], "center-focused-column": ["always", "never", "on-overflow"],
+                  "gesture-strip": swipeChoices(["sideways"], fingers: 3), "gesture-spaces": swipeChoices(["vertical"], fingers: 3),
+                  "gesture-overview": swipeChoices(["vertical", "pinch"], fingers: 4)]
 let modifierKeys = ["mouse-modifier"]  // modifiers joined by "+", at least one
 // Every action has a binding; "none" unbinds one. The actions themselves are in Actions.swift.
 let bindingDefaults = ["focus-left": "option+h", "focus-right": "option+l", "focus-first": "ctrl+option+h", "focus-last": "ctrl+option+l",
@@ -54,8 +59,17 @@ resize-step = 10          # how much grow-width and shrink-width change a window
 # wrap-around = true          # focus past the last window or Space goes round to the first one
 # inactive-opacity = 0.85     # windows without focus fade to this opacity, 0.1 to 1. Default 1: off
 # overview-background = "blur"  # the wallpaper, blurred, behind the overview's Spaces. Default "none": black
+# overview-scale = 0.5        # size of the Spaces in the overview, 0.2 to 0.8. Default 0.4
 # mouse-modifier = "ctrl+option"  # held for a left drag (move a window) or a right drag (resize it). Default "option"
 # launch-at-login = true      # start Nori.app at login. Move the app to /Applications first
+# analytics = false           # no anonymous `active` event a day, see the README. Default true
+# gesture-strip = "3 sideways"    # the swipe that moves the strip: 3 to 5 fingers and "sideways", or "none"
+# gesture-spaces = "3 vertical"   # the swipe that switches Spaces: 3 to 5 fingers and "vertical", or "none"
+# gesture-overview = "4 vertical" # the one that opens the overview: 3 to 5 fingers and "vertical" or "pinch", or "none"
+# swipe-speed = 1.3           # strip points per point of finger travel, 0.25 to 5
+# space-swipe-distance = 50   # swipe per Space, % of the trackpad, 10 to 100
+# overview-swipe-distance = 30  # swipe from closed to open, % of the trackpad, 10 to 100
+# leave-system-gestures = true  # keep Mission Control and App Exposé, from the next launch. macOS may act on nori's swipes too
 
 # Key bindings: modifiers and one key joined by "+". Modifiers: option, ctrl, cmd, shift. Keys: a to z, 0 to 9,
 # - = , . and left, right, up, down. Keys are physical keys on the US layout, so a binding stays put in any
@@ -170,7 +184,54 @@ var centerFocusedColumn: String { config["center-focused-column"] ?? "always" } 
 var alwaysCenterSingleColumn: Bool { config["always-center-single-column"] == "true" }
 var wrapAround: Bool { config["wrap-around"] == "true" }
 var inactiveOpacity: Float { Float(min(max(number("inactive-opacity"), 0.1), 1)) }  // 1: off
+var overviewScale: CGFloat { min(max(number("overview-scale"), 0.2), 0.8) }
+var analyticsOn: Bool { config["analytics"] != "false" }
+var leaveSystemGestures: Bool { config["leave-system-gestures"] == "true" }
+var swipeSpeed: CGFloat { min(max(number("swipe-speed"), 0.25), 5) }  // above 1 the strip outruns the fingers
+var spaceSwipeDistance: CGFloat { min(max(number("space-swipe-distance"), 10), 100) / 100 }  // of the trackpad, per Space
+var overviewSwipeDistance: CGFloat { min(max(number("overview-swipe-distance"), 10), 100) / 100 }  // of the trackpad, closed to open
 var mouseModifier: CGEventFlags { config["mouse-modifier"].flatMap(modifiers) ?? .maskAlternate }
+
+// Trackpad actions, each on a swipe of its own: "3 sideways" is fingers and way, "none" is off. An action only takes
+// swipes that go the way it moves: the strip runs sideways, Spaces are stacked, the overview also zooms, so a pinch.
+// Two fingers are the system's scroll. The first choice is the default.
+let gestureKeys = ["gesture-strip", "gesture-spaces", "gesture-overview"]
+
+func swipeChoices(_ kinds: [String], fingers: Int) -> [String] {
+    let first = "\(fingers) \(kinds[0])"
+    return [first] + kinds.flatMap { kind in (3...5).map { "\($0) \(kind)" } }.filter { $0 != first } + ["none"]
+}
+
+struct Gesture: Equatable {
+    let fingers: Int32
+    let kind: String
+}
+
+func gesture(_ key: String) -> Gesture? {
+    let parts = (config[key] ?? choiceKeys[key]![0]).split(separator: " ")
+    return parts.count == 2 ? Gesture(fingers: Int32(parts[0])!, kind: String(parts[1])) : nil
+}
+
+// The first action wins where a file edited by hand gives two the same swipe.
+func swipeAction(fingers: Int32, kind: String) -> String? {
+    gestureKeys.first { gesture($0) == Gesture(fingers: fingers, kind: kind) }
+}
+
+func ourGesture(_ fingers: Int32) -> Bool {
+    gestureKeys.contains { gesture($0)?.fingers == fingers }
+}
+
+// A swipe is one action's. The action that had the swipe `key` takes moves to the fingers `key` left, or the first free ones.
+func gestureChanges(_ key: String, to new: String, current: (String) -> String) -> [(key: String, value: String)] {
+    var changes = [(key: key, value: new)]
+    guard new != "none", let other = gestureKeys.first(where: { $0 != key && current($0) == new }) else { return changes }
+    let kind = new.split(separator: " ")[1]
+    let taken = gestureKeys.filter { $0 != other }.map { $0 == key ? new : current($0) }
+    let fingers = [String(current(key).split(separator: " ")[0])] + (3...5).map(String.init)
+    let free = fingers.map { "\($0) \(kind)" }.first { choiceKeys[other]!.contains($0) && !taken.contains($0) }
+    changes.append((other, free ?? "none"))
+    return changes
+}
 
 // Bindings: modifiers and one key joined by "+", e.g. "option+o", "ctrl+shift+1". Keys are letters, digits, "-", "=", ",", "."
 // and the arrows. Keycodes are from the US layout, so a binding means the same physical key in any layout.

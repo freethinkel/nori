@@ -13,7 +13,7 @@ It's a prototype. WindowServer moves the windows, not Accessibility. A dylib loa
 - Clicking a window or switching to it with Cmd+Tab scrolls the strip to it.
 - nori stretches a window to the full screen height when it joins the strip.
 - Three fingers sideways drag the strip. Lift, and it settles on the nearest column. Past either end it stretches like rubber.
-- Three fingers up or down move through Spaces the same way. The Spaces follow your fingers, and on lift the nearest one slides to the center, or the next one if you flicked. nori swallows macOS's own three-finger gestures.
+- Three fingers up or down move through Spaces the same way. The Spaces follow your fingers, and on lift the nearest one slides to the center, or the next one if you flicked. nori swallows the three- and four-finger gesture events it can, and turns Mission Control and App Exposé off while it runs, putting them back when it quits, see [macOS settings](#3-macos-settings).
 - Drop a window you dragged with the mouse and it eases back into its column.
 - Every Space has its own strip.
 - Spaces switch vertically, on the same curve as windows. nori catches every "Switch to Desktop N" press, from the keyboard, from Opt+J/K or from `nori focus space`. Dock still switches the Space and the payload draws the slide. If nori quits or crashes, Dock goes back to its usual horizontal animation.
@@ -65,7 +65,7 @@ After that nori lives in the menu bar.
 ### 3. macOS settings
 
 - **Desktop shortcuts.** Turn on "Switch to Desktop 1…N" in System Settings → Keyboard → Keyboard Shortcuts → Mission Control. Opt+J/K, the overview and `nori focus space` press them to switch Spaces.
-- **Trackpad.** In System Settings → Trackpad → More Gestures, set "Swipe between full-screen applications" to four fingers or turn it off. Otherwise macOS flips Spaces along with the strip.
+- **Trackpad.** In System Settings → Trackpad → More Gestures, set "Swipe between full-screen applications" to four fingers or turn it off. Otherwise macOS flips Spaces along with the strip. **Mission Control** and **App Exposé** use the same 3- and 4-finger swipes, and macOS can act on them before nori's event tap sees the gesture. Unless `leave-system-gestures = true`, nori turns both off while it runs (`showMissionControlGestureEnabled` and `showAppExposeGestureEnabled` in `com.apple.dock`) and restores them when it quits, restarting Dock to apply each change, so the next launch loads the payload again (password); Mission Control stays on its keyboard shortcut. If nori crashes they stay off until the next launch or quit.
 - **yabai.** If you have it, stop it while nori runs with `yabai --stop-service`, or at least run `yabai -m config layout float`.
 
 ### Check by hand
@@ -135,7 +135,7 @@ Every row with a config name can be rebound in `[bindings]`, or unbound with `"n
 | Opt+F | every window of this Space outside the strip (floating rules, dialogs, panels, PiP) comes above the strip's. Focus stays where it was. Config name `show-floating` |
 | Opt+Shift+V | the focused window leaves the strip and floats in the middle of the screen at 2/3 of its width and height; again on that window puts it back right of the focused column, at its old width. nori remembers it across restarts. Config name `toggle-floating` |
 | in the overview: H/L or ←/→, J/K or ↓/↑, Return | move through the centered Space's columns, bring the Space below or above to the center, pick it |
-| 4 fingers up / down | the overview follows the swipe and settles open or closed on lift. This replaces Mission Control on four fingers |
+| 4 fingers up / down | the overview follows the swipe and settles open or closed on lift. This replaces Mission Control on four fingers, with Mission Control's gesture turned off while nori runs |
 
 ## Config
 
@@ -153,7 +153,16 @@ padding-left = 24
 padding-right = 24
 resize-step = 10          # width step, % of screen width, default 10
 launch-at-login = true    # start Nori.app at login, default false
+analytics = true          # one anonymous `active` event a day, see Analytics, default true
 overview-background = "blur"  # behind the overview's Spaces: "none" (black, default) or "blur"
+overview-scale = 0.4      # size of the Spaces in the overview, 0.2 to 0.8, default 0.4
+gesture-strip = "3 sideways"     # the swipe that moves the strip, default "3 sideways"
+gesture-spaces = "3 vertical"    # the swipe that switches Spaces, default "3 vertical"
+gesture-overview = "4 vertical"  # the swipe that opens the overview, default "4 vertical"
+swipe-speed = 1.3         # strip points per point of finger travel, 0.25 to 5, default 1.3
+space-swipe-distance = 50 # swipe per Space, % of the trackpad, 10 to 100, default 50
+overview-swipe-distance = 30   # swipe from closed to open, % of the trackpad, 10 to 100, default 30
+leave-system-gestures = false  # keep Mission Control and App Exposé, from the next launch, default false
 center-focused-column = "always"     # "always" (default), "never" or "on-overflow"
 always-center-single-column = false  # a lone window in the center whatever the above says, default false
 wrap-around = false       # focus past the last column or Space goes round to the first, default false
@@ -187,9 +196,11 @@ app = "Telegram"
 space = 3
 ```
 
-Missing numbers are 0, except `resize-step`. A missing binding keeps the default shown above; `"none"` unbinds the action. A binding is modifiers and one key joined by `+`. Modifiers are `option` or `alt`, `ctrl`, `cmd` and `shift`. The key is a letter, a digit, `-`, `=`, `,`, `.`, `left`, `right`, `up` or `down`, and nori reads it as a physical key on the US layout, so the binding stays put when you switch layouts.
+Missing numbers are 0, unless a default is shown above. A missing binding keeps the default shown above; `"none"` unbinds the action. A binding is modifiers and one key joined by `+`. Modifiers are `option` or `alt`, `ctrl`, `cmd` and `shift`. The key is a letter, a digit, `-`, `=`, `,`, `.`, `left`, `right`, `up` or `down`, and nori reads it as a physical key on the US layout, so the binding stays put when you switch layouts.
 
-`overview-background = "blur"` puts the current wallpaper of the main display, blurred and dimmed by 30%, around and between the Spaces in the overview. It is read when the overview opens, so a wallpaper change shows up on the next open.
+`overview-background = "blur"` puts the current wallpaper of the main display, blurred and dimmed by 30%, around and between the Spaces in the overview. It is read when the overview opens, so a wallpaper change shows up on the next open. `overview-scale` takes effect on the next open too. The payload learns it from the daemon, so after updating from a version without this setting it needs a reload (Restart Dock and Reload Payload in the menu).
+
+A gesture is 3, 4 or 5 fingers and a way, or `"none"`. Each action takes only the way it moves: `sideways` for the strip, `vertical` for Spaces, `vertical` or `pinch` for the overview, where closing the fingers in opens it and spreading them closes it. A swipe belongs to one action: in Settings, picking one in use moves the other action to the fingers this one left, and in the file the first of strip, Spaces, overview wins. macOS gets the swipes of a finger count no action is on. `leave-system-gestures = true` keeps Mission Control and App Exposé on from the next launch. macOS may then act on nori's swipes too, so turn off nori's gestures on the finger count they use.
 
 `center-focused-column` decides where the focused window sits, like niri's and OmniWM's setting of that name. `"always"` puts it in the center. `"never"` scrolls the strip only as far as it takes to show it whole, against the left or right padding, so a window already on screen doesn't move the strip and a lone window sits at the left. `"on-overflow"` centers it when it doesn't fit on screen beside the window focus came from, and otherwise acts like `"never"`. Three fingers settle the strip the same way: on a centered window, or with one against the padding. `always-center-single-column = true` centers a lone window in any mode.
 
@@ -294,7 +305,7 @@ nori sees the titles of windows on other Spaces only with Screen Recording permi
 
 ## Analytics
 
-To know how many people run it, nori sends one anonymous `active` event a day to a self-hosted [Aptabase](https://aptabase.com): the nori and macOS versions, nothing about your windows, apps or keys. Aptabase keeps the country, not the IP address. To turn it off, set `DO_NOT_TRACK=1`: `launchctl setenv DO_NOT_TRACK 1` before nori starts for the app (until the next login), or `DO_NOT_TRACK=1 build/nori` in a terminal.
+To know how many people run it, nori sends one anonymous `active` event a day to a self-hosted [Aptabase](https://aptabase.com): the nori and macOS versions, nothing about your windows, apps or keys. Aptabase keeps the country, not the IP address. To turn it off, switch off Share anonymous usage in Settings → About, which is `analytics = false` in the config. `DO_NOT_TRACK=1` does the same: `launchctl setenv DO_NOT_TRACK 1` before nori starts for the app (until the next login), or `DO_NOT_TRACK=1 build/nori` in a terminal.
 
 ## Credits
 

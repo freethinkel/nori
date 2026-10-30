@@ -140,6 +140,7 @@ func relaunch() {
     try? process.run()
     resetOverview()
     restoreWindows()
+    keepSystemGestures = true
     exit(0)
 }
 

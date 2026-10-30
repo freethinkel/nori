@@ -20,8 +20,9 @@ func startApp() {
     statusItem.menu = menu()
     guard bootSetupDone() else { exit(1) }
     waitForAccessibility()
+    let gesturesChanged = leaveSystemGestures ? putBackSystemGestures() : disableSystemGestures()
     // After an update Dock still runs the old payload.
-    if !payloadAlive() || CommandLine.arguments.contains("--updated") { loadPayload() }
+    if gesturesChanged || !payloadAlive() || CommandLine.arguments.contains("--updated") { loadPayload() }
     applyLaunchAtLogin()
     startUpdates()
 }
@@ -74,6 +75,7 @@ final class MenuActions: NSObject, NSMenuDelegate {
     @objc func quit() {
         resetOverview()
         restoreWindows()
+        restoreSystemGestures()
         exit(0)
     }
 }
@@ -184,9 +186,12 @@ func loadPayload() {
     let script = "killall Dock; for i in 1 2 3 4 5 6 7 8 9 10; do sleep 0.5; \(loader) \(payload) && exit 0; done; exit 1"
     switch runAsAdmin(script, prompt: "nori is loading its helper into Dock.") {
     case .done: break
-    case .canceled: exit(0)
+    case .canceled:
+        restoreSystemGestures()
+        exit(0)
     case .failed(let error):
         alert("Could not load nori into Dock", error, ["Quit"])
+        restoreSystemGestures()
         exit(1)
     }
     for _ in 0..<30 where !payloadAlive() { usleep(100_000) }
@@ -194,6 +199,7 @@ func loadPayload() {
         alert("nori is not running in Dock",
               "The loader finished, but Dock does not answer. Its log:\n/usr/bin/log show --last 5m --predicate 'process == \"Dock\" AND eventMessage CONTAINS \"nori\"'",
               ["Quit"])
+        restoreSystemGestures()
         exit(1)
     }
     layout(immediate: false)

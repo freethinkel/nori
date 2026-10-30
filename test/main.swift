@@ -71,8 +71,37 @@ assert(settingTOML(commented, key: "wrap-around", to: .bool(false)) == commented
 assert(settingTOML(commented, table: "bindings", key: "overview", to: .string("none")).contains("[bindings]\noverview = \"none\"\n[[rule]]"))
 assert(settingTOML(commented, table: "rule", index: 0, key: "space", to: .number(2)).hasSuffix("app = \"A\"\nspace = 2\n# space = 3\n"))
 assert(settingTOML(defaultConfig, key: "inactive-opacity", to: .number(0.7)).contains("\ninactive-opacity = 0.7 "))
+assert(settingTOML(defaultConfig, key: "overview-scale", to: .number(0.5)).contains("\noverview-scale = 0.5 "))
+assert(settingTOML(defaultConfig, key: "analytics", to: .bool(false)).contains("\nanalytics = false "))
+assert(settingTOML(defaultConfig, key: "gesture-overview", to: .string("3 pinch")).contains("\ngesture-overview = \"3 pinch\""))
+assert(settingTOML(defaultConfig, key: "swipe-speed", to: .number(2)).contains("\nswipe-speed = 2 "))
 
 print("toml edits: ok")
+
+// An action takes only swipes that go its way, and a swipe is one action's.
+assert(choiceKeys["gesture-strip"]![0] == "3 sideways" && !choiceKeys["gesture-strip"]!.contains("3 vertical"))
+assert(choiceKeys["gesture-spaces"]![0] == "3 vertical" && !choiceKeys["gesture-spaces"]!.contains("3 pinch"))
+assert(choiceKeys["gesture-overview"]![0] == "4 vertical" && choiceKeys["gesture-overview"]!.contains("3 pinch"))
+assert(choiceKeys["gesture-overview"]!.filter { $0 == "4 vertical" }.count == 1)
+assert(swipeAction(fingers: 3, kind: "sideways") == "gesture-strip" && swipeAction(fingers: 3, kind: "vertical") == "gesture-spaces")
+assert(swipeAction(fingers: 4, kind: "vertical") == "gesture-overview" && swipeAction(fingers: 4, kind: "sideways") == nil)
+assert(ourGesture(3) && ourGesture(4) && !ourGesture(2) && !ourGesture(5))
+let filed = configFile
+configFile.values = ["gesture-strip": "none", "gesture-spaces": "4 vertical", "gesture-overview": "4 vertical"]
+assert(swipeAction(fingers: 4, kind: "vertical") == "gesture-spaces")  // by hand: the first wins
+assert(!ourGesture(3))
+configFile = filed
+var swipes = ["gesture-strip": "3 sideways", "gesture-spaces": "3 vertical", "gesture-overview": "4 vertical"]
+func changed(_ key: String, _ value: String) -> [String] { gestureChanges(key, to: value, current: { swipes[$0]! }).map { "\($0.key)=\($0.value)" } }
+assert(changed("gesture-overview", "3 vertical") == ["gesture-overview=3 vertical", "gesture-spaces=4 vertical"])  // they swap
+assert(changed("gesture-overview", "5 pinch") == ["gesture-overview=5 pinch"])
+assert(changed("gesture-overview", "none") == ["gesture-overview=none"])
+assert(changed("gesture-strip", "5 sideways") == ["gesture-strip=5 sideways"])
+swipes["gesture-overview"] = "none"
+assert(changed("gesture-overview", "3 vertical") == ["gesture-overview=3 vertical", "gesture-spaces=4 vertical"])  // it left no fingers
+swipes["gesture-overview"] = "3 pinch"
+assert(changed("gesture-overview", "3 vertical") == ["gesture-overview=3 vertical", "gesture-spaces=4 vertical"])  // same fingers: the first free
+print("gestures: ok")
 
 // A 1000 pt wide screen, gap 10. Three 300 pt columns fit on it, three 600 pt ones don't.
 func strip(_ widths: [CGFloat], _ mode: String, single: Bool = false) -> Scroll {
