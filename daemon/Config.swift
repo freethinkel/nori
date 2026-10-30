@@ -30,15 +30,15 @@ let configPath = ProcessInfo.processInfo.environment["NORI_CONFIG"] ?? NSHomeDir
 let defaultConfigPath = (configPath as NSString).deletingLastPathComponent + "/config.default.toml"
 
 // Every setting with its default and what it does. Written as config.toml where there is none yet (first launch,
-// "Open Config"), and as config.default.toml on every start and reload, so a config from an older version can look up
-// what is new ("Show All Settings"). Settings that change nothing at their default are commented out.
+// "Open in Editor"), and as config.default.toml on every start and reload, so a config from an older version can look up
+// what is new. Settings that change nothing at their default are commented out.
 let defaultConfig = """
-# nori config. Save, then choose "Reload Config" (⌘R) in nori's menu bar item or run `nori reload`.
-# Or change it in Settings… (⌘,) in the same menu: it writes here and keeps your comments.
+# nori config. Save, then run `nori reload`, or choose "Reload Config" in the toolbar of Settings… (⌘,) in nori's menu bar item.
+# Or change it in that window: it writes here and keeps your comments.
 # A line starting with # is off: remove the # to turn it on. A key nori doesn't know, or a bad value, is skipped
 # with a warning, and the rest still applies.
-# Every setting of the running version, with its default: config.default.toml next to this file, or
-# "Show All Settings" in the menu. More in the README: https://github.com/freethinkel/nori#config
+# Every setting of the running version, with its default: config.default.toml next to this file.
+# More in the README: https://github.com/freethinkel/nori#config
 
 # Space around windows, in points.
 gap = 16                  # between two windows
