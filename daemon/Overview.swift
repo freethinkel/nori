@@ -115,8 +115,9 @@ func sendLayout(open: Bool, spring: Bool) {
 }
 
 // Every "Switch to Desktop N" press lands here (keys, nori focus space), and Dock switches under our slide.
-func switchSpaceAnimated(toDesktop number: Int) {
-    if let sid = spaces().first(where: { $0.number == number })?.id { switchSpaceAnimated(to: sid) }
+func switchSpaceAnimated(toDesktop number: Int, onThisDisplay: Bool) {
+    let desktop = onThisDisplay ? desktopHere(number) : number
+    if let sid = spaces().first(where: { $0.number == desktop })?.id { switchSpaceAnimated(to: sid) }
 }
 
 // Option+J/K too, which may land on a fullscreen Space.
@@ -130,7 +131,10 @@ func switchSpaceAnimated(to sid: UInt64) {
     // Dock's slide with separate Spaces off: one Space over all displays, and no layout goes by one of them.
     guard separateSpaces, let index = shown.spaces.firstIndex(of: sid) else { pressSpace(sid); return }
     // Already there, unless a slide away from it is under way: at most focus goes to its display.
-    if sid == shown.current && (shown.id != overviewDisplay.id || index == overviewTarget) { pressSpace(sid); return }
+    if sid == shown.current && (shown.id != overviewDisplay.id || index == overviewTarget) {
+        if sid != CGSGetActiveSpace(cid) { focusDisplay(shown) }
+        return
+    }
     useStack(on: shown)
     overviewTarget = index
     sendLayout(open: false, spring: false)

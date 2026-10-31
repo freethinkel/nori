@@ -143,7 +143,8 @@ With "Displays have separate Spaces" on, the macOS default in System Settings â†
 
 - Keys and the CLI act on the display that has focus, the one macOS gives the active menu bar to. So do a click and Cmd+Tab: click a window on another display and its strip scrolls to it.
 - Swipes act on the display under the pointer, whichever has focus: the fingers aren't on any display, and the pointer is where you are looking. On lift focus goes there.
-- A Space switch slides on its own display and the others stay still. "Switch to Desktop N" can land on any display, since Desktop numbers run across them, like `nori focus space N`, `move-to-space-N` and a rule's `space = N`: a window sent to another display's Desktop joins the strip there.
+- A Space switch slides on its own display and the others stay still.
+- Desktop numbers count per display, like niri's workspaces: Option+N, `nori focus space N` and `move-to-space-N` mean the Nth Desktop of the display that has focus. Mission Control numbers them across displays, and so does a rule's `space = N`. `nori query spaces` gives both.
 - The overview opens on one display: the focused one for the key, the one under the pointer for a swipe. The others stay as they are, and a click on one closes the overview. `overview-background = "blur"` uses that display's wallpaper.
 - A window you drag to another display joins that display's strip, right of its focused column.
 - `focus-monitor-*` and `move-window-to-monitor-*` go by position, as in niri: left and right need a display that overlaps this one's height, up and down its width, and the nearest center wins. Next and previous go round, left to right, then top to bottom.
@@ -307,7 +308,7 @@ A Space has `id`, `number`, `display`, `type`, `isFocused`, `isVisible`, `isAnim
 
 A bar can skip the CLI and talk to the socket `/tmp/nori-ctl_$USER.socket` itself. A request is the CLI's arguments joined by tabs, one line, like `query\tspaces\n` or `subscribe\n`. nori answers and closes the connection, except after `subscribe`. The socket path and this format are public: they change only with a note in the release.
 
-A window has `id`, `pid`, `app`, `bundleId`, `title`, `space`, `spaceId`, `spaceType`, `display`, `column`, `isFocused`, `isOnScreen`, `isFloating` and `frame`. `space` is the Desktop number, missing for a window in a fullscreen app's Space. `spaceType` is that Space's `type`, `desktop` or `fullscreen`, and `display` its `display`, the UUID macOS has for that display. `column` counts from 1 and is missing for windows outside the strip. `--app` matches the app name or bundle id in any case. Desktops count from 1 across all displays, like the system shortcuts. Fullscreen Spaces have no number, and their `type` is `fullscreen`.
+A window has `id`, `pid`, `app`, `bundleId`, `title`, `space`, `spaceId`, `spaceType`, `display`, `column`, `isFocused`, `isOnScreen`, `isFloating` and `frame`. `space` is the Desktop number, missing for a window in a fullscreen app's Space. `spaceType` is that Space's `type`, `desktop` or `fullscreen`, and `display` its `display`, the UUID macOS has for that display. `column` counts from 1 and is missing for windows outside the strip. `--app` matches the app name or bundle id in any case. `number` and `space` count Desktops from 1 across all displays, as Mission Control does, and `displayNumber` of a Space counts them on its own display, as Option+N and `nori focus space N` do. Fullscreen Spaces have neither, and their `type` is `fullscreen`.
 
 nori sees the titles of windows on other Spaces only with Screen Recording permission. When you run it from a terminal, the terminal needs that permission. Titles on the current Space come from Accessibility.
 

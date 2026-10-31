@@ -107,5 +107,5 @@ func resizeDragged(_ d: Drag, to p: CGPoint) {
 
 func dropDragged(_ d: Drag) {
     onStrip(d.space) { if let i = columns.firstIndex(of: d.id) { focusColumn(at: i) } }
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { layoutAll() }  // it may have landed on another display
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { settleDrop() }
 }

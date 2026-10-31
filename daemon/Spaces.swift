@@ -76,8 +76,20 @@ func focusDisplay(_ target: Display) {
     let space = target.current
     if isFullscreen(space), let win = listWindows(.optionOnScreenOnly).first(where: { $0.spaces.contains(space) })?.win { return focus(win) }
     onStrip(space) {
-        if syncColumns().wins.isEmpty { pressSpace(space) } else { focusColumn(at: focusedIndex()) }
+        if syncColumns().wins.isEmpty { focusEmpty(target) } else { focusColumn(at: focusedIndex()) }
     }
+}
+
+// An empty Space has nothing to take focus, and neither "Switch to Desktop N" nor a click on its wallpaper moves it
+// there (docs/WINDOWSERVER.md). A key window of ours does, and the display keeps focus once that window is gone.
+func focusEmpty(_ display: Display) {
+    guard let screen = nsScreen(of: display) else { return }
+    let window = NSWindow(contentRect: NSRect(x: screen.frame.midX, y: screen.frame.midY, width: 1, height: 1), styleMask: .titled, backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false
+    window.alphaValue = 0
+    window.makeKeyAndOrderFront(nil)
+    NSApp.activate(ignoringOtherApps: true)  // not activate(): macOS may turn that down, and nori isn't frontmost here
+    whenSpaceChanges(from: CGSGetActiveSpace(cid)) { window.orderOut(nil) }
 }
 
 // The payload's table of displays ("B"), which it doesn't need with one.
@@ -94,12 +106,23 @@ func stack(on display: Display) -> (ids: [UInt64], current: Int) {
     display.spaces.isEmpty ? ([display.current], 0) : (display.spaces, display.spaces.firstIndex(of: display.current) ?? 0)
 }
 
+// The Desktops of the display that has focus, fullscreen Spaces left out.
+func desktopsHere() -> [(id: UInt64, number: Int?, displayNumber: Int?, display: String, fullscreen: Bool, visible: Bool)] {
+    let all = spaces(), active = CGSGetActiveSpace(cid)
+    guard let display = all.first(where: { $0.id == active })?.display else { return [] }
+    return all.filter { $0.display == display && !$0.fullscreen }
+}
+
+// Desktop n of the display that has focus, like niri's workspaces, as the number across displays that macOS goes by.
+func desktopHere(_ n: Int) -> Int? {
+    let desktops = desktopsHere()
+    return desktops.indices.contains(n - 1) ? desktops[n - 1].number : nil
+}
+
 // The Desktop number `delta` Desktops below (+) or above (-) the current one on its display, for moving a window
 // there; fullscreen Spaces don't count. Past either end: nil, or round to the other end with wrap-around.
 func neighbourDesktop(_ delta: Int) -> Int? {
-    let all = spaces(), active = CGSGetActiveSpace(cid)
-    guard let display = all.first(where: { $0.id == active })?.display else { return nil }
-    let desktops = all.filter { $0.display == display && !$0.fullscreen }
+    let desktops = desktopsHere(), active = CGSGetActiveSpace(cid)
     guard let i = desktops.firstIndex(where: { $0.id == active }) else { return nil }
     let j = wrapAround ? (i + delta + desktops.count) % desktops.count : i + delta
     return desktops.indices.contains(j) ? desktops[j].number : nil

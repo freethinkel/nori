@@ -81,7 +81,7 @@ resize-step = 10          # how much grow-width and shrink-width change a window
 # - = , . and left, right, up, down. Keys are physical keys on the US layout, so a binding stays put in any
 # keyboard layout. "none" turns a binding off. Each action is also a command, see `nori help`.
 # Option+1…9 aren't here: they are macOS's "Switch to Desktop N" shortcuts, set in System Settings → Keyboard →
-# Keyboard Shortcuts → Mission Control, and nori animates them.
+# Keyboard Shortcuts → Mission Control, and nori animates them. With several displays N counts on the one that has focus.
 [bindings]
 focus-left = "option+h"             # the window to the left / right
 focus-right = "option+l"
@@ -112,7 +112,7 @@ move-to-space-up = "option+shift+k"
 #             nori query windows | jq -r '.[] | "\\(.app)\\t\\(.bundleId)"' | sort -u
 #   title     optional: a regular expression the window title must contain, any case
 # and at least one of:
-#   space     new windows of the app go to Desktop N, once; move one back by hand and it stays
+#   space     new windows of the app go to Desktop N, across all displays, once; move one back by hand and it stays
 #   floating  true: its windows stay out of the strip, where you put them
 #   ignore    true: nori doesn't move or list its windows at all
 #   width     new windows take N % of the screen width, once

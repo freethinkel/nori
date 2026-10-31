@@ -58,7 +58,9 @@ let tap = CGEvent.tapCreate(
                 passDesktopHotkeys -= 1
                 return Unmanaged.passUnretained(event)
             }
-            if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 { switchSpaceAnimated(toDesktop: number) }
+            if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
+                switchSpaceAnimated(toDesktop: number, onThisDisplay: event.getIntegerValueField(.eventSourceUserData) != noriPress)
+            }
             return nil
         }
         if type == .keyDown, let name = boundAction(event) {  // [bindings] → Actions.swift
@@ -85,7 +87,7 @@ let tap = CGEvent.tapCreate(
         if type == .leftMouseUp {
             // A drag may have ended: send every window back to its slot. The payload eases from where it was dropped.
             // The short delay lets apps that move their own window (Electron, Chrome) apply their last move first.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { layoutAll() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { settleDrop() }
             return Unmanaged.passUnretained(event)
         }
         if type == .scrollWheel {

@@ -173,8 +173,8 @@ func handle(_ args: [String]) -> String {
         return json(queryWindows(opts))
     case ("move", "space"):
         guard let n = number else { break }
-        guard spaces().contains(where: { $0.number == n }) else { return "error: no Desktop \(n)\n" }
-        moveFocused(toDesktop: n)
+        guard let desktop = desktopHere(n) else { return "error: no Desktop \(n) on this display\n" }
+        moveFocused(toDesktop: desktop)
         return ""
     case ("focus", "column"):
         guard let n = number else { break }
@@ -183,7 +183,8 @@ func handle(_ args: [String]) -> String {
         return ""
     case ("focus", "space"):
         guard let n = number else { break }
-        return (instant ? switchSpaceInstant(to: n) : switchToSpace(n)) ? "" : "error: no Desktop \(n), or its shortcut is off in Keyboard Shortcuts → Mission Control\n"
+        guard let desktop = desktopHere(n) else { return "error: no Desktop \(n) on this display\n" }
+        return (instant ? switchSpaceInstant(to: desktop) : switchToSpace(desktop)) ? "" : "error: the shortcut of Desktop \(desktop) is off in Keyboard Shortcuts → Mission Control\n"
     // From the payload in Dock, see its header.
     case ("payload", "layout-done"):
         if let n = number { spaceLayoutDone(n) }
@@ -237,9 +238,9 @@ func focusedSpace() -> UInt64 {
 }
 
 // Spaces of all displays in Mission Control order. Desktops are numbered from 1 across displays,
-// like the "Switch to Desktop N" shortcuts; fullscreen Spaces get no number. visible: shown on its display
-// ("Current Space" there), with the switch target counted as shown already.
-func spaces() -> [(id: UInt64, number: Int?, display: String, fullscreen: Bool, visible: Bool)] {
+// like the "Switch to Desktop N" shortcuts; fullscreen Spaces get no number. displayNumber: the same within its display.
+// visible: shown on its display ("Current Space" there), with the switch target counted as shown already.
+func spaces() -> [(id: UInt64, number: Int?, displayNumber: Int?, display: String, fullscreen: Bool, visible: Bool)] {
     let displays = CGSCopyManagedDisplaySpaces(cid).takeRetainedValue() as? [[String: Any]] ?? []
     let focused = focusedSpace()
     var desktops = 0
@@ -248,10 +249,11 @@ func spaces() -> [(id: UInt64, number: Int?, display: String, fullscreen: Bool, 
         let ids = list.map { ($0["id64"] as? NSNumber)?.uint64Value ?? 0 }
         let current = ((display["Current Space"] as? [String: Any])?["id64"] as? NSNumber)?.uint64Value
         let shown = ids.contains(focused) ? focused : current
+        var own = 0
         return zip(ids, list).map { id, space in
             let fullscreen = space["type"] as? Int == 4
-            if !fullscreen { desktops += 1 }
-            return (id, fullscreen ? nil : desktops, display["Display Identifier"] as? String ?? "", fullscreen, id == shown)
+            if !fullscreen { desktops += 1; own += 1 }
+            return (id, fullscreen ? nil : desktops, fullscreen ? nil : own, display["Display Identifier"] as? String ?? "", fullscreen, id == shown)
         }
     }
 }
@@ -272,6 +274,7 @@ func focusedWindows(_ listed: [Listed]) -> [UInt64: UInt32] {
     let active = CGSGetActiveSpace(cid)
     var result: [UInt64: UInt32] = [:]
     for w in listed { for space in w.spaces where space != active && result[space] == nil { result[space] = w.win.id } }
+    for space in otherStrips() { if let id = stripFocus[space], listed.contains(where: { $0.win.id == id }) { result[space] = id } }
     if let front = focusedWindowID(), listed.contains(where: { $0.win.id == front && $0.spaces.contains(active) }) { result[active] = front }
     return result
 }
@@ -298,7 +301,7 @@ func querySpaces(_ opts: [String: String]) -> [[String: Any]] {
                     "bundleId": NSRunningApplication(processIdentifier: pid)?.bundleIdentifier as Any? ?? NSNull()]
         }
         let fields: [String: Any?] = [
-            "id": space.id, "number": space.number, "display": space.display,
+            "id": space.id, "number": space.number, "displayNumber": space.displayNumber, "display": space.display,
             "type": spaceType(space.fullscreen), "isFocused": space.id == focused, "isVisible": space.visible,
             "isAnimating": spaceLayoutBusy && overviewSpaces.contains(space.id),
             "windows": wins.map(\.win.id), "columns": strip(of: space.id, listed), "apps": apps,
@@ -347,6 +350,9 @@ func switchToSpace(_ number: Int) -> Bool {
     return postSymbolicHotkey(117 + number)
 }
 
+// Marks our own presses. Their Desktop number runs across displays; a person's counts on the display that has focus.
+let noriPress: Int64 = 0x6e6f7269
+
 // Posts a system shortcut by its com.apple.symbolichotkeys id, whatever keys it is bound to; false if it is off.
 // Read each time, so turning one on in System Settings works without a restart.
 func postSymbolicHotkey(_ id: Int, times: Int = 1) -> Bool {
@@ -358,6 +364,7 @@ func postSymbolicHotkey(_ id: Int, times: Int = 1) -> Bool {
         for down in [true, false] {
             let event = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(keys[1]), keyDown: down)
             event?.flags = CGEventFlags(rawValue: UInt64(keys[2]))  // NSEvent modifier bits, same as CGEventFlags
+            event?.setIntegerValueField(.eventSourceUserData, value: noriPress)
             event?.post(tap: .cghidEventTap)
         }
     }

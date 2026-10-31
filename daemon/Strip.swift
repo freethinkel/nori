@@ -66,6 +66,13 @@ func layoutAll() {
     for space in otherStrips() { onStrip(space) { layout(immediate: false) } }
 }
 
+// After a drop, which may have landed the window on another display: first poll, which scrolls that strip to it. Only
+// poll takes a new window as such, and the layout would have swallowed it.
+func settleDrop() {
+    if displays.count > 1 { poll() }
+    layoutAll()
+}
+
 // Animations run on the vsync of one display ("L"): the one a Space layout is on, or else the one that has focus.
 var timedTo: CGDirectDisplayID = 0
 

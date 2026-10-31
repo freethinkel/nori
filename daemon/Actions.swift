@@ -23,7 +23,7 @@ let actions: [String: () -> Void] = [
     "move-right": { moveColumn(by: 1) },
     "move-to-space-down": { moveFocused(toDesktopBy: 1) },
     "move-to-space-up": { moveFocused(toDesktopBy: -1) },
-].merging((1...9).map { n in ("move-to-space-\(n)", { moveFocused(toDesktop: n) }) }) { a, _ in a }
+].merging((1...9).map { n in ("move-to-space-\(n)", { if let desktop = desktopHere(n) { moveFocused(toDesktop: desktop) } }) }) { a, _ in a }
     .merging(monitorWays.flatMap { way in [("focus-monitor-\(way)", { focusMonitor(way) }), ("move-window-to-monitor-\(way)", { moveFocused(toMonitor: way) })] }) { a, _ in a }
 
 // Toggles: a held key must not flip them back and forth.
