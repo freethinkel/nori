@@ -112,6 +112,11 @@ Prototyped from a plain process (macOS 27) for window borders, which were then d
 - `tccutil reset All <bundle id>` gave OSStatus -10814 for the probe, also after `lsregister -f`, so removing that row takes root and sqlite3. `TCCAccessSetForBundle` wasn't tried: it should need `com.apple.private.tcc.manager`, which nori can't have.
 - Each `do shell script … with administrator privileges` from a new `NSAppleScript` took seconds, so it seems to ask for the password again. Inferred from the timing, not watched.
 
+## Event taps on their own threads
+
+- Every key waits for each session tap it passes, so a tap's thread sets the system's typing latency. With both taps off the main thread (`daemon/Tap.swift`), a stalled main thread doesn't show. Measured with a probe: 200 F19 presses, 10 ms apart, from `CGEvent.post(tap: .cghidEventTap)` to a listen-only tap at `tailAppendEventTap`. Idle: p50 4.7 ms, p99 28 ms, max 45 ms. With the main thread stalled: p50 4.4 ms, p99 30 ms, max 38 ms. The stall: an app with an untitled window under `kill -STOP`, and `nori query windows --current` in a loop, which asks Accessibility for that title. Eleven such requests took 4.6 s in all, median 0.29 s, while the keys were posted. The old tap on the main thread wasn't measured this way.
+- Posted that way F15 (keycode 113) never reached the keyDown tap, F19 (80) always did. Likely F15 is brightness to macOS (inferred, not traced). Mind it when picking a harmless key to post.
+
 ## Ideas, not done yet
 
 - Our own effect for switching real Spaces: keep Dock's switch itself (its state: Mission Control, the menu bar), and replace the transform and shape of both Spaces in the hook; for a cube, zero out the Space transform and rotate the windows of both Spaces through `SetWindowTransform3D`, taking progress from Dock's `tx`.

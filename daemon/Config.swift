@@ -221,6 +221,8 @@ func ourGesture(_ fingers: Int32) -> Bool {
     gestureKeys.contains { gesture($0)?.fingers == fingers }
 }
 
+func swipeFingers() -> Set<Int32> { Set(gestureKeys.compactMap { gesture($0)?.fingers }) }
+
 // A swipe is one action's. The action that had the swipe `key` takes moves to the fingers `key` left, or the first free ones.
 func gestureChanges(_ key: String, to new: String, current: (String) -> String) -> [(key: String, value: String)] {
     var changes = [(key: key, value: new)]
@@ -279,5 +281,12 @@ func matches(_ event: CGEvent, _ chord: Chord?) -> Bool {
     return event.getIntegerValueField(.keyboardEventKeycode) == chord.key && event.flags.intersection(chordModifiers) == chord.flags
 }
 
+// Every binding with its keys. The event taps keep this list: the config is the main thread's, see Tap.swift.
+func boundChords() -> [(chord: Chord, action: String)] {
+    bindingDefaults.keys.compactMap { name in binding(name).map { ($0, name) } }
+}
+
 // The action a key press is bound to, if any.
-func boundAction(_ event: CGEvent) -> String? { bindingDefaults.keys.first { matches(event, binding($0)) } }
+func boundAction(_ event: CGEvent, in chords: [(chord: Chord, action: String)]) -> String? {
+    chords.first { matches(event, $0.chord) }?.action
+}

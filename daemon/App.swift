@@ -40,6 +40,7 @@ func statusIcon() -> NSImage? {
 // `nori reload`, and "Reload Config" and every change in the Settings window.
 func reloadSettings() {
     configFile = readConfig()
+    tapConfigChanged()
     settingsModel.refresh()
     applyLaunchAtLogin()
     layout(immediate: false)

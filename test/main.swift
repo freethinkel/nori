@@ -1,6 +1,7 @@
 // make test: checks of the TOML reader (daemon/TOML.swift) and the strip's rest points (daemon/Scroll.swift).
 // Fails with an assertion.
 
+import CoreGraphics
 import Foundation
 
 var errors: [String] = []
@@ -168,3 +169,21 @@ for key in numberKeys + flagKeys + choiceKeys.keys + modifierKeys + bindingDefau
 for key in ["app", "title", "space", "floating", "ignore", "width"] { assert(defaultConfig.contains("#   \(key) "), "missing rule \(key)") }
 
 print("default config: ok")
+
+// What the event taps go by (Tap.swift): the action of a press, with its exact modifiers, and the fingers that are ours.
+configFile.values = [:]
+let press = CGEvent(keyboardEventSource: nil, virtualKey: 4, keyDown: true)!  // h
+press.flags = .maskAlternate
+assert(boundAction(press, in: boundChords()) == "focus-left")
+press.flags = [.maskAlternate, .maskShift]
+assert(boundAction(press, in: boundChords()) == "move-left")
+press.flags = []
+assert(boundAction(press, in: boundChords()) == nil)
+assert(swipeFingers() == [3, 4])
+configFile.values = ["focus-left": "none", "gesture-overview": "5 pinch"]
+press.flags = .maskAlternate
+assert(boundAction(press, in: boundChords()) == nil)
+assert(swipeFingers() == [3, 5])
+configFile = filed
+
+print("tap: ok")

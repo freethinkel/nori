@@ -15,6 +15,7 @@ var mainTap: CFMachPort?
 
 // Key bindings. 3-finger scroll events are swallowed: the swipe is handled from raw touches.
 // While the overview is open, clicks pick a Space and Escape closes it; the clicks don't reach apps. Keys: see below.
+// The callback runs on the tap's own thread, Tap.swift: it decides from tapState and leaves the work to the main thread.
 let tap = CGEvent.tapCreate(
     tap: .cgSessionEventTap,
     place: .headInsertEventTap,
@@ -29,55 +30,54 @@ let tap = CGEvent.tapCreate(
             if let mainTap { CGEvent.tapEnable(tap: mainTap, enable: true) }
             return Unmanaged.passUnretained(event)
         }
+        let state = tapState
         if type.rawValue == 29 || type.rawValue == 30 || type.rawValue == 31 {
             // Three and four fingers are ours (strip, Spaces, overview): keep Mission Control and friends from seeing them.
             // A swipe arrives after the fingers lift, when the raw count is already 0, so the latch counts too.
-            return swallowSystemGesture() ? nil : Unmanaged.passUnretained(event)
+            return swallowSystemGesture(state.swipeFingers) ? nil : Unmanaged.passUnretained(event)
         }
-        if overviewOpen && type == .leftMouseDown {
-            overviewMouseDown(at: event.location)
+        let point = event.location
+        if state.overviewOpen && type == .leftMouseDown {
+            onMain { overviewMouseDown(at: point) }
             swallowMouseUp = true
             return nil
         }
         if type == .leftMouseDragged {
             guard swallowMouseUp else { return Unmanaged.passUnretained(event) }
-            overviewMouseDragged(at: event.location)
+            onMainLatest(point, overviewMouseDragged)
             return nil
         }
         if type == .leftMouseUp && swallowMouseUp {
             swallowMouseUp = false
-            overviewMouseUp(at: event.location)
+            onMain { overviewMouseUp(at: point) }
             return nil
         }
-        if type == .keyDown && settingsModel.recording != nil {  // the Settings window's shortcut recorder takes the press
-            settingsModel.record(event)
+        if type == .keyDown && state.recording {  // the Settings window's shortcut recorder takes the press
+            if let press = event.copy() { onMain { settingsModel.record(press) } }
             return nil
         }
         if type == .keyDown, let number = desktopNumber(for: event) {
-            if passDesktopHotkeys > 0 {
-                passDesktopHotkeys -= 1
-                return Unmanaged.passUnretained(event)
-            }
-            if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 { switchSpaceAnimated(toDesktop: number) }
+            if takeDesktopPass() { return Unmanaged.passUnretained(event) }
+            if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 { onMain { switchSpaceAnimated(toDesktop: number) } }
             return nil
         }
-        if type == .keyDown, let name = boundAction(event) {  // [bindings] → Actions.swift
-            if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 || !noRepeat.contains(name) { actions[name]?() }
+        if type == .keyDown, let name = boundAction(event, in: state.chords) {  // [bindings] → Actions.swift
+            if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 || !noRepeat.contains(name) { onMain { actions[name]?() } }
             return nil
         }
-        if type == .keyDown && overviewOpen && event.getIntegerValueField(.keyboardEventKeycode) == 53 {  // Escape
-            closeOverview(at: overviewTarget)
+        if type == .keyDown && state.overviewOpen && event.getIntegerValueField(.keyboardEventKeycode) == 53 {  // Escape
+            onMain { closeOverview(at: overviewTarget) }
             return nil
         }
         // Overview, plain keys like niri's: H/L or ←/→ move through the centered Space's columns (live in its
         // picture), J/K or ↓/↑ bring the Space below / above to the center, Return picks it. Other keys reach the app.
-        if type == .keyDown && overviewOpen && event.flags.intersection(chordModifiers).isEmpty {
+        if type == .keyDown && state.overviewOpen && event.flags.intersection(chordModifiers).isEmpty {
             switch event.getIntegerValueField(.keyboardEventKeycode) {
-            case 4, 123: focusColumn(by: -1); return nil   // h, ←
-            case 37, 124: focusColumn(by: 1); return nil   // l, →
-            case 38, 125: switchSpace(by: 1); return nil   // j, ↓
-            case 40, 126: switchSpace(by: -1); return nil  // k, ↑
-            case 36, 76: closeOverview(at: overviewTarget); return nil  // Return, keypad Enter
+            case 4, 123: onMain { focusColumn(by: -1) }; return nil   // h, ←
+            case 37, 124: onMain { focusColumn(by: 1) }; return nil   // l, →
+            case 38, 125: onMain { switchSpace(by: 1) }; return nil   // j, ↓
+            case 40, 126: onMain { switchSpace(by: -1) }; return nil  // k, ↑
+            case 36, 76: onMain { closeOverview(at: overviewTarget) }; return nil  // Return, keypad Enter
             default: break
             }
         }
@@ -90,7 +90,7 @@ let tap = CGEvent.tapCreate(
         }
         if type == .scrollWheel {
             // Three fingers scroll the strip, four drive the overview; two-finger scrolling stays the app's.
-            return swallowSystemGesture() ? nil : Unmanaged.passUnretained(event)
+            return swallowSystemGesture(state.swipeFingers) ? nil : Unmanaged.passUnretained(event)
         }
         return Unmanaged.passUnretained(event)
     },
@@ -103,8 +103,9 @@ guard let tap = tap else {
     exit(1)
 }
 mainTap = tap
-CFRunLoopAddSource(CFRunLoopGetCurrent(), CFMachPortCreateRunLoopSource(nil, tap, 0), .commonModes)
+tapConfigChanged()
 CGEvent.tapEnable(tap: tap, enable: true)
+runTap(tap)
 // Secure input turns the tap off, and the gesture that arrives while it is off goes to Mission Control. Retry, since
 // the disable event itself is only delivered with the next event.
 Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in

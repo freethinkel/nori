@@ -15,9 +15,9 @@ let systemGestureLinger: CFTimeInterval = 0.25
 var systemGestureUntil: CFTimeInterval = 0
 var systemGestureFingers: Int32 = 0  // the fingers of that frame
 
-// macOS keeps the swipes of a finger count no action is on.
-func swallowSystemGesture() -> Bool {
-    ourGesture(fingerCount) || CACurrentMediaTime() < systemGestureUntil && ourGesture(systemGestureFingers)
+// macOS keeps the swipes of a finger count no action is on. `ours` is the tap's copy of swipeFingers.
+func swallowSystemGesture(_ ours: Set<Int32>) -> Bool {
+    ours.contains(fingerCount) || CACurrentMediaTime() < systemGestureUntil && ours.contains(systemGestureFingers)
 }
 
 var swipeScale: CGFloat { CGDisplayBounds(CGMainDisplayID()).width * swipeSpeed }  // points per full trackpad width
