@@ -32,8 +32,7 @@ $(BUILD):
 run: all
 	-pkill -f $(BUILD)/nori
 	killall Dock
-	sleep 1
-	sudo $(BUILD)/loader $(abspath $(BUILD)/payload.dylib)
+	for i in 1 2 3 4 5 6 7 8 9 10; do sleep 0.5; sudo $(BUILD)/loader $(abspath $(BUILD)/payload.dylib) && exit 0; done; exit 1
 	$(BUILD)/nori
 
 # The menu bar app: the same three binaries, side by side in Contents/MacOS. It sets itself up on launch, see App.swift.
