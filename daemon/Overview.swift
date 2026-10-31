@@ -100,7 +100,7 @@ let spaceLayoutFallback = 3.0
 
 func spaceLayoutDone(_ seq: Int) {
     guard seq == layoutSeq else { return }  // a later "Y" is still running
-    if overviewOpen { showSpaceButtons() } else { hideBackdrop() }
+    if !overviewOpen { hideBackdrop() }
     spaceLayoutUntil = 0
     pollSoon()
     publishSoon()  // isAnimating, for subscribers
@@ -115,6 +115,7 @@ func sendLayout(open: Bool, spring: Bool) {
     timeAnimations(to: overviewDisplay.id)
     send(displayLines() + ["Q \(layoutSeq)", "Z \(overviewScale)", "Y \(spring ? 1 : 0) \(overviewTarget) \(open ? 1 : 0) " + overviewSpaces.map(String.init).joined(separator: " ")])
     publishSoon()  // isAnimating, for subscribers
+    if open { showSpaceButtonsSoon() }
 }
 
 // Every "Switch to Desktop N" press lands here (keys, nori focus space), and Dock switches under our slide.
@@ -333,6 +334,17 @@ func showSpaceButtons() {
     guard let last = desktops.last, addButton?.space != last else { return }
     addButton?.window.orderOut(nil)
     addButton = (spaceButton("plus", frame: NSRect(x: screen.frame.midX - add / 2, y: screen.frame.minY + inset, width: add, height: add), on: last), last)
+}
+
+// ponytail: a fixed wait for the overview's spring, as an open overview sends no "layout-done"; on a slow frame they
+// come a little early, and they are on their Spaces anyway.
+var spaceButtonsSoon: DispatchWorkItem?
+
+func showSpaceButtonsSoon() {
+    spaceButtonsSoon?.cancel()
+    let work = DispatchWorkItem { if overviewOpen { showSpaceButtons() } }
+    spaceButtonsSoon = work
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
 }
 
 func hideSpaceButtons() {
