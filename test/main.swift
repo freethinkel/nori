@@ -197,4 +197,7 @@ for key in numberKeys + flagKeys + choiceKeys.keys + modifierKeys + bindingDefau
 }
 for key in ["app", "title", "space", "floating", "ignore", "width"] { assert(defaultConfig.contains("#   \(key) "), "missing rule \(key)") }
 
+// The display actions have no keys by default, so they can't take any from apps or from another action.
+assert(monitorWays.allSatisfy { bindingDefaults["focus-monitor-\($0)"] == "none" && bindingDefaults["move-window-to-monitor-\($0)"] == "none" })
+
 print("default config: ok")

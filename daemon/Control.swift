@@ -19,9 +19,11 @@ let usage = """
       nori focus column N
       nori focus space N|up|down
       nori focus window WID
+      nori focus monitor left|right|up|down|next|previous
       (any focus takes --instant: no animation)
       nori move left|right
       nori move space N|up|down
+      nori move monitor left|right|up|down|next|previous
       nori width grow|shrink|next|previous|toggle-full
       nori center
       nori overview
@@ -311,6 +313,7 @@ func queryWindows(_ opts: [String: String]) -> [[String: Any]] {
     let all = spaces()
     let numbers = Dictionary(all.compactMap { s in s.number.map { (s.id, $0) } }, uniquingKeysWith: { a, _ in a })
     let types = Dictionary(all.map { ($0.id, spaceType($0.fullscreen)) }, uniquingKeysWith: { a, _ in a })
+    let shownOn = Dictionary(all.map { ($0.id, $0.display) }, uniquingKeysWith: { a, _ in a })
     let listed = listWindows([])
     let strips = Dictionary(all.map { ($0.id, strip(of: $0.id, listed)) }, uniquingKeysWith: { a, _ in a })
     let current = rules
@@ -328,7 +331,7 @@ func queryWindows(_ opts: [String: String]) -> [[String: Any]] {
         let frame = w.win.frame
         let fields: [String: Any?] = [
             "id": id, "pid": w.win.pid, "app": appName(w), "bundleId": app?.bundleIdentifier, "title": title,
-            "space": numbers[space], "spaceId": space, "spaceType": types[space],  // a fullscreen Space has no number
+            "space": numbers[space], "spaceId": space, "spaceType": types[space], "display": shownOn[space],  // a fullscreen Space has no number
             "column": strips[space]?.firstIndex(of: id).map { $0 + 1 },
             "isFocused": id == focused, "isOnScreen": w.info[kCGWindowIsOnscreen as String] as? Bool ?? false,
             "isFloating": floatingByHand[id] != nil || rule(for: w, in: current)?.floating == true,

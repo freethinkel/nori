@@ -24,6 +24,7 @@ let actions: [String: () -> Void] = [
     "move-to-space-down": { moveFocused(toDesktopBy: 1) },
     "move-to-space-up": { moveFocused(toDesktopBy: -1) },
 ].merging((1...9).map { n in ("move-to-space-\(n)", { moveFocused(toDesktop: n) }) }) { a, _ in a }
+    .merging(monitorWays.flatMap { way in [("focus-monitor-\(way)", { focusMonitor(way) }), ("move-window-to-monitor-\(way)", { moveFocused(toMonitor: way) })] }) { a, _ in a }
 
 // Toggles: a held key must not flip them back and forth.
 let noRepeat: Set<String> = ["overview", "toggle-full-width", "toggle-floating"]
@@ -37,4 +38,4 @@ let cliActions = [
     "width grow": "grow-width", "width shrink": "shrink-width", "width next": "cycle-width-forward", "width previous": "cycle-width-backward",
     "width toggle-full": "toggle-full-width", "center": "center-column", "overview": "overview",
     "show floating": "show-floating", "toggle floating": "toggle-floating",
-]
+].merging(monitorWays.flatMap { [("focus monitor \($0)", "focus-monitor-\($0)"), ("move monitor \($0)", "move-window-to-monitor-\($0)")] }) { a, _ in a }

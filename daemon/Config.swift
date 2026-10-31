@@ -15,7 +15,10 @@ let choiceKeys = ["overview-background": ["none", "blur"], "center-focused-colum
                   "gesture-strip": swipeChoices(["sideways"], fingers: 3), "gesture-spaces": swipeChoices(["vertical"], fingers: 3),
                   "gesture-overview": swipeChoices(["vertical", "pinch"], fingers: 4)]
 let modifierKeys = ["mouse-modifier"]  // modifiers joined by "+", at least one
-// Every action has a binding; "none" unbinds one. The actions themselves are in Actions.swift.
+// The ways the display actions go, niri's. Which display that is: `neighbour` in Displays.swift.
+let monitorWays = ["left", "right", "up", "down", "next", "previous"]
+// Every action has a binding; "none" unbinds one. The actions themselves are in Actions.swift. The display actions have
+// no keys by default: with one display they do nothing, and a key of theirs would just stop reaching apps.
 let bindingDefaults = ["focus-left": "option+h", "focus-right": "option+l", "focus-first": "ctrl+option+h", "focus-last": "ctrl+option+l",
                        "focus-space-down": "option+j", "focus-space-up": "option+k", "center-column": "option+c",
                        "overview": "option+o", "show-floating": "option+f", "toggle-floating": "option+shift+v",
@@ -24,6 +27,7 @@ let bindingDefaults = ["focus-left": "option+h", "focus-right": "option+l", "foc
                        "move-left": "option+shift+h", "move-right": "option+shift+l",
                        "move-to-space-down": "option+shift+j", "move-to-space-up": "option+shift+k"]
     .merging((1...9).map { ("move-to-space-\($0)", "option+shift+\($0)") }) { a, _ in a }
+    .merging(monitorWays.flatMap { [("focus-monitor-\($0)", "none"), ("move-window-to-monitor-\($0)", "none")] }) { a, _ in a }
 // NORI_CONFIG: another file, to try settings out without touching your own.
 let configPath = ProcessInfo.processInfo.environment["NORI_CONFIG"] ?? NSHomeDirectory() + "/.config/nori/config.toml"
 
@@ -97,6 +101,9 @@ move-right = "option+shift+l"
 move-to-space-down = "option+shift+j"  # send the focused window to the Space below / above
 move-to-space-up = "option+shift+k"
 \((1...9).map { "move-to-space-\($0) = \"option+shift+\($0)\"" + ($0 == 1 ? "   # send the focused window to Desktop 1, and so on" : "") }.joined(separator: "\n"))
+# With several displays. No keys by default, try "ctrl+option+left". next and previous go round.
+\(monitorWays.map { "focus-monitor-\($0) = \"none\"" + ($0 == "left" ? "       # focus goes to the display on that side" : "") }.joined(separator: "\n"))
+\(monitorWays.map { "move-window-to-monitor-\($0) = \"none\"" + ($0 == "left" ? "  # the focused window goes there, and focus with it" : "") }.joined(separator: "\n"))
 
 # App rules. One [[rule]] table each; the first rule that matches a window wins.
 #   app       the app's name or bundle id, any case. Find them with:

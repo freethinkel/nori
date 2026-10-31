@@ -36,6 +36,52 @@ func moveFocused(toDesktop number: Int) {
     DispatchQueue.main.asyncAfter(deadline: .now() + 1) { movedAway.remove(moving) }
 }
 
+// niri's focus-monitor-left and move-window-to-monitor-left, and the other ways: focus goes to the display on that side
+// of the focused one, or the focused window goes there and focus follows it. It keeps its width unless that display is
+// too narrow, and joins the strip right of the focused column, on the Space that display shows. A fullscreen Space
+// takes no window: then it goes to that display's first Desktop, and focus stays.
+func neighbourDisplay(_ way: String) -> Display? {
+    let here = focusedDisplay()
+    guard let i = displays.firstIndex(where: { $0.id == here.id }),
+          let j = neighbour(of: i, in: displays.map(\.frame), way) else { return nil }
+    return displays[j]
+}
+
+func focusMonitor(_ way: String) {
+    if let target = neighbourDisplay(way) { focusDisplay(target) }
+}
+
+func moveFocused(toMonitor way: String) {
+    guard let target = neighbourDisplay(way),
+          let sid = isFullscreen(target.current) ? target.spaces.first(where: { !isFullscreen($0) }) : target.current else { return }
+    let wins = syncColumns().wins, i = focusedIndex()
+    guard wins.indices.contains(i) else { return }
+    let moving = wins[i].id
+    let usable = target.frame.width - paddingLeft - paddingRight
+    if wins[i].frame.width > usable { pendingWidths[moving] = usable }
+    sizedTo[moving] = nil  // that strip's layout stretches it to its height
+    movedAway.insert(moving)
+    layout(immediate: false)  // its column closes
+    send(["X \(moving) \(sid)"])
+    followMoved(moving, to: sid)
+}
+
+// Waits for CGWindowList to show the window on its Space, then lets that strip take it and gives it focus.
+func followMoved(_ id: UInt32, to sid: UInt64, tries: Int = 20) {
+    let there = (CGSCopySpacesForWindows(cid, 7, [id] as CFArray)?.takeRetainedValue() as? [UInt64])?.contains(sid) == true
+    guard there || tries == 0 else {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { followMoved(id, to: sid, tries: tries - 1) }
+        return
+    }
+    movedAway.remove(id)
+    refreshDisplays()
+    guard there, displays.contains(where: { $0.current == sid }) else { return }
+    onStrip(sid) {
+        _ = syncColumns()
+        if let index = columns.firstIndex(of: id) { focusColumn(at: index) }
+    }
+}
+
 // Windows the space rules have looked at. A rule places a window once, when nori first sees it,
 // so it can still be moved elsewhere by hand. That includes the windows already open when nori starts.
 // ponytail: ids of closed windows stay; window ids are not reused within a session.
