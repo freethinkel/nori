@@ -57,7 +57,7 @@ func moveFocused(toMonitor way: String) {
     let wins = syncColumns().wins, i = focusedIndex()
     guard wins.indices.contains(i) else { return }
     let moving = wins[i].id
-    let usable = target.frame.width - paddingLeft - paddingRight
+    let usable = paddedWidth(of: target)
     if wins[i].frame.width > usable { pendingWidths[moving] = usable }
     sizedTo[moving] = nil  // that strip's layout stretches it to its height
     movedAway.insert(moving)

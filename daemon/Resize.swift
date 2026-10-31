@@ -41,7 +41,10 @@ func resizeSettled(_ window: UInt32, _ width: CGFloat) {
     runResize(work)
 }
 
-var usableWidth: CGFloat { display(of: currentSpace).frame.width - paddingLeft - paddingRight }
+func paddedWidth(of display: Display) -> CGFloat {
+    display.frame.width - padding("padding-left", on: display.name) - padding("padding-right", on: display.name)
+}
+var usableWidth: CGFloat { paddedWidth(of: display(of: currentSpace)) }
 
 func resizeFocused(by percent: CGFloat) {
     resizeFocused { $0.frame.width + usableWidth * percent / 100 }

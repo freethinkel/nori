@@ -8,13 +8,24 @@ struct SettingsPage: View {
 
     var body: some View {
         let query = page.rawValue.localizedCaseInsensitiveContains(query) ? "" : query
+        let perMonitor = page == .layout && settingsModel.flag("padding-per-monitor")
         Cards {
             if page == .about && query.isEmpty { AboutCard() }
             ForEach(cards(page), id: \.title) { card in
-                let keys = card.keys.filter { matches($0, query) }
+                let keys = card.keys.filter { matches($0, query) && !(perMonitor && paddingKeys.contains($0)) }
                 if !keys.isEmpty {
                     Card(title: card.title) {
                         ForEach(keys, id: \.self) { SettingRow(key: $0) }
+                    }
+                }
+            }
+            if perMonitor {
+                let keys = paddingKeys.filter { matches($0, query) }
+                if !keys.isEmpty {
+                    ForEach(settingsModel.screens, id: \.self) { name in
+                        Card(title: name) {
+                            ForEach(keys, id: \.self) { NumberRow(key: $0, monitor: name) }
+                        }
                     }
                 }
             }

@@ -4,12 +4,13 @@
 import Cocoa
 
 // Top level: numbers (missing: numberDefaults, else 0), flags (missing: false, or true for flagsOn) and choices (missing: the first). [bindings]: key bindings (missing: the default below).
-// [[rule]]: app rules, see Rules.swift. Unknown keys and bad values are reported and skipped.
-let numberKeys = ["gap", "padding-top", "padding-bottom", "padding-left", "padding-right", "resize-step", "inactive-opacity", "overview-scale",
+// [[rule]]: app rules, see Rules.swift. [[monitor]]: one display's padding. Unknown keys and bad values are reported and skipped.
+let paddingKeys = ["padding-top", "padding-bottom", "padding-left", "padding-right"]
+let numberKeys = ["gap"] + paddingKeys + ["resize-step", "inactive-opacity", "overview-scale",
                   "swipe-speed", "space-swipe-distance", "overview-swipe-distance"]
 let numberDefaults: [String: Double] = ["resize-step": 10, "inactive-opacity": 1, "overview-scale": 0.4,
                                          "swipe-speed": 1.3, "space-swipe-distance": 50, "overview-swipe-distance": 30]  // the rest: 0
-let flagKeys = ["launch-at-login", "always-center-single-column", "wrap-around", "analytics", "leave-system-gestures"]
+let flagKeys = ["padding-per-monitor", "launch-at-login", "always-center-single-column", "wrap-around", "analytics", "leave-system-gestures"]
 let flagsOn = ["analytics"]
 let choiceKeys = ["overview-background": ["none", "blur"], "center-focused-column": ["always", "never", "on-overflow"],
                   "gesture-strip": swipeChoices(["sideways"], fingers: 3), "gesture-spaces": swipeChoices(["vertical"], fingers: 3),
@@ -50,6 +51,7 @@ padding-top = 40          # below the menu bar
 padding-bottom = 0        # above the Dock, or the bottom of the screen
 padding-left = 24
 padding-right = 24
+# padding-per-monitor = true  # each display its own padding, see [[monitor]] at the end. Default false: these on all
 
 # Where the strip puts the focused window:
 #   "always"       in the center of the screen
@@ -133,6 +135,14 @@ move-to-space-up = "option+shift+k"
 # title = "Picture in Picture"   # only this Safari window floats, the others stay in the strip
 # floating = true
 
+# Padding of one display, with padding-per-monitor on. One [[monitor]] table each; name is the display's, as System
+# Settings → Displays shows it. A padding left out, or a display without a table, takes the one at the top of this file.
+#
+# [[monitor]]
+# name = "Studio Display"
+# padding-top = 16
+# padding-left = 48
+
 """
 
 func writeDefaultConfig() {
@@ -145,13 +155,15 @@ func writeDefaultConfig() {
     try? defaultConfig.write(toFile: configPath, atomically: true, encoding: .utf8)
 }
 
-// Numbers, flags and bindings as strings by key; the rules in file order.
-func readConfig() -> (values: [String: String], rules: [Rule]) {
+// Numbers, flags and bindings as strings by key; the rules in file order; paddings by display name.
+// ponytail: two displays of one name share a table, unless macOS numbers them; match on the UUID if that bites.
+func readConfig() -> (values: [String: String], rules: [Rule], monitors: [String: [String: Double]]) {
     writeDefaultConfig()
-    guard let text = try? String(contentsOfFile: configPath, encoding: .utf8) else { return ([:], []) }
+    guard let text = try? String(contentsOfFile: configPath, encoding: .utf8) else { return ([:], [], [:]) }
     let report = { (line: Int, message: String) in _ = fputs("config.toml:\(line): \(message)\n", stderr) }
     var values: [String: String] = [:]
     var ruleTables: [Int: [String: TOMLValue]] = [:]
+    var monitorTables: [Int: [String: TOMLValue]] = [:]
     for entry in parseTOML(text, report: report) {
         switch (entry.table, entry.value) {
         case ("", .number(let n)) where numberKeys.contains(entry.key): values[entry.key] = String(n)
@@ -160,17 +172,30 @@ func readConfig() -> (values: [String: String], rules: [Rule]) {
         case ("", .string(let s)) where modifierKeys.contains(entry.key) && modifiers(s) != nil: values[entry.key] = s
         case ("bindings", .string(let s)) where bindingDefaults[entry.key] != nil && (s == "none" || chord(s) != nil): values[entry.key] = s
         case ("rule", _) where entry.index != nil: ruleTables[entry.index!, default: [:]][entry.key] = entry.value
+        case ("monitor", .string) where entry.index != nil && entry.key == "name",
+             ("monitor", .number) where entry.index != nil && paddingKeys.contains(entry.key):
+            monitorTables[entry.index!, default: [:]][entry.key] = entry.value
         default:
             report(entry.line, "skipping \(entry.key): unknown key or bad value. Top level: \((numberKeys + flagKeys + choiceKeys.keys + modifierKeys).joined(separator: ", ")); "
-                + "[bindings]: \(bindingDefaults.keys.sorted().joined(separator: ", ")); [[rule]]: app, title, space, floating, ignore, width")
+                + "[bindings]: \(bindingDefaults.keys.sorted().joined(separator: ", ")); [[rule]]: app, title, space, floating, ignore, width; "
+                + "[[monitor]]: name, \(paddingKeys.joined(separator: ", "))")
         }
+    }
+    var monitors: [String: [String: Double]] = [:]
+    for i in monitorTables.keys.sorted() {
+        let table = monitorTables[i]!
+        guard case .string(let name)? = table["name"] else {
+            fputs("config.toml: skipping [[monitor]] #\(i + 1): needs name = \"…\"\n", stderr)
+            continue
+        }
+        for key in paddingKeys { if case .number(let n)? = table[key] { monitors[name, default: [:]][key] = n } }
     }
     let rules = ruleTables.keys.sorted().compactMap { i in
         let rule = makeRule(ruleTables[i]!)
         if rule == nil { fputs("config.toml: skipping [[rule]] #\(i + 1): needs app = \"…\" and space = N, floating = true, ignore = true or width = N\n", stderr) }
         return rule
     }
-    return (values, rules)
+    return (values, rules, monitors)
 }
 
 // Values below are computed on every use, so a reload ("configFile = readConfig()") reaches them all.
@@ -182,10 +207,11 @@ func number(_ key: String) -> CGFloat { CGFloat(config[key].flatMap(Double.init)
 var launchAtLogin: Bool { config["launch-at-login"] == "true" }
 var overviewBlur: Bool { config["overview-background"] == "blur" }
 var gap: CGFloat { number("gap") }
-var paddingTop: CGFloat { number("padding-top") }
-var paddingBottom: CGFloat { number("padding-bottom") }
-var paddingLeft: CGFloat { number("padding-left") }
-var paddingRight: CGFloat { number("padding-right") }
+var paddingPerMonitor: Bool { config["padding-per-monitor"] == "true" }
+// On the display of this name: its [[monitor]] table's with padding-per-monitor on, else the shared one.
+func padding(_ key: String, on name: @autoclosure () -> String?) -> CGFloat {
+    (paddingPerMonitor ? name().flatMap { configFile.monitors[$0]?[key] } : nil).map { CGFloat($0) } ?? number(key)
+}
 var resizeStep: CGFloat { number("resize-step") }  // percent of the usable width
 var centerFocusedColumn: String { config["center-focused-column"] ?? "always" }  // see Scroll.swift
 var alwaysCenterSingleColumn: Bool { config["always-center-single-column"] == "true" }

@@ -63,6 +63,7 @@ func displaysChanged() {
     let work = DispatchWorkItem {
         layoutAll()
         tellPayload()
+        settingsModel.refresh()  // its cards of displays
     }
     displaysSettling = work
     DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)

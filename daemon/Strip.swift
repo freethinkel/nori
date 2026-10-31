@@ -180,9 +180,9 @@ func stripArea() -> CGRect {
     let shown = display(of: currentSpace)
     let screen = shown.frame
     let visible = nsScreen(of: shown).map { (top: $0.frame.maxY - $0.visibleFrame.maxY, bottom: $0.visibleFrame.minY - $0.frame.minY) } ?? (0, 0)
-    let top = screen.minY + visible.top + paddingTop
-    return CGRect(x: screen.minX + paddingLeft, y: top, width: screen.width - paddingLeft - paddingRight,
-                  height: screen.maxY - visible.bottom - paddingBottom - top)
+    let top = screen.minY + visible.top + padding("padding-top", on: shown.name)
+    return CGRect(x: screen.minX + padding("padding-left", on: shown.name), y: top, width: paddedWidth(of: shown),
+                  height: screen.maxY - visible.bottom - padding("padding-bottom", on: shown.name) - top)
 }
 
 // immediate: "M" moves right away (used while the finger is down). Otherwise "S" sets a target and the payload eases there.

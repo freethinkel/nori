@@ -72,7 +72,7 @@ let sidebar: [[Page]] = [[.general], [.layout, .focus], [.hotkeys, .gestures, .r
 // Each page's cards, by config key. A key Config.swift has and no card lists lands on an "Other" card (Hotkeys for a
 // binding, General for the rest), so a new setting shows up here before anyone places it.
 let pageCards: [Page: [(title: String, keys: [String])]] = [
-    .layout: [("Columns", ["gap", "resize-step"]), ("Screen padding", ["padding-top", "padding-bottom", "padding-left", "padding-right"])],
+    .layout: [("Columns", ["gap", "resize-step"]), ("Screen padding", ["padding-per-monitor"] + paddingKeys)],
     .focus: [("Centering", ["center-focused-column", "always-center-single-column"]), ("Unfocused windows", ["inactive-opacity"]),
              ("Navigation", ["wrap-around"])],
     .hotkeys: [("Mouse", ["mouse-modifier"]),
@@ -98,6 +98,7 @@ func cards(_ page: Page) -> [(title: String, keys: [String])] {
 let descriptions: [String: (title: String, help: String)] = [
     "gap": ("Gap", "Between windows"),
     "resize-step": ("Resize step", "For Wider and Narrower, of the screen width"),
+    "padding-per-monitor": ("Per monitor", "Each display has its own padding"),
     "padding-top": ("Top", "From the menu bar"),
     "padding-bottom": ("Bottom", "From the Dock or the bottom of the screen"),
     "padding-left": ("Left", ""),

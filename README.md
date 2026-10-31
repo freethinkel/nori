@@ -139,7 +139,7 @@ Every row with a config name can be rebound in `[bindings]`, or unbound with `"n
 
 ## Several displays
 
-With "Displays have separate Spaces" on, the macOS default in System Settings → Desktop & Dock, each display shows its own Space and has its own strips. `gap` and the paddings are the same everywhere. Displays can differ in size, scale and refresh rate, and sit on any side of the main one.
+With "Displays have separate Spaces" on, the macOS default in System Settings → Desktop & Dock, each display shows its own Space and has its own strips. `gap` is the same everywhere, and so are the paddings unless `padding-per-monitor` is on, the Per monitor switch in Settings → Layout. Displays can differ in size, scale and refresh rate, and sit on any side of the main one.
 
 - Keys and the CLI act on the display that has focus, the one macOS gives the active menu bar to. So do a click and Cmd+Tab: click a window on another display and its strip scrolls to it.
 - Swipes act on the display under the pointer, whichever has focus: the fingers aren't on any display, and the pointer is where you are looking. On lift focus goes there.
@@ -165,6 +165,7 @@ padding-top = 40          # from the menu bar
 padding-bottom = 0        # from the Dock or the bottom of the screen
 padding-left = 24
 padding-right = 24
+padding-per-monitor = true  # each display its own padding, from [[monitor]] tables, default false
 resize-step = 10          # width step, % of screen width, default 10
 launch-at-login = true    # start Nori.app at login, default false
 analytics = true          # one anonymous `active` event a day, see Analytics, default true

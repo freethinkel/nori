@@ -3,6 +3,8 @@
 
 import Foundation
 
+setenv("NORI_CONFIG", NSTemporaryDirectory() + "nori-test/config.toml", 1)  // never your own config
+
 var errors: [String] = []
 func parse(_ text: String) -> [TOMLEntry] { parseTOML(text) { errors.append("\($0): \($1)") } }
 
@@ -159,6 +161,34 @@ assert(neighbour(of: 2, in: frames, "next") == 1 && neighbour(of: 1, in: frames,
 assert(neighbour(of: 0, in: [main], "next") == nil && neighbour(of: 0, in: [main], "previous") == nil)
 
 print("displays: ok")
+
+// padding-per-monitor: a display takes its [[monitor]] table's padding, zero included, and the shared one for what its
+// table leaves out. A table without a name is skipped. With the flag off the shared ones apply, and the name isn't asked for.
+try! FileManager.default.createDirectory(atPath: (configPath as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+try! """
+padding-top = 40
+padding-left = 24
+padding-per-monitor = true
+
+[[monitor]]
+name = "Wide"
+padding-top = 8
+padding-left = 0
+
+[[monitor]]
+padding-top = 1
+""".write(toFile: configPath, atomically: true, encoding: .utf8)
+configFile = readConfig()
+assert(configFile.monitors == ["Wide": ["padding-top": 8, "padding-left": 0]])
+assert(padding("padding-top", on: "Wide") == 8 && padding("padding-left", on: "Wide") == 0)
+assert(padding("padding-top", on: "Other") == 40 && padding("padding-top", on: nil) == 40)
+configFile.values["padding-per-monitor"] = "false"
+assert(padding("padding-top", on: "Wide") == 40)
+var nameAsked = false
+_ = padding("padding-top", on: { nameAsked = true; return "Wide" }())
+assert(!nameAsked)
+
+print("monitor padding: ok")
 
 // Rules: a table needs app and an action; title must be a valid regex, width 0 < n <= 100.
 assert(makeRule(["app": .string("Safari"), "title": .string("Picture in Picture"), "floating": .bool(true)])?.title == "Picture in Picture")

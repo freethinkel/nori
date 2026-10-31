@@ -28,6 +28,7 @@ struct Display {
     let spaces: [UInt64]  // Desktops and fullscreen Spaces in Mission Control order: the stack the overview shows
     let current: UInt64   // the active Space, on the display that has focus
     var frame: CGRect { CGDisplayBounds(id) }
+    var name: String? { nsScreen(of: self)?.localizedName }  // what [[monitor]] tables go by
 }
 
 let separateSpaces = NSScreen.screensHaveSeparateSpaces

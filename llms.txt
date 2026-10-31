@@ -20,6 +20,7 @@ padding-top = 40          # from the menu bar
 padding-bottom = 0        # from the Dock or the bottom of the screen
 padding-left = 24
 padding-right = 24
+padding-per-monitor = false  # true: each display takes its padding from a [[monitor]] table
 resize-step = 10          # Opt+= / Opt+- width step, % of screen width
 launch-at-login = false   # add Nori.app to Login Items (only the app bundle, move it to /Applications first)
 overview-background = "none"  # behind the overview's Spaces: "none" (black) or "blur" (the wallpaper, blurred, dimmed 30%)
@@ -57,9 +58,13 @@ move-window-to-monitor-left = "none"  # send the focused window there, focus wit
 [[rule]]
 app = "Telegram"
 space = 3
+
+[[monitor]]
+name = "Studio Display"
+padding-top = 16
 ```
 
-Top-level keys are only `gap`, `padding-top`, `padding-bottom`, `padding-left`, `padding-right`, `resize-step`, `inactive-opacity` (numbers), `launch-at-login`, `always-center-single-column` and `wrap-around` (true/false, default false), `overview-background` ("none" or "blur", default "none"), `center-focused-column` ("always", "never" or "on-overflow", default "always") and `mouse-modifier` (modifiers joined by `+`, default "option"). A missing number is 0, except `resize-step`, which is 10, and `inactive-opacity`, which is 1.
+Top-level keys are only `gap`, `padding-top`, `padding-bottom`, `padding-left`, `padding-right`, `resize-step`, `inactive-opacity` (numbers), `padding-per-monitor`, `launch-at-login`, `always-center-single-column` and `wrap-around` (true/false, default false), `overview-background` ("none" or "blur", default "none"), `center-focused-column` ("always", "never" or "on-overflow", default "always") and `mouse-modifier` (modifiers joined by `+`, default "option"). A missing number is 0, except `resize-step`, which is 10, and `inactive-opacity`, which is 1.
 
 ## Bindings
 
@@ -117,9 +122,9 @@ or `osascript -e 'id of app "AppName"'`.
 
 ## Not configurable
 
-Animation speed and curves, gestures, the number of fingers, column widths other than `resize-step`, the fixed 1/3, 1/2, 2/3 presets and a rule's `width`, gaps or paddings per display, several windows per column. Don't offer settings for these.
+Animation speed and curves, gestures, the number of fingers, column widths other than `resize-step`, the fixed 1/3, 1/2, 2/3 presets and a rule's `width`, the gap per display, several windows per column. Don't offer settings for these.
 
-With several displays each one has its own strips. Keys act on the display that has focus, swipes on the one under the pointer, and `gap` and the paddings apply to all. That needs "Displays have separate Spaces" on, the macOS default. With it off the strip stays on the main display.
+With several displays each one has its own strips. Keys act on the display that has focus, swipes on the one under the pointer, and `gap` applies to all. So do the paddings, unless `padding-per-monitor = true`: then a `[[monitor]]` table sets them for one display. Its `name` is the display's, as System Settings → Displays shows it, and its keys are only `padding-top`, `padding-bottom`, `padding-left` and `padding-right`. A padding left out, or a display without a table, takes the top-level one. Several displays need "Displays have separate Spaces" on, the macOS default. With it off the strip stays on the main display.
 
 ## More
 
