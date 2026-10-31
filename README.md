@@ -22,7 +22,7 @@ It's a prototype. WindowServer moves the windows, not Accessibility. A dylib loa
 
 ## Setup
 
-nori needs macOS 14 or newer on Apple Silicon. I run it on macOS 27. Dock only loads a third-party dylib with part of SIP off, and that weakens the security of the whole machine. Do it on your own Mac, and see [Undo](#undo) for the way back. The steps match [yabai's](https://github.com/koekeishiya/yabai/wiki/Disabling-System-Integrity-Protection).
+nori runs on Apple Silicon, and it is tested on macOS 27 only. The app says it needs macOS 14 or newer, but nothing older than 27 has been tried. On another macOS build parts of it may not go into Dock: nori then keeps running without them and tells you which, see [When something is wrong](#when-something-is-wrong). Dock only loads a third-party dylib with part of SIP off, and that weakens the security of the whole machine. Do it on your own Mac, and see [Undo](#undo) for the way back. The steps match [yabai's](https://github.com/koekeishiya/yabai/wiki/Disabling-System-Integrity-Protection).
 
 ### 1. Turn off part of SIP, once, from Recovery
 
@@ -65,6 +65,8 @@ After that nori lives in the menu bar.
 A `!` beside the menu bar item means nori has a problem. The menu then lists each one at the top, with what you lose and what to do; choosing one fixes it where nori can. A problem leaves the list once it is fixed. "Copy Problem Report" puts the list, nori's version and the macOS build on the clipboard for a bug report, and `nori problems` prints the same.
 
 If Dock restarts (a crash, `killall Dock`), nori's payload goes with it, windows and Spaces stop moving, and the overview can't open. nori asks once whether to reload. Reloading restarts Dock again and may ask for your password; choose Later and the menu keeps the offer.
+
+The payload patches four SkyLight functions in Dock, and first checks their code byte for byte, as it can change between macOS builds. One that doesn't match stays unpatched, and nori lists it with what you lose. The strip and the overview keep working. Without `SLSTransactionSetSpaceTransform` Space switches mix in Dock's horizontal slide and windows on every Space, like a status bar, move with the Spaces; the others cost a black band in Space switches, or a jump or a blink in the overview. Choosing the item copies the report, with the macOS build, for an issue. If macOS lacks a function the payload calls, it doesn't load at all, and nori says so at launch and quits.
 
 ### 3. macOS settings
 

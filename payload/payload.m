@@ -16,6 +16,7 @@
 // Back to the daemon, on its control socket (daemon/Control.swift), see notify_daemon:
 //        "payload\tlayout-done\t<seq>"             a Space layout ended; the strip may look at windows again
 //        "payload\tresize-settled\t<wid>\t<width>"  a width stretch reached its goal; the app can be resized now
+//        "payload\thooks\t<names>"                 after each "P": the hooks that didn't go in, comma-separated, or none
 //        "R wid width"         width animation, see resize_t. S and M for that window move its center meanwhile.
 //        "W wid width"         the app has resized that window to `width` (the end of a width animation)
 //        "X wid sid"           move the window to Space sid
@@ -123,6 +124,7 @@ static uint64_t finger_progress_at, finger_focus_at;
 static uint64_t layout_started;  // ns
 static long layout_seq;          // from "Q", for "layout-done"
 static char control_path[256];   // the daemon's control socket
+static char hooks_failed[256];   // for "hooks", see hook()
 static dispatch_queue_t notify_queue;
 
 // One request per connection, like nori-msg. Off the animation queue, and dropped if the daemon isn't listening.
@@ -638,6 +640,7 @@ static void handle_line(char *line)
         pid_t pid = atoi(line + 1);
         if (pid != daemon_pid) instant = false;  // a daemon that died within the second of its "I 1" sends no "I 0"
         daemon_pid = pid;
+        notify_daemon("payload\thooks\t%s\n", hooks_failed);  // on every "P": the first may beat the daemon's control socket
         break;
     }
     case 'I':
@@ -744,7 +747,8 @@ static void *serve(void *arg)
 // in Dock's copy of SkyLight: "ldr x16, #8; br x16; <stub>". The stub swaps one argument for ours,
 // runs the 4 displaced prologue instructions and jumps back to fn + 16.
 // Works because Dock is CS_DEBUGGED after injection, so a modified code page doesn't kill it.
-// ponytail: prologues are checked byte for byte; another macOS build with different ones keeps horizontal spaces.
+// ponytail: prologues are checked byte for byte; another macOS build with different ones goes without that hook, and
+// the daemon lists it with what that costs (hookLosses, daemon/Payload.swift).
 // ponytail: main display aspect only; spaces on a display with another aspect slide the wrong distance.
 __attribute__((visibility("hidden"))) void *nori_transform_resume, *nori_shape_resume, *nori_current_resume, *nori_hide_resume;
 extern char nori_transform_stub[], nori_transform_prologue[], nori_shape_stub[], nori_shape_prologue[];
@@ -949,11 +953,18 @@ __asm__(
     "    br x16\n"
 );
 
+static void hook_failed(const char *name)
+{
+    size_t used = strlen(hooks_failed);
+    snprintf(hooks_failed + used, sizeof(hooks_failed) - used, "%s%s", used ? "," : "", name);
+}
+
 static void hook(const char *name, char *prologue, void *stub, void **resume)
 {
     uint8_t *fn = ptrauth_strip(dlsym(RTLD_DEFAULT, name), ptrauth_key_asia);
     if (!fn || memcmp(fn, prologue, 16) != 0) {
         NSLog(@"nori: %s not hooked: prologue differs", name);
+        hook_failed(name);
         return;
     }
     *resume = fn + 16;
@@ -981,6 +992,7 @@ static void hook(const char *name, char *prologue, void *stub, void **resume)
     vm_deallocate(mach_task_self(), (vm_address_t) threads, count * sizeof(thread_t));
     mach_port_deallocate(mach_task_self(), self);
     NSLog(@"nori: %s %s (kr=%d)", name, kr == KERN_SUCCESS ? "hooked" : "not hooked", kr);
+    if (kr != KERN_SUCCESS) hook_failed(name);
 }
 
 __attribute__((constructor))

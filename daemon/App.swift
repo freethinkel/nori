@@ -69,8 +69,10 @@ final class MenuActions: NSObject, NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
         if !updateItem.isHidden { checkForUpdate(byHand: false) }
         let loaded = payloadAlive()
+        let unhooked = problems.filter { $0.key.hasPrefix("hook-") }.count
         if #available(macOS 14.4, *) {
-            payloadItem.subtitle = loaded ? "Payload is running in Dock" : "Payload is not running in Dock"
+            payloadItem.subtitle = !loaded ? "Payload is not running in Dock"
+                : "Payload is running in Dock" + (unhooked > 0 ? ", \(unhooked) of \(hookLosses.count) hooks failed" : "")
         } else {
             payloadItem.state = loaded ? .on : .off
         }

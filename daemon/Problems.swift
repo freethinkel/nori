@@ -57,11 +57,13 @@ func showConfigProblems() {
                    help: "nori skipped what it couldn't read. Choose this, then look in Settings → General.", fix: #selector(MenuActions.openSettings)))
 }
 
+let macOSBuild = ProcessInfo.processInfo.operatingSystemVersionString.replacingOccurrences(of: "Version", with: "macOS")  // "macOS 27.0 (Build 26A5416b)"
+
 // `nori problems` and "Copy Problem Report": what a bug report needs.
 func problemReport() -> String {
     let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "development build"
     let lines = problems.isEmpty ? ["No problems"] : problems.map { "\($0.title): \($0.help)" }
-    return (["nori \(version), macOS \(ProcessInfo.processInfo.operatingSystemVersionString)"] + lines).joined(separator: "\n") + "\n"
+    return (["nori \(version), \(macOSBuild)"] + lines).joined(separator: "\n") + "\n"
 }
 
 extension MenuActions {

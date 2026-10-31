@@ -203,3 +203,16 @@ Between and around the scaled Spaces the screen is black: nothing is below them.
 ## Payload → daemon
 
 The payload reports back on the daemon's control socket (`/tmp/nori-ctl_$USER.socket`, the one `nori query/focus` uses), one request per connection, tab-separated: `payload<TAB>layout-done<TAB><seq>` when a Space layout ends (seq from the `Q` line sent before its `Y`, so an older layout's end doesn't unpause a newer one) and `payload<TAB>resize-settled<TAB><wid><TAB><width>` when a width stretch reaches its goal. The daemon unpauses the strip and runs the app's AX resize on these instead of fixed delays; the delays (3 s, 0.8 s) stay only as fallbacks. The payload reads the (empty) reply to EOF before closing, so the daemon never writes to a closed socket. Not yet verified live.
+
+After every `P` the payload also sends `payload<TAB>hooks<TAB><names>`, the hooks that didn't go in, comma-separated, empty when all did. On every `P` and not once: the first `P` of a daemon can reach the payload before that daemon listens on its control socket, and a dropped report would never come again.
+
+### What a missing hook costs
+
+From reading `payload/payload.m`, not from running without one. `step_layout` itself calls all these functions, so with the hooks gone the overview still opens, scales and closes; what goes is the part that needs to see Dock's calls.
+
+- `SLSTransactionSetSpaceTransform` (`nori_space_transform`): the most costly. `hold_sticky` is called only from here, so windows on every Space aren't held: they move and scale with one Space, also in `step_layout`'s own frames. Dock's frames keep their values, so a switch has Dock's horizontal transforms landing between `step_layout`'s. A switch outside a layout stays horizontal, and `I 1` does nothing here.
+- `SLSTransactionSetSpaceShape` (`nori_space_shape`): Dock's clip stays. That is the black band of a slide made vertical with a horizontal clip (see "Space switching in Dock"). `step_layout` sets a full clip again each frame, so inside a layout it should only show on frames where Dock's transaction lands after ours (inferred).
+- `SLSTransactionSetManagedDisplayCurrentSpace` (`nori_current_space`): `dock_current` stays 0, so `dock_switching` doesn't end until the next layout. A plain switch loses nothing, as the layout ends there. The overview is one layout through many switches: from the second on, sticky windows are undone for the old Space until Dock's first frame, a Space step off, the fault described under "The overview is one layout through many switches".
+- `SLSTransactionHideSpace` (`nori_hide_space`): Dock's hides of the layout's Spaces pass, so in the overview the Space a switch leaves, or every Desktop when entering a fullscreen Space, blinks for a frame until the next `step_layout`.
+
+`SLSTransactionSetManagedDisplayCurrentSpace` is the only one looked up with `dlsym`. The payload links the other three by name, along with the rest of its SkyLight calls (`nm -u build/payload.dylib`), so a SkyLight without one of those should fail the whole `dlopen` in Dock (inferred): then the loader finishes, Dock doesn't answer, and nori says so at launch.

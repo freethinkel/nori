@@ -192,6 +192,9 @@ func handle(_ args: [String]) -> String {
     case ("payload", "resize-settled") where args.count == 4:
         if let window = UInt32(args[2]), let width = Double(args[3]) { resizeSettled(window, CGFloat(width)) }
         return ""
+    case ("payload", "hooks") where args.count == 3:
+        hooksReported(args[2])
+        return ""
     case ("focus", "window"):
         guard let n = number else { break }
         guard let listed = listWindows([]).first(where: { $0.win.id == n }) else { return "error: no window \(n)\n" }

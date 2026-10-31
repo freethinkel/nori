@@ -63,3 +63,25 @@ func payloadBack() {
     send(["P \(getpid())"])  // vertical Spaces from now on, not from the next repeat
     layout(immediate: false)
 }
+
+// What each hook in payload.m gives the user, so what is lost when it doesn't go in. Read from the payload, see
+// "What a missing hook costs" in docs/WINDOWSERVER.md.
+let hookLosses = [
+    "SLSTransactionSetSpaceTransform": "Space switches mix in Dock's horizontal slide, --instant still slides, and windows on every Space (a status bar, PiP) move and scale with the Spaces.",
+    "SLSTransactionSetSpaceShape": "Space switches can show a black band.",
+    "SLSTransactionSetManagedDisplayCurrentSpace": "In the overview, from the second switch on, windows on every Space jump during the switch.",
+    "SLSTransactionHideSpace": "In the overview, Spaces blink for a frame when a switch ends.",
+]
+
+// The payload's word after each "P": the hooks that didn't go in, comma-separated.
+func hooksReported(_ failed: String) {
+    let names = failed.split(separator: ",").map(String.init)
+    for (name, loss) in hookLosses {
+        if names.contains(name) {
+            report(Problem(key: "hook-\(name)", title: "\(name) is not hooked on \(macOSBuild)", help: loss + " Choose this to copy a report.",
+                           fix: #selector(MenuActions.copyReport)))
+        } else {
+            clearProblem("hook-\(name)")
+        }
+    }
+}
