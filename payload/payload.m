@@ -27,6 +27,7 @@
 //        "L display"           the display animations are timed to
 //        "N display"           a new Desktop on that display, see find_desktop_code
 //        "C sid"               removes that Desktop; its windows go to the display's first one
+//        "V number"            switches to that Desktop, counted across displays: what "Switch to Desktop N" runs
 // Also turns the native Spaces slide vertical, see hook_space_transform.
 // Animation runs here on a user-interactive queue, so the daemon sends one line per window, not one per frame.
 // Frames come from CVDisplayLink (vsync), and each frame moves all windows in one SLS transaction.
@@ -42,6 +43,7 @@
 #include <mach/mach.h>
 #include <ptrauth.h>
 #include <crt_externs.h>
+#include <objc/message.h>
 #include <mach-o/getsect.h>
 #include <math.h>
 #include <pthread.h>
@@ -848,6 +850,13 @@ static void handle_line(char *line)
         if (add_desktop) dispatch_async(dispatch_get_main_queue(), ^{
             void *space = add_desktop(display, *dock_spaces);
             if (space) CFRelease(space);
+        });
+        break;
+    }
+    case 'V': {
+        long number = strtol(line + 1, NULL, 10);
+        if (dock_spaces) dispatch_async(dispatch_get_main_queue(), ^{
+            ((BOOL (*)(id, SEL, long)) objc_msgSend)(*(id *) dock_spaces, sel_registerName("switchToUserSpace:"), number - 1);
         });
         break;
     }

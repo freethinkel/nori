@@ -362,9 +362,18 @@ func queryWindows(_ opts: [String: String]) -> [[String: Any]] {
 }
 
 // Posts the system "Switch to Desktop N" shortcut (symbolic hotkeys 118…133), whatever keys it is bound to.
-func switchToSpace(_ number: Int) -> Bool {
+func postDesktopHotkey(_ number: Int) -> Bool {
     guard (1...16).contains(number), spaces().contains(where: { $0.number == number }) else { return false }
     return postSymbolicHotkey(117 + number)
+}
+
+// Numbers run across displays, so a Desktop added on one display moves the next one's past the shortcuts that are on.
+// Without its shortcut a Desktop is reached through Dock, which runs the same code ("V"), with our slide on top.
+func switchToSpace(_ number: Int) -> Bool {
+    if postDesktopHotkey(number) { return true }
+    guard desktopsEditable, let sid = spaces().first(where: { $0.number == number })?.id else { return false }
+    switchSpaceAnimated(to: sid)
+    return true
 }
 
 // Marks our own presses. Their Desktop number runs across displays; a person's counts on the display that has focus.
