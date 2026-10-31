@@ -38,6 +38,7 @@ focus-first = "ctrl+option+h"       # focus the first / last column
 focus-last = "ctrl+option+l"
 focus-space-down = "option+j"       # go to the Space below / above
 focus-space-up = "option+k"
+focus-space-1 = "option+1"          # go to Desktop 1 of the display that has focus; focus-space-1 … focus-space-9
 center-column = "option+c"          # scroll the focused window to the center, whatever center-focused-column says
 overview = "option+o"
 show-floating = "option+f"          # windows outside the strip (floating rules, dialogs, PiP) above it, focus stays
@@ -68,13 +69,12 @@ Top-level keys are only `gap`, `padding-top`, `padding-bottom`, `padding-left`, 
 
 ## Bindings
 
-The only bindable actions are the ones in the `[bindings]` block above: `focus-left`, `focus-right`, `focus-first`, `focus-last`, `focus-space-down`, `focus-space-up`, `center-column`, `overview`, `show-floating`, `toggle-floating`, `grow-width`, `shrink-width`, `cycle-width-forward`, `cycle-width-backward`, `toggle-full-width`, `move-left`, `move-right`, `move-to-space-down`, `move-to-space-up`, `move-to-space-1` … `move-to-space-9`, and `focus-monitor-` and `move-window-to-monitor-` with `left`, `right`, `up`, `down`, `next` or `previous`. A missing one keeps its default; `"none"` unbinds it. The display actions are `"none"` by default: someone with several displays picks keys for them, like `ctrl+option+left`. Every action is also a CLI command (`nori focus left`, `nori move space up`, `nori focus monitor right`, `nori move monitor right`, `nori width toggle-full`, `nori center`, `nori overview`, `nori show floating`, see `nori help`; `nori space add` and `nori space remove N` have no binding), for people who drive nori from Raycast, Hammerspoon or a bar.
+The only bindable actions are the ones in the `[bindings]` block above: `focus-left`, `focus-right`, `focus-first`, `focus-last`, `focus-space-down`, `focus-space-up`, `focus-space-1` … `focus-space-9`, `center-column`, `overview`, `show-floating`, `toggle-floating`, `grow-width`, `shrink-width`, `cycle-width-forward`, `cycle-width-backward`, `toggle-full-width`, `move-left`, `move-right`, `move-to-space-down`, `move-to-space-up`, `move-to-space-1` … `move-to-space-9`, and `focus-monitor-` and `move-window-to-monitor-` with `left`, `right`, `up`, `down`, `next` or `previous`. A missing one keeps its default; `"none"` unbinds it. The display actions are `"none"` by default: someone with several displays picks keys for them, like `ctrl+option+left`. Every action is also a CLI command (`nori focus left`, `nori move space up`, `nori focus monitor right`, `nori move monitor right`, `nori width toggle-full`, `nori center`, `nori overview`, `nori show floating`, see `nori help`; `nori space add` and `nori space remove N` have no binding), for people who drive nori from Raycast, Hammerspoon or a bar.
 
 A binding is modifiers and one key joined by `+`, like `"ctrl+shift+1"`. Modifiers: `option` (or `alt`, `opt`), `ctrl` (or `control`), `cmd` (or `command`), `shift`. The key is one letter `a`–`z`, a digit `0`–`9`, `-`, `=`, `,`, `.`, `left`, `right`, `up` or `down`. No function keys, space, return or other punctuation. Keys are physical keys on the US layout, so a binding stays put when the person switches keyboard layouts. One chord per action: an action can't have two keys.
 
 These keys are fixed and can't be rebound in the config:
 
-- Opt+1…5 are macOS's own "Switch to Desktop N" shortcuts. Change them in System Settings → Keyboard → Keyboard Shortcuts → Mission Control. nori needs those shortcuts on.
 - Left drag with `mouse-modifier` held moves a window, right drag resizes it. Only the modifier is configurable, not the buttons.
 - Trackpad: three fingers sideways scroll the strip, three fingers up/down switch Spaces, four fingers open the overview.
 

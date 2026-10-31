@@ -63,7 +63,7 @@ After that nori lives in the menu bar.
 
 ### 3. macOS settings
 
-- **Desktop shortcuts.** Turn on "Switch to Desktop 1…N" in System Settings → Keyboard → Keyboard Shortcuts → Mission Control. A Desktop without its shortcut is still reached through Dock, on the macOS versions where nori finds that code, so the ones you press matter most. Opt+J/K, the overview and `nori focus space` press them to switch Spaces. A fullscreen app's Space has no such shortcut: to reach one nori presses "Move left a space" / "Move right a space" from the same list, so turn those on too (any keys, they don't have to stay Ctrl+←/→). Without them nori brings the app to the front, which finds its fullscreen Space only if that is the app's front window.
+- **Desktop shortcuts.** Switching Spaces takes no setup: the keys are nori's own, in its config and in Settings → Hotkeys, and nori asks Dock to switch. If a new macOS changes the code nori calls in Dock, it falls back on the system's shortcuts: then turn on "Switch to Desktop 1…N" in System Settings → Keyboard → Keyboard Shortcuts → Mission Control. Any of those you keep on goes on working, on whatever keys you gave it.
 - **Trackpad.** In System Settings → Trackpad → More Gestures, set "Swipe between full-screen applications" to four fingers or turn it off. Otherwise macOS flips Spaces along with the strip. **Mission Control** and **App Exposé** use the same 3- and 4-finger swipes, and macOS can act on them before nori's event tap sees the gesture. Unless `leave-system-gestures = true`, nori turns both off while it runs (`showMissionControlGestureEnabled` and `showAppExposeGestureEnabled` in `com.apple.dock`) and restores them when it quits, restarting Dock to apply each change, so the next launch loads the payload again (password); Mission Control stays on its keyboard shortcut. If nori crashes they stay off until the next launch or quit.
 - **yabai.** If you have it, stop it while nori runs with `yabai --stop-service`, or at least run `yabai -m config layout float`.
 
@@ -119,7 +119,7 @@ Every row with a config name can be rebound in `[bindings]`, or unbound with `"n
 |---|---|
 | Opt+H / Opt+L | column to the left / right. Config names `focus-left`, `focus-right` |
 | Ctrl+Opt+H / Ctrl+Opt+L | first / last column. Config names `focus-first`, `focus-last` |
-| Opt+J / Opt+K | Space below / above, through the system "Switch to Desktop N" shortcuts. In the overview the neighbour slides to the center and becomes current, and the overview stays open. Config names `focus-space-down`, `focus-space-up` |
+| Opt+J / Opt+K | Space below / above. In the overview the neighbour slides to the center and becomes current, and the overview stays open. Config names `focus-space-down`, `focus-space-up` |
 | Opt+C | scroll the focused window to the center, whatever `center-focused-column` says. Config name `center-column` |
 | Opt+= / Opt+- | focused window wider / narrower by `resize-step`, animated. Config names `grow-width`, `shrink-width` |
 | Opt+. / Opt+, | focused window to the next wider / narrower of 1/3, 1/2 and 2/3 of the screen, round at either end. Config names `cycle-width-forward`, `cycle-width-backward` |
@@ -129,7 +129,7 @@ Every row with a config name can be rebound in `[bindings]`, or unbound with `"n
 | Opt+Shift+J / Opt+Shift+K | send the focused window to the Space below / above. Config names `move-to-space-down`, `move-to-space-up` |
 | Opt + left drag (`mouse-modifier`) | move the window under the pointer. It trades places with a neighbour once it passes the neighbour's center |
 | Opt + right drag (`mouse-modifier`) | resize the window under the pointer. It takes focus, and both edges follow the pointer, or only the right one when `center-focused-column` doesn't center it |
-| Opt+1…5 | Space 1…5. These are the system "Switch to Desktop N" shortcuts, and nori animates the switch itself |
+| Opt+1…9 | Desktop 1…9 of the display that has focus. Config names `focus-space-1` to `focus-space-9` |
 | Opt+O | overview. Click a Space to pick it and the window under the pointer. Drag a window onto another Space to move it there. Esc or Opt+O closes it. Config name `overview` |
 | Opt+F | every window of this Space outside the strip (floating rules, dialogs, panels, PiP) comes above the strip's. Focus stays where it was. Config name `show-floating` |
 | Opt+Shift+V | the focused window leaves the strip and floats in the middle of the screen at 2/3 of its width and height; again on that window puts it back right of the focused column, at its old width. nori remembers it across restarts. Config name `toggle-floating` |
@@ -194,6 +194,7 @@ focus-first = "ctrl+option+h"
 focus-last = "ctrl+option+l"
 focus-space-down = "option+j"
 focus-space-up = "option+k"
+focus-space-1 = "option+1"          # … up to focus-space-9
 center-column = "option+c"
 overview = "option+o"
 show-floating = "option+f"
@@ -281,7 +282,7 @@ nori query spaces [--current]           # number, windows, apps with their windo
 nori query windows [--space N] [--current] [--app NAME] [--id WID] [--focused]
 nori focus left|right|first|last        # a column of the current Space
 nori focus column N                     # column N on the current Space, counting from 1
-nori focus space N|up|down              # Desktop N or the neighbour, through "Switch to Desktop N"
+nori focus space N|up|down              # Desktop N of the display that has focus, or the neighbour
 nori focus window WID                   # a window by id, switching Spaces if needed
 nori focus monitor left|right|up|down|next|previous   # the display on that side
                                         # any focus takes --instant: no slide, no ease

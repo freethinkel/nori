@@ -71,7 +71,7 @@ import SwiftUI
         guard let mine = chord(text(action)) else { return [] }
         let same = { (other: Chord?) in other.map { $0.key == mine.key && $0.flags == mine.flags } ?? false }
         return bindingDefaults.keys.sorted().filter { $0 != action && same(chord(text($0))) }.map { describe($0).title }
-            + desktopHotkeys.filter { same($0.chord) }.map { "Switch to Desktop \($0.number)" }
+            + desktopHotkeys.filter { same($0.chord) && action != "focus-space-\($0.number)" }.map { "Switch to Desktop \($0.number)" }
     }
 
     // A key press while a recorder waits; the event tap hands it over instead of acting on it (main.swift).

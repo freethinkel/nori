@@ -27,6 +27,7 @@ let bindingDefaults = ["focus-left": "option+h", "focus-right": "option+l", "foc
                        "cycle-width-forward": "option+.", "cycle-width-backward": "option+,", "toggle-full-width": "option+shift+f",
                        "move-left": "option+shift+h", "move-right": "option+shift+l",
                        "move-to-space-down": "option+shift+j", "move-to-space-up": "option+shift+k"]
+    .merging((1...9).map { ("focus-space-\($0)", "option+\($0)") }) { a, _ in a }
     .merging((1...9).map { ("move-to-space-\($0)", "option+shift+\($0)") }) { a, _ in a }
     .merging(monitorWays.flatMap { [("focus-monitor-\($0)", "none"), ("move-window-to-monitor-\($0)", "none")] }) { a, _ in a }
 // NORI_CONFIG: another file, to try settings out without touching your own.
@@ -80,8 +81,7 @@ resize-step = 10          # how much grow-width and shrink-width change a window
 # Key bindings: modifiers and one key joined by "+". Modifiers: option, ctrl, cmd, shift. Keys: a to z, 0 to 9,
 # - = , . and left, right, up, down. Keys are physical keys on the US layout, so a binding stays put in any
 # keyboard layout. "none" turns a binding off. Each action is also a command, see `nori help`.
-# Option+1…9 aren't here: they are macOS's "Switch to Desktop N" shortcuts, set in System Settings → Keyboard →
-# Keyboard Shortcuts → Mission Control, and nori animates them. With several displays N counts on the one that has focus.
+# With several displays a Desktop's number counts on the display that has focus, as Mission Control labels it.
 [bindings]
 focus-left = "option+h"             # the window to the left / right
 focus-right = "option+l"
@@ -89,6 +89,7 @@ focus-first = "ctrl+option+h"       # the first / last window of the strip
 focus-last = "ctrl+option+l"
 focus-space-down = "option+j"       # the Space below / above
 focus-space-up = "option+k"
+\((1...9).map { "focus-space-\($0) = \"option+\($0)\"" + ($0 == 1 ? "           # go to Desktop 1, and so on" : "") }.joined(separator: "\n"))
 center-column = "option+c"          # scroll the focused window to the center, once
 overview = "option+o"               # all Spaces of the display, with live windows
 show-floating = "option+f"          # windows outside the strip (floating rules, dialogs, PiP) above it, focus stays
