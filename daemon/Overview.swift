@@ -279,79 +279,77 @@ func blurred(_ url: URL) -> CGImage? {
     return CIContext().createCGImage(small.clampedToExtent().applyingGaussianBlur(sigma: 24), from: small.extent)
 }
 
-// × and + in the top right corner of each Desktop in the open overview: that Desktop goes, or a new one comes after the
-// last and slides to the center. Each Desktop has a window of nori's, so its Space's own transform carries and scales it.
-// They fade in once the overview has settled and go as it closes. Only a picture: the event tap keeps clicks in the
-// overview from reaching anything, and overviewClick goes by spaceButtonRects. Needs Dock's code (Spaces.swift).
-var spaceButtons: [UInt64: (window: NSWindow, close: NSView)] = [:]
-let spaceButtonSize: CGFloat = 28  // on screen in the overview, like the gap and the inset
-let spaceButtonGap: CGFloat = 8
+// In the open overview × in the top right corner of each Desktop removes it, and a larger + at the bottom of the last
+// one adds a Desktop after it and slides there. Each is a window of nori's on that Desktop, so its Space's own transform
+// carries and scales it. They fade in once the overview has settled and go as it closes. Only pictures: the event tap
+// keeps clicks in the overview from reaching anything, and overviewClick goes by the rects. Needs Dock's code (Spaces.swift).
+var closeButtons: [UInt64: NSWindow] = [:]
+var addButton: (window: NSWindow, space: UInt64)?
+let closeButtonSize: CGFloat = 28  // on screen in the overview, like the rest
+let addButtonSize: CGFloat = 48
 let spaceButtonInset: CGFloat = 12
 
-func spaceButtonRects(_ i: Int) -> (close: CGRect, add: CGRect) {
-    let picture = overviewRect(i), size = CGSize(width: spaceButtonSize, height: spaceButtonSize)
-    let add = CGRect(origin: CGPoint(x: picture.maxX - spaceButtonInset - spaceButtonSize, y: picture.minY + spaceButtonInset), size: size)
-    return (add.offsetBy(dx: -spaceButtonSize - spaceButtonGap, dy: 0), add)
+func closeButtonRect(_ i: Int) -> CGRect {
+    let picture = overviewRect(i)
+    return CGRect(x: picture.maxX - spaceButtonInset - closeButtonSize, y: picture.minY + spaceButtonInset, width: closeButtonSize, height: closeButtonSize)
 }
 
-func spaceButton(_ symbol: String, frame: NSRect) -> NSImageView {
-    let view = NSImageView(frame: frame)
+func addButtonRect(_ i: Int) -> CGRect {
+    let picture = overviewRect(i)
+    return CGRect(x: picture.midX - addButtonSize / 2, y: picture.maxY - spaceButtonInset - addButtonSize, width: addButtonSize, height: addButtonSize)
+}
+
+// On Space `sid`. The frame is in the Space's coordinates: scaled down with it, a button comes out at its size.
+func spaceButton(_ symbol: String, frame: NSRect, on sid: UInt64) -> NSWindow {
+    let window = NSWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
+    window.isOpaque = false
+    window.backgroundColor = .clear
+    window.level = .statusBar  // over the strip's windows, and not layer 0: no one lists it as an app window
+    window.ignoresMouseEvents = true
+    window.alphaValue = 0
+    let view = NSImageView(frame: NSRect(origin: .zero, size: frame.size))
     view.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
     view.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: frame.height * 0.42, weight: .semibold)
     view.contentTintColor = .white
     view.wantsLayer = true
     view.layer?.backgroundColor = NSColor(white: 0, alpha: 0.55).cgColor
     view.layer?.cornerRadius = frame.height / 2
-    return view
+    window.contentView = view
+    window.orderFrontRegardless()
+    _ = CGSSpaceAddWindowsAndRemoveFromSpaces(cid, sid, [window.windowNumber] as CFArray, 7)
+    window.animator().alphaValue = 1
+    return window
 }
 
 func showSpaceButtons() {
     guard desktopsEditable, let screen = nsScreen(of: overviewDisplay) else { return }
-    for sid in Array(spaceButtons.keys) where !overviewSpaces.contains(sid) { spaceButtons.removeValue(forKey: sid)?.window.orderOut(nil) }
-    // In the Space's coordinates: scaled down with it, they come out at their size.
-    let size = spaceButtonSize / overviewScale, gap = spaceButtonGap / overviewScale, inset = spaceButtonInset / overviewScale
     let desktops = overviewSpaces.filter { !isFullscreen($0) }
-    for sid in desktops {
-        if spaceButtons[sid] == nil {
-            let width = size * 2 + gap
-            let frame = NSRect(x: screen.frame.maxX - inset - width, y: screen.frame.maxY - inset - size, width: width, height: size)
-            let window = NSWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
-            window.isOpaque = false
-            window.backgroundColor = .clear
-            window.level = .statusBar  // over the strip's windows, and not layer 0: no one lists it as an app window
-            window.ignoresMouseEvents = true
-            window.alphaValue = 0
-            let close = spaceButton("xmark", frame: NSRect(x: 0, y: 0, width: size, height: size))
-            window.contentView!.addSubview(close)
-            window.contentView!.addSubview(spaceButton("plus", frame: NSRect(x: size + gap, y: 0, width: size, height: size)))
-            window.orderFrontRegardless()
-            _ = CGSSpaceAddWindowsAndRemoveFromSpaces(cid, sid, [window.windowNumber] as CFArray, 7)
-            window.animator().alphaValue = 1
-            spaceButtons[sid] = (window, close)
-        }
-        spaceButtons[sid]!.close.isHidden = desktops.count < 2  // a display's last Desktop stays
+    let removable = desktops.count > 1 ? desktops : []  // a display's last Desktop stays
+    for sid in Array(closeButtons.keys) where !removable.contains(sid) { closeButtons.removeValue(forKey: sid)?.orderOut(nil) }
+    let inset = spaceButtonInset / overviewScale, close = closeButtonSize / overviewScale, add = addButtonSize / overviewScale
+    for sid in removable where closeButtons[sid] == nil {
+        closeButtons[sid] = spaceButton("xmark", frame: NSRect(x: screen.frame.maxX - inset - close, y: screen.frame.maxY - inset - close, width: close, height: close), on: sid)
     }
+    guard let last = desktops.last, addButton?.space != last else { return }
+    addButton?.window.orderOut(nil)
+    addButton = (spaceButton("plus", frame: NSRect(x: screen.frame.midX - add / 2, y: screen.frame.minY + inset, width: add, height: add), on: last), last)
 }
 
 func hideSpaceButtons() {
-    for buttons in spaceButtons.values { buttons.window.orderOut(nil) }
-    spaceButtons = [:]
+    for window in closeButtons.values { window.orderOut(nil) }
+    closeButtons = [:]
+    addButton?.window.orderOut(nil)
+    addButton = nil
 }
 
 func pressSpaceButton(at point: CGPoint) -> Bool {
-    for (i, sid) in overviewSpaces.enumerated() {
-        guard let buttons = spaceButtons[sid] else { continue }
-        let rects = spaceButtonRects(i)
-        if rects.close.contains(point) && !buttons.close.isHidden {
-            removeDesktop(sid)
-            return true
-        }
-        if rects.add.contains(point) {
-            addDesktopInOverview()
-            return true
-        }
+    for (i, sid) in overviewSpaces.enumerated() where closeButtons[sid] != nil && closeButtonRect(i).contains(point) {
+        removeDesktop(sid)
+        return true
     }
-    return false
+    guard let sid = addButton?.space, let i = overviewSpaces.firstIndex(of: sid), addButtonRect(i).contains(point) else { return false }
+    addDesktopInOverview()
+    return true
 }
 
 func addDesktopInOverview() {
