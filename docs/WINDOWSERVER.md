@@ -48,6 +48,8 @@ The `SetSpaceShape` hook turns the slide's horizontal clip vertical: it takes th
 
 The hooks work only while the daemon is alive: the daemon sends `P <pid>` every 2 s, and the hook checks `kill(pid, 0)`. Once the daemon exits or crashes, Dock animates by itself again. The patch itself stays until Dock restarts.
 
+A layout (the overview, a slide) never ends by itself at goal 1, so a crash used to leave Spaces scaled until Dock restarted. `close_orphan_layout` checks the same `kill(pid, 0)` every frame of a layout: with the daemon gone it lets go of any swipe, sets goal 0 and aims at `SLSGetActiveSpace`, asked again each frame as a switch of Dock's may land after the crash, and `step_layout` ends the layout as usual. `instant` ("I 1") has no effect with the daemon gone, the hooks ask first, but it would come back with the next daemon, so a new pid in `P` clears it.
+
 Signatures (disassembler; the arguments are visible in lldb during a switch):
 - `SLSTransactionShowSpace(transaction, sid)`, `SLSTransactionHideSpace(transaction, sid)` — 2 arguments each.
 - `SLSTransactionSetSpaceShape(transaction, sid, CGRegionRef)`. Dock gives a hidden Space `kCGRegionEmptyRegion`.

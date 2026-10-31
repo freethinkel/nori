@@ -17,7 +17,7 @@ It's a prototype. WindowServer moves the windows, not Accessibility. A dylib loa
 - Drop a window you dragged with the mouse and it eases back into its column.
 - Every Space has its own strip. A fullscreen app's Space has none: nori leaves its window as macOS made it.
 - Fullscreen Spaces sit in the vertical stack where Mission Control has them, so Opt+J/K, the swipes and the overview reach them. nori switches to one with Dock's "Move left/right a space" shortcut, see [macOS settings](#3-macos-settings).
-- Spaces switch vertically, on the same curve as windows. nori catches every "Switch to Desktop N" press, from the keyboard, from Opt+J/K or from `nori focus space`. Dock still switches the Space and the payload draws the slide. If nori quits or crashes, Dock goes back to its usual horizontal animation.
+- Spaces switch vertically, on the same curve as windows. nori catches every "Switch to Desktop N" press, from the keyboard, from Opt+J/K or from `nori focus space`. Dock still switches the Space and the payload draws the slide. If nori quits or crashes, Dock goes back to its usual horizontal animation, and an open overview closes by itself.
 - An overview like niri's shows all Spaces of the display stacked and scaled down, with live windows. Four fingers drive it. It follows the swipe, stretches past fully open or closed, and on lift springs open or shut depending on how fast you threw it.
 
 ## Setup

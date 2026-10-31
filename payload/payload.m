@@ -389,9 +389,24 @@ static void start_resize_watch(void)
     dispatch_resume(resize_watch);
 }
 
+// A layout whose daemon is gone (a crash) would stay on: nothing sends the closing "Y", and the event tap went with
+// the daemon. It closes on the Space Dock has current, asked every frame as Dock may still be switching, and
+// step_layout ends it like any other, which puts Spaces and sticky windows back.
+static void close_orphan_layout(void)
+{
+    if (!daemon_pid || kill(daemon_pid, 0) == 0) return;
+    uint64_t current = SLSGetActiveSpace(SLSMainConnectionID());
+    for (int i = 0; i < layout_count; i++) if (layout_spaces[i] == current) layout_target = i;
+    layout_goal = 0;
+    layout_spring = layout_follow = focus_follow = false;
+}
+
 static void tick(double frame)
 {
-    if (layout_count) step_layout(frame);
+    if (layout_count) {
+        close_orphan_layout();
+        step_layout(frame);
+    }
     int kept_fades = 0;
     for (int i = 0; i < fade_count; i++) {
         fade_t f = fades[i];
@@ -619,9 +634,12 @@ static void handle_line(char *line)
         }
         break;
     }
-    case 'P':
-        daemon_pid = atoi(line + 1);
+    case 'P': {
+        pid_t pid = atoi(line + 1);
+        if (pid != daemon_pid) instant = false;  // a daemon that died within the second of its "I 1" sends no "I 0"
+        daemon_pid = pid;
         break;
+    }
     case 'I':
         instant = atoi(line + 1);
         break;
