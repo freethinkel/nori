@@ -105,6 +105,7 @@ func spaceLayoutDone(_ seq: Int) {
 
 // spring: the overview opening and closing; otherwise the windows' ease.
 func sendLayout(open: Bool, spring: Bool) {
+    guard !payloadLost else { return }  // no payload to end it: the strip stays on, and Dock does its own slide
     spaceLayoutUntil = CACurrentMediaTime() + spaceLayoutFallback
     layoutSeq += 1
     // The Space-changed event lands while the strip is paused; layout-done polls, this is in case it never comes.
@@ -138,7 +139,7 @@ func toggleOverview() {
 }
 
 func openOverview() {
-    guard !overviewOpen else { return }
+    guard !overviewOpen, !payloadLost else { return }
     let stack = displaySpaces()
     overviewSpaces = stack.ids
     overviewTarget = stack.current
@@ -149,6 +150,7 @@ func openOverview() {
 
 // 4-finger swipe (Trackpad.swift): the overview follows the fingers, then the lift springs it open or closed.
 func beginOverviewSwipe() {
+    guard !payloadLost else { return }
     if !overviewOpen {
         let stack = displaySpaces()
         overviewSpaces = stack.ids

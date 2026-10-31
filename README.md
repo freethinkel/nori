@@ -57,8 +57,14 @@ After that nori lives in the menu bar.
 |---|---|
 | Check for Updates… | asks GitHub for a newer release, which nori also does at launch and each time the menu opens; becomes "Update to vX" once one is found. An app you built yourself opens the release page instead of updating |
 | Settings…, ⌘, | a window with every setting, key binding and app rule. Its toolbar menu opens `~/.config/nori/config.toml` in your text editor and reloads it. See [Config](#config) |
-| Restart Dock and Reload Payload | use it after a rebuild, so Dock runs the new payload. The line under it says whether the payload is running in Dock |
+| Restart Dock and Reload Payload | use it after a rebuild, so Dock runs the new payload. The line under it says whether the payload is running in Dock. If you cancel the password, nori keeps running |
 | Quit nori, ⌘Q | puts Spaces and windows back and quits. The payload stays in Dock and does nothing |
+
+#### When something is wrong
+
+A `!` beside the menu bar item means nori has a problem. The menu then lists each one at the top, with what you lose and what to do; choosing one fixes it where nori can. A problem leaves the list once it is fixed. "Copy Problem Report" puts the list, nori's version and the macOS build on the clipboard for a bug report, and `nori problems` prints the same.
+
+If Dock restarts (a crash, `killall Dock`), nori's payload goes with it, windows and Spaces stop moving, and the overview can't open. nori asks once whether to reload. Reloading restarts Dock again and may ask for your password; choose Later and the menu keeps the offer.
 
 ### 3. macOS settings
 
@@ -274,6 +280,7 @@ nori overview                           # open or close the overview
 nori show floating                      # windows outside the strip above it
 nori toggle floating                    # the focused window out of the strip and back
 nori reload                             # read the config again, like "Reload Config"
+nori problems                           # what is wrong right now, with the nori and macOS versions
 nori subscribe                          # one line of `query spaces` JSON now and on every change
 nori help
 

@@ -28,6 +28,7 @@ let usage = """
       nori show floating
       nori toggle floating
       nori reload             read the config again
+      nori problems           what is wrong right now, for a bug report
 
     """
 
@@ -163,6 +164,8 @@ func handle(_ args: [String]) -> String {
     case ("reload", "") where args.count == 1:
         reloadSettings()
         return ""
+    case ("problems", "") where args.count == 1:
+        return problemReport()
     case ("query", "spaces"):
         guard let opts = options(args.dropFirst(2), values: [], flags: ["--current"]) else { break }
         return json(querySpaces(opts))
