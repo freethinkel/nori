@@ -160,12 +160,12 @@ func writeDefaultConfig() {
     try? defaultConfig.write(toFile: configPath, atomically: true, encoding: .utf8)
 }
 
-// Numbers, flags and bindings as strings by key; the rules in file order; paddings by display name.
+// Numbers, flags and bindings as strings by key; the rules in file order; paddings by display name; what was skipped and
+// why, one line each, for Settings, the menu (Problems.swift) and stderr.
 // ponytail: two displays of one name share a table, unless macOS numbers them; match on the UUID if that bites.
-func readConfig() -> (values: [String: String], rules: [Rule], monitors: [String: [String: Double]]) {
-    writeDefaultConfig()
-    guard let text = try? String(contentsOfFile: configPath, encoding: .utf8) else { return ([:], [], [:]) }
-    let report = { (line: Int, message: String) in _ = fputs("config.toml:\(line): \(message)\n", stderr) }
+func parseConfig(_ text: String) -> (values: [String: String], rules: [Rule], monitors: [String: [String: Double]], problems: [String]) {
+    var problems: [String] = []
+    let report = { (line: Int, message: String) in problems.append("line \(line): \(message)") }
     var values: [String: String] = [:]
     var ruleTables: [Int: [String: TOMLValue]] = [:]
     var monitorTables: [Int: [String: TOMLValue]] = [:]
@@ -180,27 +180,40 @@ func readConfig() -> (values: [String: String], rules: [Rule], monitors: [String
         case ("monitor", .string) where entry.index != nil && entry.key == "name",
              ("monitor", .number) where entry.index != nil && paddingKeys.contains(entry.key):
             monitorTables[entry.index!, default: [:]][entry.key] = entry.value
-        default:
-            report(entry.line, "skipping \(entry.key): unknown key or bad value. Top level: \((numberKeys + flagKeys + choiceKeys.keys + modifierKeys).joined(separator: ", ")); "
-                + "[bindings]: \(bindingDefaults.keys.sorted().joined(separator: ", ")); [[rule]]: app, title, space, floating, ignore, width; "
-                + "[[monitor]]: name, \(paddingKeys.joined(separator: ", "))")
+        default: report(entry.line, "skipping \(entry.key): unknown key or bad value")
         }
     }
     var monitors: [String: [String: Double]] = [:]
     for i in monitorTables.keys.sorted() {
         let table = monitorTables[i]!
         guard case .string(let name)? = table["name"] else {
-            fputs("config.toml: skipping [[monitor]] #\(i + 1): needs name = \"…\"\n", stderr)
+            problems.append("skipping [[monitor]] #\(i + 1): needs name = \"…\"")
             continue
         }
         for key in paddingKeys { if case .number(let n)? = table[key] { monitors[name, default: [:]][key] = n } }
     }
     let rules = ruleTables.keys.sorted().compactMap { i in
         let rule = makeRule(ruleTables[i]!)
-        if rule == nil { fputs("config.toml: skipping [[rule]] #\(i + 1): needs app = \"…\" and space = N, floating = true, ignore = true or width = N\n", stderr) }
+        if rule == nil { problems.append("skipping [[rule]] #\(i + 1): needs app = \"…\" and space = N, floating = true, ignore = true or width = N, with a valid title and width") }
         return rule
     }
-    return (values, rules, monitors)
+    return (values, rules, monitors, problems)
+}
+
+func readConfig() -> (values: [String: String], rules: [Rule], monitors: [String: [String: Double]], problems: [String]) {
+    writeDefaultConfig()
+    guard let text = try? String(contentsOfFile: configPath, encoding: .utf8) else {
+        fputs("cannot read \(configPath)\n", stderr)
+        return ([:], [], [:], ["cannot read \(configPath), so nori runs on its defaults"])
+    }
+    let parsed = parseConfig(text)
+    for problem in parsed.problems { fputs("config.toml: \(problem)\n", stderr) }
+    if !parsed.problems.isEmpty {
+        fputs("config.toml: top level: \((numberKeys + flagKeys + choiceKeys.keys + modifierKeys).joined(separator: ", ")); "
+            + "[bindings]: \(bindingDefaults.keys.sorted().joined(separator: ", ")); [[rule]]: app, title, space, floating, ignore, width; "
+            + "[[monitor]]: name, \(paddingKeys.joined(separator: ", "))\n", stderr)
+    }
+    return parsed
 }
 
 // Values below are computed on every use, so a reload ("configFile = readConfig()") reaches them all.
@@ -269,6 +282,28 @@ func gestureChanges(_ key: String, to new: String, current: (String) -> String) 
     let free = fingers.map { "\($0) \(kind)" }.first { choiceKeys[other]!.contains($0) && !taken.contains($0) }
     changes.append((other, free ?? "none"))
     return changes
+}
+
+// A system shortcut, com.apple.symbolichotkeys: whether it is on, and its keys. 65535 is no key.
+struct SymbolicHotkey {
+    var enabled: Bool
+    var character: Int, keycode: Int, flags: Int
+    var pressable: Bool { enabled && keycode != 65535 }
+}
+
+// The shortcuts nori needs and can't press now, by id: "Move left/right a space" (79, 81) and "Switch to Desktop N"
+// (118…133) of each Desktop. With a single Space there is nothing to switch to.
+// ponytail: Desktops past 16 have no shortcut, and stay out of reach unnoticed.
+func shortcutsOff(desktops: Int, spaces: Int, hotkey: (Int) -> SymbolicHotkey) -> [Int] {
+    guard spaces > 1 else { return [] }
+    return ([79, 81] + (0..<min(desktops, 16)).map { 118 + $0 }).filter { !hotkey($0).pressable }
+}
+
+// The value `defaults write … -dict-add` takes to turn a shortcut on, with the keys it has.
+func enabledPlist(_ hotkey: SymbolicHotkey) -> String {
+    let parameters = [hotkey.character, hotkey.keycode, hotkey.flags].map { "<integer>\($0)</integer>" }.joined()
+    return "<dict><key>enabled</key><true/><key>value</key><dict><key>parameters</key><array>\(parameters)</array>"
+        + "<key>type</key><string>standard</string></dict></dict>"
 }
 
 // Bindings: modifiers and one key joined by "+", e.g. "option+o", "ctrl+shift+1". Keys are letters, digits, "-", "=", ",", "."

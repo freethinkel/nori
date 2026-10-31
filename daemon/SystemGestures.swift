@@ -37,7 +37,7 @@ func saveSystemGestures(_ values: [String: Bool]) -> Bool {
 func disableSystemGestures() -> Bool {
     let originals = savedSystemGestures() ?? Dictionary(uniqueKeysWithValues: systemGestureKeys.map { ($0, dockGesture($0)) })
     guard saveSystemGestures(originals) else {
-        fputs("system gestures: cannot write \(systemGesturesPath), leaving them alone\n", stderr)
+        report(Problem(key: "system-gestures", title: "Mission Control's swipes stay on", help: "nori could not write \(systemGesturesPath), so macOS may act on nori's swipes too."))
         return false
     }
     systemGesturesManaged = true
@@ -45,7 +45,7 @@ func disableSystemGestures() -> Bool {
     for key in systemGestureKeys where dockGesture(key) {
         setDockGesture(key, false)
         if dockGesture(key) {
-            fputs("system gestures: cannot turn off \(key)\n", stderr)
+            report(Problem(key: "system-gestures", title: "Mission Control's swipes stay on", help: "nori could not turn off \(key) in com.apple.dock, so macOS may act on nori's swipes too."))
         } else {
             changed = true
         }

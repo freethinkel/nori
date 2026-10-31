@@ -6,12 +6,14 @@ import SwiftUI
     var values: [String: String] = [:]     // as readConfig took them: what nori runs with
     var monitors: [String: [String: Double]] = [:]  // the same for [[monitor]] tables
     var screens: [String] = []             // names of the displays connected now
+    var problems: [String] = []            // what the last reload skipped, line by line
     var rules: [[String: TOMLValue]] = []  // every [[rule]] table in file order, valid or not
     var recording: String?                 // the binding whose recorder waits for a key press
 
     func refresh() {
         values = config
         monitors = configFile.monitors
+        problems = configFile.problems
         screens = NSScreen.screens.map(\.localizedName)
         rules = tables("rule", in: (try? String(contentsOfFile: configPath, encoding: .utf8)) ?? "")
     }

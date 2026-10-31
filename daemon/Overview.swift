@@ -18,17 +18,6 @@ var overviewSpaces: [UInt64] = []  // Spaces of that display, fullscreen ones in
 var overviewTarget = 0             // index of the Space at the center once the animation settles
 var passDesktopHotkeys = 0  // our own presses of "Switch to Desktop N", let through to Dock
 
-// The "Switch to Desktop N" shortcuts (symbolic hotkeys 118…133), read once at start.
-let desktopHotkeys: [(chord: Chord, number: Int)] = {
-    let hotkeys = UserDefaults(suiteName: "com.apple.symbolichotkeys")?.dictionary(forKey: "AppleSymbolicHotKeys") ?? [:]
-    return (1...16).compactMap { number in
-        guard let entry = hotkeys[String(117 + number)] as? [String: Any], entry["enabled"] as? Bool == true,
-              let keys = (entry["value"] as? [String: Any])?["parameters"] as? [Int], keys.count == 3
-        else { return nil }
-        return ((Int64(keys[1]), CGEventFlags(rawValue: UInt64(keys[2])).intersection(chordModifiers)), number)
-    }
-}()
-
 func desktopNumber(for event: CGEvent) -> Int? {
     desktopHotkeys.first { matches(event, $0.chord) }?.number
 }
@@ -40,6 +29,7 @@ func pressDesktop(_ number: Int) {
         passDesktopHotkeys -= 1
         guard desktopsEditable else {
             fputs("\"Switch to Desktop \(number)\" shortcut is off; enable it in System Settings → Keyboard → Shortcuts → Mission Control\n", stderr)
+            switchFailed()
             return
         }
         send(["V \(number)"])
@@ -48,6 +38,14 @@ func pressDesktop(_ number: Int) {
         pendingSpace = (sid, CACurrentMediaTime() + spaceLayoutFallback)
         publishSoon()
     }
+}
+
+// No press, so no switch. A layout sent for it comes back: it would end on a Space Dock isn't on, with the current one hidden.
+func switchFailed() {
+    NSSound.beep()
+    checkShortcuts()
+    overviewTarget = overviewSpaces.firstIndex(of: CGSGetActiveSpace(cid)) ?? overviewTarget
+    if spaceLayoutBusy { sendLayout(open: overviewOpen, spring: overviewOpen) }
 }
 
 // Every switch to a Space nori starts. A Desktop: its "Switch to Desktop N" shortcut. A fullscreen Space has none:
@@ -64,8 +62,11 @@ func pressSpace(_ sid: UInt64) {
     let steps = index - stack.current
     let focused = shown.spaces.contains(CGSGetActiveSpace(cid))  // those shortcuts act on the display that has focus
     if !focused || !postSymbolicHotkey(steps > 0 ? 81 : 79, times: abs(steps)) {
-        if focused { fputs("fullscreen Space: turn on \"Move left a space\" and \"Move right a space\" in System Settings → Keyboard → Shortcuts → Mission Control (any keys)\n", stderr) }
-        guard let win = listWindows([]).first(where: { $0.spaces == [sid] })?.win else { return }  // not a sticky one
+        if focused {
+            fputs("fullscreen Space: turn on \"Move left a space\" and \"Move right a space\" in System Settings → Keyboard → Shortcuts → Mission Control (any keys)\n", stderr)
+            checkShortcuts()
+        }
+        guard let win = listWindows([]).first(where: { $0.spaces == [sid] })?.win else { return switchFailed() }  // not a sticky one
         bringAppFront(win)
     }
     pendingSpace = (sid, CACurrentMediaTime() + spaceLayoutFallback)
@@ -108,6 +109,7 @@ func spaceLayoutDone(_ seq: Int) {
 
 // spring: the overview opening and closing; otherwise the windows' ease.
 func sendLayout(open: Bool, spring: Bool) {
+    guard !payloadLost else { return }  // no payload to end it: the strip stays on, and Dock does its own slide
     spaceLayoutUntil = CACurrentMediaTime() + spaceLayoutFallback
     layoutSeq += 1
     // The Space-changed event lands while the strip is paused; layout-done polls, this is in case it never comes.
@@ -149,7 +151,7 @@ func toggleOverview() {
 }
 
 func openOverview() {
-    guard !overviewOpen, separateSpaces else { return }
+    guard !overviewOpen, separateSpaces, !payloadLost else { return }
     useStack(on: focusedDisplay())
     overviewOpen = true
     showBackdrop()
@@ -158,6 +160,7 @@ func openOverview() {
 
 // 4-finger swipe (Trackpad.swift): the overview follows the fingers, then the lift springs it open or closed.
 func beginOverviewSwipe() {
+    guard !payloadLost else { return }
     if !overviewOpen {
         let under = pointerDisplay()
         if under.id != focusedDisplay().id { focusDisplay(under) }  // keys in the overview go by focus

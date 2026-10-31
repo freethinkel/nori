@@ -10,6 +10,7 @@ struct SettingsPage: View {
         let query = page.rawValue.localizedCaseInsensitiveContains(query) ? "" : query
         let perMonitor = page == .layout && settingsModel.flag("padding-per-monitor")
         Cards {
+            if page == .general && query.isEmpty && !settingsModel.problems.isEmpty { ConfigProblemsCard() }
             if page == .about && query.isEmpty { AboutCard() }
             ForEach(cards(page), id: \.title) { card in
                 let keys = card.keys.filter { matches($0, query) && !(perMonitor && paddingKeys.contains($0)) }
@@ -53,6 +54,14 @@ struct AboutCard: View {
                 }
             }
             .cardRow()
+        }
+    }
+}
+
+struct ConfigProblemsCard: View {
+    var body: some View {
+        Card(title: "Problems in config.toml", footer: "nori skipped these and applied the rest.") {
+            ForEach(settingsModel.problems, id: \.self) { Text($0).textSelection(.enabled).cardRow() }
         }
     }
 }
