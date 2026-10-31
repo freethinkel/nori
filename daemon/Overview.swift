@@ -1,17 +1,20 @@
-// Overview, like niri's: every Space of the display, scaled down and stacked vertically, windows live.
+// Overview, like niri's: every Space of one display, scaled down and stacked vertically, windows live. That is the
+// focused display for the key, the one under the pointer for a swipe; the other displays stay as they are.
 // A plain Space switch is the same layout at scale 1: the Space at the center slides to the new one.
 // The payload animates both on vsync (step_layout in payload.m); the daemon only says where to go with "Y".
 // Dock still owns which Space is current: picking another Space presses its "Switch to Desktop N" shortcut
 // (switchToSpace in Control.swift), or activates the app of a fullscreen Space (pressSpace), and Dock's switch runs
 // hidden under ours.
-// ponytail: main display only; a click picks a Space, not a window. The gap lives in payload.m, the scale goes along with each layout.
+// ponytail: a click picks a Space, not a window. The gap lives in payload.m, the scale goes along with each layout.
+// ponytail: niri opens it on all displays. One layout at a time keeps payload.m simple; a click elsewhere just closes it.
 
 import Cocoa
 
 let overviewGap: CGFloat = 48  // same as OVERVIEW_GAP in payload.m, for hit testing
 
 var overviewOpen = false
-var overviewSpaces: [UInt64] = []  // Spaces of the display, fullscreen ones included, top to bottom
+var overviewDisplay = displays[0]  // the display the Space layout is on
+var overviewSpaces: [UInt64] = []  // Spaces of that display, fullscreen ones included, top to bottom
 var overviewTarget = 0             // index of the Space at the center once the animation settles
 var passDesktopHotkeys = 0  // our own presses of "Switch to Desktop N", let through to Dock
 
@@ -53,11 +56,12 @@ func pressSpace(_ sid: UInt64) {
     guard sid != CGSGetActiveSpace(cid) else { return }
     if let number = spaces().first(where: { $0.id == sid })?.number { return pressDesktop(number) }
     refreshDisplays()
-    let stack = stack(on: display(of: sid))
+    let shown = display(of: sid), stack = stack(on: shown)
     guard let index = stack.ids.firstIndex(of: sid) else { return }
     let steps = index - stack.current
-    if !postSymbolicHotkey(steps > 0 ? 81 : 79, times: abs(steps)) {
-        fputs("fullscreen Space: turn on \"Move left a space\" and \"Move right a space\" in System Settings → Keyboard → Shortcuts → Mission Control (any keys)\n", stderr)
+    let focused = shown.spaces.contains(CGSGetActiveSpace(cid))  // those shortcuts act on the display that has focus
+    if !focused || !postSymbolicHotkey(steps > 0 ? 81 : 79, times: abs(steps)) {
+        if focused { fputs("fullscreen Space: turn on \"Move left a space\" and \"Move right a space\" in System Settings → Keyboard → Shortcuts → Mission Control (any keys)\n", stderr) }
         guard let win = listWindows([]).first(where: { $0.spaces == [sid] })?.win else { return }  // not a sticky one
         bringAppFront(win)
     }
@@ -75,10 +79,12 @@ func switchSpaceInstant(to number: Int) -> Bool {
     return true
 }
 
-// The stack the overview shows and Space switches slide through: the main display's.
-func displaySpaces() -> (ids: [UInt64], current: Int) {
-    refreshDisplays()
-    return stack(on: displays[0])
+// The Space layout goes on this display, at the Space it shows.
+func useStack(on display: Display) {
+    let stack = stack(on: display)
+    overviewDisplay = display
+    overviewSpaces = stack.ids
+    overviewTarget = stack.current
 }
 
 // The strip must not look at windows while a Space layout is on (see syncColumns). The payload says when one
@@ -102,7 +108,8 @@ func sendLayout(open: Bool, spring: Bool) {
     layoutSeq += 1
     // The Space-changed event lands while the strip is paused; layout-done polls, this is in case it never comes.
     DispatchQueue.main.asyncAfter(deadline: .now() + spaceLayoutFallback + 0.05) { pollSoon() }
-    send(["Q \(layoutSeq)", "Z \(overviewScale)", "Y \(spring ? 1 : 0) \(overviewTarget) \(open ? 1 : 0) " + overviewSpaces.map(String.init).joined(separator: " ")])
+    timeAnimations(to: overviewDisplay.id)
+    send(displayLines() + ["Q \(layoutSeq)", "Z \(overviewScale)", "Y \(spring ? 1 : 0) \(overviewTarget) \(open ? 1 : 0) " + overviewSpaces.map(String.init).joined(separator: " ")])
     publishSoon()  // isAnimating, for subscribers
 }
 
@@ -117,10 +124,13 @@ func switchSpaceAnimated(to sid: UInt64) {
         if let index = overviewSpaces.firstIndex(of: sid) { closeOverview(at: index) }
         return
     }
-    let stack = displaySpaces()
-    guard let index = stack.ids.firstIndex(of: sid) else { pressSpace(sid); return }  // another display: Dock's slide
-    guard sid != CGSGetActiveSpace(cid) || index != overviewTarget else { return }
-    overviewSpaces = stack.ids
+    refreshDisplays()
+    let shown = display(of: sid)
+    // Dock's slide with separate Spaces off: one Space over all displays, and no layout goes by one of them.
+    guard separateSpaces, let index = shown.spaces.firstIndex(of: sid) else { pressSpace(sid); return }
+    // Already there, unless a slide away from it is under way: at most focus goes to its display.
+    if sid == shown.current && (shown.id != overviewDisplay.id || index == overviewTarget) { pressSpace(sid); return }
+    useStack(on: shown)
     overviewTarget = index
     sendLayout(open: false, spring: false)
     pressSpace(sid)
@@ -131,10 +141,8 @@ func toggleOverview() {
 }
 
 func openOverview() {
-    guard !overviewOpen else { return }
-    let stack = displaySpaces()
-    overviewSpaces = stack.ids
-    overviewTarget = stack.current
+    guard !overviewOpen, separateSpaces else { return }
+    useStack(on: focusedDisplay())
     overviewOpen = true
     showBackdrop()
     sendLayout(open: true, spring: true)
@@ -143,9 +151,9 @@ func openOverview() {
 // 4-finger swipe (Trackpad.swift): the overview follows the fingers, then the lift springs it open or closed.
 func beginOverviewSwipe() {
     if !overviewOpen {
-        let stack = displaySpaces()
-        overviewSpaces = stack.ids
-        overviewTarget = stack.current
+        let under = pointerDisplay()
+        if under.id != focusedDisplay().id { focusDisplay(under) }  // keys in the overview go by focus
+        useStack(on: under)
         showBackdrop()
     }
     sendLayout(open: overviewOpen, spring: true)  // starts the layout if it isn't running
@@ -167,9 +175,7 @@ func endOverviewSwipe(open: Bool) {
 // Returns the index the swipe starts from.
 func beginSpaceSwipe() -> CGFloat {
     if !overviewOpen {
-        let stack = displaySpaces()
-        overviewSpaces = stack.ids
-        overviewTarget = stack.current
+        useStack(on: pointerDisplay())
         sendLayout(open: false, spring: false)  // starts the layout if it isn't running
     }
     return CGFloat(overviewTarget)
@@ -206,14 +212,15 @@ func closeOverview(at index: Int) {
 func resetOverview() {
     guard overviewOpen else { return }
     overviewOpen = false
-    overviewTarget = stack(on: displays[0]).current
+    refreshDisplays()
+    overviewTarget = stack(on: display(of: overviewSpaces[overviewTarget])).current
     sendLayout(open: false, spring: false)
 }
 
 // overview-background = "blur": the wallpaper, blurred and dimmed by 30%, behind the overview's Spaces. It is a
 // window in a Space of its own at absolute level -1, below every desktop (they are at 0), so it shows only around
 // and between the scaled Spaces; shown while the overview is open or closing.
-// ponytail: the main display's wallpaper as desktopImageURL gives it; one it can't read (a video) leaves black.
+// ponytail: the wallpaper as desktopImageURL gives it; one it can't read (a video) leaves black.
 @_silgen_name("CGSSpaceCreate") func CGSSpaceCreate(_ cid: Int32, _ flags: Int32, _ options: Int32) -> UInt64
 @_silgen_name("CGSSpaceSetAbsoluteLevel") func CGSSpaceSetAbsoluteLevel(_ cid: Int32, _ sid: UInt64, _ level: Int32) -> Int32
 @_silgen_name("CGSShowSpaces") func CGSShowSpaces(_ cid: Int32, _ sids: CFArray) -> Int32
@@ -224,7 +231,7 @@ func CGSSpaceAddWindowsAndRemoveFromSpaces(_ cid: Int32, _ sid: UInt64, _ wids: 
 var backdrop: (window: NSWindow, space: UInt64, wallpaper: URL?)?
 
 func showBackdrop() {
-    guard overviewBlur, let screen = NSScreen.screens.first else { return }
+    guard overviewBlur, let screen = nsScreen(of: overviewDisplay) else { return }
     if backdrop == nil {
         let window = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
         window.backgroundColor = .black
@@ -246,6 +253,8 @@ func showBackdrop() {
         backdrop!.window.contentView!.layer!.contents = wallpaper.flatMap(blurred)
     }
     backdrop!.window.setFrame(screen.frame, display: false)
+    // Moved to another display it would have gone to that display's Space.
+    _ = CGSSpaceAddWindowsAndRemoveFromSpaces(cid, backdrop!.space, [backdrop!.window.windowNumber] as CFArray, 7)
     _ = CGSShowSpaces(cid, [backdrop!.space] as CFArray)
 }
 
@@ -262,7 +271,7 @@ func blurred(_ url: URL) -> CGImage? {
 
 // Where Space i sits in the open overview, in CG coordinates.
 func overviewRect(_ i: Int) -> CGRect {
-    let screen = CGDisplayBounds(CGMainDisplayID())
+    let screen = overviewDisplay.frame
     let size = CGSize(width: screen.width * overviewScale, height: screen.height * overviewScale)
     let centerY = screen.midY + CGFloat(i - overviewTarget) * (size.height + overviewGap)
     return CGRect(x: screen.midX - size.width / 2, y: centerY - size.height / 2, width: size.width, height: size.height)
@@ -276,7 +285,7 @@ func overviewIndex(at point: CGPoint) -> Int? {
 // come from the strips as last seen; a Space the daemon hasn't been on yet has no windows to hit.
 func overviewHit(at point: CGPoint) -> (space: Int, window: UInt32?)? {
     guard let i = overviewIndex(at: point) else { return nil }
-    let screen = CGDisplayBounds(CGMainDisplayID()), rect = overviewRect(i)
+    let screen = overviewDisplay.frame, rect = overviewRect(i)
     let unscaled = CGPoint(x: screen.midX + (point.x - rect.midX) / overviewScale, y: screen.midY + (point.y - rect.midY) / overviewScale)
     let sid = overviewSpaces[i]
     let ids = sid == currentSpace ? columns : savedStrips[sid]?.columns ?? []
@@ -302,14 +311,14 @@ func overviewMouseDragged(at point: CGPoint) {
     guard drag.moved || hypot(dx, dy) >= 6 else { return }
     drag.moved = true
     overviewDrag = drag
-    send(["M \(drag.window) \(drag.origin.x + dx / overviewScale) \(drag.origin.y + dy / overviewScale)\(moveLimits(lastSeen[drag.window]?.frame.width ?? 0))"])
+    send(["M \(drag.window) \(drag.origin.x + dx / overviewScale) \(drag.origin.y + dy / overviewScale)\(moveLimits(lastSeen[drag.window]?.frame.width ?? 0, on: overviewDisplay.frame))"])
 }
 
 func overviewMouseUp(at point: CGPoint) {
     defer { overviewDrag = nil }
     guard overviewOpen else { return }
     guard let drag = overviewDrag, drag.moved else { return overviewClick(at: point) }
-    send(["M \(drag.window) \(drag.origin.x) \(drag.origin.y)\(moveLimits(lastSeen[drag.window]?.frame.width ?? 0))"])  // back in its slot, or where it lands elsewhere
+    send(["M \(drag.window) \(drag.origin.x) \(drag.origin.y)\(moveLimits(lastSeen[drag.window]?.frame.width ?? 0, on: overviewDisplay.frame))"])  // back in its slot, or where it lands elsewhere
     guard let to = overviewIndex(at: point), to != drag.from, !isFullscreen(overviewSpaces[to]) else { return }
     let sid = overviewSpaces[to]
     movedAway.insert(drag.window)  // Move.swift: out of this strip until CGWindowList agrees

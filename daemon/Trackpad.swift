@@ -119,7 +119,7 @@ func touchFrame(count: Int32, center: CGPoint?, spread: CGFloat = 0, time: CFTim
         guard moved >= swipeThreshold || pinchable && abs(swipePinch) >= swipeThreshold else { return }
         let kind = pinchable && abs(swipePinch) > moved ? "pinch" : abs(swipeTravel.y) > abs(swipeTravel.x) ? "vertical" : "sideways"
         switch swipeAction(fingers: count, kind: kind) {
-        case "gesture-overview":
+        case "gesture-overview" where separateSpaces:
             overviewSwiping = true
             overviewPinch = kind == "pinch"
             overviewSwipeProgress = overviewOpen ? 1 : 0
@@ -130,7 +130,7 @@ func touchFrame(count: Int32, center: CGPoint?, spread: CGFloat = 0, time: CFTim
             overviewSwipeProgress += (overviewPinch ? swipePinch : swipeTravel.y) / overviewSwipeDistance
             followOverviewSwipe(progress: overviewSwipeProgress, velocity: 0)
             return
-        case "gesture-spaces":
+        case "gesture-spaces" where separateSpaces:
             spaceSwiping = true
             spaceSwipeFocus = beginSpaceSwipe() + swipeTravel.y / spaceSwipeDistance  // travel so far counts
             spaceSwipeVelocity = 0

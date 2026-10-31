@@ -64,6 +64,29 @@ func pointerDisplay() -> Display {
     return displays[displayIndex(at: CGEvent(source: nil)?.location ?? .zero, in: displays.map(\.frame)) ?? 0]
 }
 
+func nsScreen(of display: Display) -> NSScreen? {
+    NSScreen.screens.first { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == display.id }
+}
+
+// Focus goes to a display: to the focused column of its strip, to its fullscreen app, or with no window there to the
+// display itself, which pressing the shortcut of the Desktop it shows does.
+func focusDisplay(_ target: Display) {
+    let space = target.current
+    if isFullscreen(space), let win = listWindows(.optionOnScreenOnly).first(where: { $0.spaces.contains(space) })?.win { return focus(win) }
+    onStrip(space) {
+        if syncColumns().wins.isEmpty { pressSpace(space) } else { focusColumn(at: focusedIndex()) }
+    }
+}
+
+// The payload's table of displays ("B"), which it doesn't need with one.
+func displayLines() -> [String] {
+    refreshDisplays()
+    return ["B"] + (displays.count > 1 ? displays.map { display in
+        let frame = display.frame
+        return "B \(frame.minX) \(frame.minY) \(frame.width) \(frame.height) \(display.uuid) " + display.spaces.map(String.init).joined(separator: " ")
+    } : [])
+}
+
 // The stack a display's Spaces slide through, and the index of the one it shows.
 func stack(on display: Display) -> (ids: [UInt64], current: Int) {
     display.spaces.isEmpty ? ([display.current], 0) : (display.spaces, display.spaces.firstIndex(of: display.current) ?? 0)

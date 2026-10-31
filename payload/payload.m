@@ -21,6 +21,9 @@
 //        "X wid sid"           move the window to Space sid
 //        "P pid"               daemon pid. Vertical Spaces are on only while that process is alive.
 //        "I 1|0"               instant: Dock's switch frames get identity transforms (no slide) until "I 0"
+//        "B"                   empties the table of displays, see displays[]
+//        "B x y w h uuid sid0 sid1 …"  adds a display to it: its frame, its id for macOS and its Spaces
+//        "L display"           the display animations are timed to
 // Also turns the native Spaces slide vertical, see hook_space_transform.
 // Animation runs here on a user-interactive queue, so the daemon sends one line per window, not one per frame.
 // Frames come from CVDisplayLink (vsync), and each frame moves all windows in one SLS transaction.
@@ -67,6 +70,7 @@ extern CFTypeRef CGRegionCreateWithRect(CGRect rect);
 extern bool CGRegionIsEmpty(CFTypeRef region);
 extern CGError CGSGetRegionBounds(CFTypeRef region, CGRect *bounds);
 extern uint64_t SLSGetActiveSpace(int cid);
+extern uint64_t SLSManagedDisplayGetCurrentSpace(int cid, CFStringRef display);
 extern int SLSSpaceGetType(int cid, uint64_t sid);  // 0 desktop, 4 fullscreen (an app's own Space)
 extern CFArrayRef SLSCopySpacesForWindows(int cid, int mask, CFArrayRef wids);
 
@@ -106,6 +110,42 @@ static bool instant;                  // "I 1": Dock's switch gets identity tran
 // Dock still switches the current Space: the daemon presses its shortcut, and the hooks give Dock's frames ours.
 static double overview_scale = 0.4;
 #define OVERVIEW_GAP 48.0
+// Several displays: each Space's slide and overview go by its own display. The daemon sends the table ("B"), so nothing
+// here asks WindowServer from a hook. It is empty with one display: the main display, the active Space.
+// ponytail: written on the payload queue, read on Dock's threads without a lock, like overview[]; a torn read lasts a frame.
+#define MAX_DISPLAYS 8
+static struct { CGRect frame; CFStringRef uuid; uint64_t spaces[MAX_SPACES]; int count; } displays[MAX_DISPLAYS];
+static int display_count;
+static CGRect layout_screen;     // the display the running layout is on
+static CFStringRef layout_uuid;  // and its id, NULL with one display
+static CGDirectDisplayID link_display;  // what "L" last set
+
+static int display_index(uint64_t sid)
+{
+    for (int i = 0; i < display_count; i++) {
+        for (int k = 0; k < displays[i].count; k++) if (displays[i].spaces[k] == sid) return i;
+    }
+    return -1;
+}
+
+static CGRect space_screen(uint64_t sid)
+{
+    int i = display_index(sid);
+    return i < 0 ? CGDisplayBounds(CGMainDisplayID()) : displays[i].frame;
+}
+
+// One string per display for good: a hook may be reading the one in use.
+static CFStringRef display_uuid(const char *text)
+{
+    static CFStringRef known[32];
+    CFStringRef uuid = CFStringCreateWithCString(NULL, text, kCFStringEncodingUTF8);
+    for (int i = 0; i < 32; i++) {
+        if (!known[i]) return known[i] = uuid;
+        if (CFEqual(known[i], uuid)) { CFRelease(uuid); return known[i]; }
+    }
+    return uuid;
+}
+
 #define SPRING_RESPONSE 0.28  // seconds per oscillation, like SwiftUI's .spring(response:dampingFraction:)
 #define SPRING_DAMPING 0.78
 static uint64_t layout_spaces[MAX_SPACES];
@@ -121,6 +161,7 @@ static double layout_focus, layout_progress, focus_velocity, progress_velocity;
 static double finger_progress, finger_focus;
 static uint64_t finger_progress_at, finger_focus_at;
 static uint64_t layout_started;  // ns
+static bool layout_dropped;      // a layout starts on another display: this one ends here, see step_layout
 static long layout_seq;          // from "Q", for "layout-done"
 static char control_path[256];   // the daemon's control socket
 static dispatch_queue_t notify_queue;
@@ -274,11 +315,23 @@ static void chase(double *x, double value, double velocity, uint64_t at, uint64_
 // ponytail: entering one, they are held with the desktop it came from; only seen as a 0.12 s jump, not traced.
 static bool is_fullscreen(uint64_t sid) { return SLSSpaceGetType(SLSMainConnectionID(), sid) == 4; }
 
+// The current Space of the layout's display, whichever display has focus.
+static uint64_t layout_current(void)
+{
+    return layout_uuid ? SLSManagedDisplayGetCurrentSpace(SLSMainConnectionID(), layout_uuid) : SLSGetActiveSpace(SLSMainConnectionID());
+}
+
+static bool in_layout(uint64_t sid)
+{
+    for (int i = 0; i < layout_count; i++) if (layout_spaces[i] == sid) return true;
+    return false;
+}
+
 static uint64_t held_space(void)
 {
     uint64_t target = layout_spaces[layout_target];
     if (!dock_switching) return target;
-    uint64_t current = SLSGetActiveSpace(SLSMainConnectionID());
+    uint64_t current = layout_current();
     if (!is_fullscreen(current)) return current;
     if (!is_fullscreen(target)) return target;
     return dock_from && !is_fullscreen(dock_from) ? dock_from : current;
@@ -288,7 +341,7 @@ static uint64_t held_space(void)
 static void dock_switch_began(void)
 {
     if (dock_switching) return;
-    dock_from = SLSGetActiveSpace(SLSMainConnectionID());
+    dock_from = layout_current();
     dock_switching = true;
 }
 
@@ -318,14 +371,14 @@ static void step_layout(double dt)
         layout_progress = layout_goal;
         layout_focus = layout_target;
     }
-    uint64_t current = SLSGetActiveSpace(SLSMainConnectionID());
+    uint64_t current = layout_current();
     // Dock's change is committed: this frame takes the sticky windows to the target, see nori_current_space. Not into
     // a fullscreen Space: they don't go there, and stay with the desktop side (held_space) until the next switch.
     if (current == dock_current && !is_fullscreen(current)) {
         dock_switching = false;
         dock_current = 0;
     }
-    bool done = settled && layout_goal == 0 && (current == layout_spaces[layout_target] || now - layout_started > 1000000000);
+    bool done = layout_dropped || (settled && layout_goal == 0 && (current == layout_spaces[layout_target] || now - layout_started > 1000000000));
     // Our slide is over, Dock's switch isn't: the sticky windows still go with the old Space (held_space). It is put
     // where the target is, under it, so that when the current Space changes they pass from one untransformed Space
     // to another. With the old Space a screen away they left the screen for 2–4 frames at that change (recorded).
@@ -333,7 +386,7 @@ static void step_layout(double dt)
 
     CFTypeRef transaction = SLSTransactionCreate(SLSMainConnectionID());
     if (!transaction) return;
-    CGRect screen = CGDisplayBounds(CGMainDisplayID());
+    CGRect screen = layout_screen;
     CFTypeRef region = CGRegionCreateWithRect(screen);
     double scale = 1 - (1 - overview_scale) * layout_progress;
     overview_count = layout_count;  // before the transforms: the hook looks each one up, the first frame's too
@@ -375,7 +428,7 @@ static void step_layout(double dt)
         overview_active = false;
         overview_count = 0;
         layout_count = 0;
-        notify_daemon("payload\tlayout-done\t%ld\n", layout_seq);
+        if (!layout_dropped) notify_daemon("payload\tlayout-done\t%ld\n", layout_seq);
     }
     SLSTransactionCommit(transaction, 0);
     CFRelease(transaction);
@@ -510,12 +563,12 @@ static int sticky_index(uint32_t wid)
     return -1;
 }
 
-// Adds the sticky windows on the main display (the one the layout moves) to the list. One stays in it until the
-// layout ends, even if ordered out meanwhile, so it gets its identity back then. Desktop-level windows (Finder's
-// icons) are left out. Frames from SLSGetWindowBounds: CGWindowList's have the Space transform and ours in them.
+// Adds the sticky windows on the layout's display to the list. One stays in it until the layout ends, even if
+// ordered out meanwhile, so it gets its identity back then. Desktop-level windows (Finder's icons) are left out.
+// Frames from SLSGetWindowBounds: CGWindowList's have the Space transform and ours in them.
 static void find_sticky(int cid)
 {
-    CGRect screen = CGDisplayBounds(CGMainDisplayID());
+    CGRect screen = layout_screen;
     CFArrayRef windows = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID);
     for (CFIndex i = 0; windows && i < CFArrayGetCount(windows) && sticky_count < MAX_ANIMS; i++) {
         CFDictionaryRef window = CFArrayGetValueAtIndex(windows, i);
@@ -625,9 +678,20 @@ static void handle_line(char *line)
             spaces[count++] = sid;
         }
         if (target < 0 || target >= count) break;
+        // ponytail: one layout at a time. One on another display ends where it is, with its target shown; two
+        // displays sliding at once would need this file's layout state per display.
+        CGRect screen = space_screen(spaces[target]);
+        if (layout_count && !CGRectEqualToRect(screen, layout_screen)) {
+            layout_dropped = true;
+            step_layout(0);
+            layout_dropped = false;
+        }
+        int on = display_index(spaces[target]);
+        layout_screen = screen;
+        layout_uuid = on < 0 ? NULL : displays[on].uuid;
         if (!layout_count) {
             // Start from what is on screen now: the current Space centered, no overview.
-            uint64_t active = SLSGetActiveSpace(cid);
+            uint64_t active = layout_current();
             layout_focus = target;
             for (int i = 0; i < count; i++) if (spaces[i] == active) layout_focus = i;
             layout_progress = progress_velocity = focus_velocity = 0;
@@ -669,6 +733,32 @@ static void handle_line(char *line)
             layout_follow = true;
             layout_started = finger_progress_at = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
         }
+        break;
+    }
+    case 'B': {
+        CGRect frame;
+        char uuid[64];
+        int used = 0;
+        if (line[1] == '\0') { display_count = 0; break; }
+        if (display_count == MAX_DISPLAYS || sscanf(line + 1, "%lf %lf %lf %lf %63s %n", &frame.origin.x, &frame.origin.y,
+                                                    &frame.size.width, &frame.size.height, uuid, &used) != 5) break;
+        typeof(displays[0]) *d = &displays[display_count];
+        d->frame = frame;
+        d->uuid = display_uuid(uuid);
+        d->count = 0;
+        char *rest = line + 1 + used;
+        for (char *end; d->count < MAX_SPACES; rest = end) {
+            uint64_t sid = strtoull(rest, &end, 10);
+            if (end == rest) break;
+            d->spaces[d->count++] = sid;
+        }
+        display_count++;
+        break;
+    }
+    case 'L': {
+        // Vsync of the display that is moving, not of the first one the link found.
+        CGDirectDisplayID display = (CGDirectDisplayID) strtoul(line + 1, NULL, 10);
+        if (display && display != link_display && CVDisplayLinkSetCurrentCGDisplay(display_link, display) == kCVReturnSuccess) link_display = display;
         break;
     }
     case 'P':
@@ -781,7 +871,6 @@ static void *serve(void *arg)
 // runs the 4 displaced prologue instructions and jumps back to fn + 16.
 // Works because Dock is CS_DEBUGGED after injection, so a modified code page doesn't kill it.
 // ponytail: prologues are checked byte for byte; another macOS build with different ones keeps horizontal spaces.
-// ponytail: main display aspect only; spaces on a display with another aspect slide the wrong distance.
 __attribute__((visibility("hidden"))) void *nori_transform_resume, *nori_shape_resume, *nori_current_resume, *nori_hide_resume;
 extern char nori_transform_stub[], nori_transform_prologue[], nori_shape_stub[], nori_shape_prologue[];
 extern char nori_current_stub[], nori_current_prologue[], nori_hide_stub[], nori_hide_prologue[];
@@ -818,7 +907,7 @@ const CGAffineTransform *nori_space_transform(const CGAffineTransform *t, uint64
 {
     static __thread CGAffineTransform vertical;
     // A layout runs to its end even if the daemon is gone, so the sticky windows get their identity back.
-    if (overview_active) {
+    if (overview_active && in_layout(sid)) {
         // Dock's first frame: the sticky windows still go with the Space that last became shown (the target), and
         // over to the current one from the next frame (recorded in the overview: a frame one slot off, -725, when
         // this frame already undid the current one). Dock transforms both Spaces in that transaction.
@@ -834,7 +923,7 @@ const CGAffineTransform *nori_space_transform(const CGAffineTransform *t, uint64
     if (!daemon_alive()) return t;
     if (instant) return &CGAffineTransformIdentity;  // no slide: both Spaces in place, the shown one on top
     if (!t || t->a != 1 || t->b != 0 || t->c != 0 || t->d != 1 || t->tx == 0) return t;
-    CGRect screen = CGDisplayBounds(CGMainDisplayID());
+    CGRect screen = space_screen(sid);
     vertical = *t;
     vertical.ty += t->tx * screen.size.height / screen.size.width;
     vertical.tx = 0;
@@ -850,7 +939,7 @@ __attribute__((visibility("hidden"), used))
 void nori_current_space(CFTypeRef transaction, uint64_t sid)
 {
     (void) transaction;
-    if (overview_active) dock_current = sid;
+    if (overview_active && in_layout(sid)) dock_current = sid;
 }
 
 // SLSTransactionHideSpace(transaction, sid): Dock hides the Space it leaves in the transaction that ends its switch,
@@ -873,9 +962,9 @@ CFTypeRef nori_space_shape(CFTypeRef region, uint64_t sid)
 {
     static __thread CFTypeRef replaced;
     if (!region || !daemon_alive()) return region;
-    CGRect screen = CGDisplayBounds(CGMainDisplayID());
+    CGRect screen = space_screen(sid);
     CGRect box;
-    if (overview_active || instant) {
+    if ((overview_active && in_layout(sid)) || instant) {
         box = screen;
     } else {
         if (CGRegionIsEmpty(region) || CGSGetRegionBounds(region, &box) != kCGErrorSuccess) return region;

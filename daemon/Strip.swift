@@ -66,6 +66,15 @@ func layoutAll() {
     for space in otherStrips() { onStrip(space) { layout(immediate: false) } }
 }
 
+// Animations run on the vsync of one display ("L"): the one a Space layout is on, or else the one that has focus.
+var timedTo: CGDirectDisplayID = 0
+
+func timeAnimations(to display: CGDirectDisplayID) {
+    guard display != timedTo else { return }
+    timedTo = display
+    send(["L \(display)"])
+}
+
 // Windows that came or went on the displays without focus. Nothing takes focus there: a new window is just shown.
 func pollOtherDisplays() {
     for space in otherStrips() {
@@ -146,9 +155,9 @@ var instantMoves = false  // a `--instant` request is being handled: "M" instead
 
 // With another display around, a window must not really cross the edge of its own (keptOn in Scroll.swift): " lo hi"
 // for "S" and "M" says how far it may go, and the payload draws the rest. Nothing with one display: no limit.
-func moveLimits(_ width: CGFloat) -> String {
+func moveLimits(_ width: CGFloat, on frame: CGRect? = nil) -> String {
     guard displays.count > 1 else { return "" }
-    let range = keptOn(display(of: currentSpace).frame, width: width)
+    let range = keptOn(frame ?? display(of: currentSpace).frame, width: width)
     return " \(range.lowerBound) \(range.upperBound)"
 }
 
@@ -164,8 +173,7 @@ func realX(_ x: CGFloat, width: CGFloat) -> CGFloat {
 func stripArea() -> CGRect {
     let shown = display(of: currentSpace)
     let screen = shown.frame
-    let nsScreen = NSScreen.screens.first { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == shown.id }
-    let visible = nsScreen.map { (top: $0.frame.maxY - $0.visibleFrame.maxY, bottom: $0.visibleFrame.minY - $0.frame.minY) } ?? (0, 0)
+    let visible = nsScreen(of: shown).map { (top: $0.frame.maxY - $0.visibleFrame.maxY, bottom: $0.visibleFrame.minY - $0.frame.minY) } ?? (0, 0)
     let top = screen.minY + visible.top + paddingTop
     return CGRect(x: screen.minX + paddingLeft, y: top, width: screen.width - paddingLeft - paddingRight,
                   height: screen.maxY - visible.bottom - paddingBottom - top)

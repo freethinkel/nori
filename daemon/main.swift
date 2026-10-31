@@ -112,9 +112,11 @@ Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
 }
 // A peer gone mid-write (Dock restarting under the payload socket, a subscriber) must not kill the daemon: EPIPE instead.
 signal(SIGPIPE, SIG_IGN)
-// The payload turns its Space hooks off once this pid is gone. Repeated so a restarted Dock learns it too.
-send(["P \(getpid())"])
-Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in send(["P \(getpid())"]) }
+// The payload turns its Space hooks off once this pid is gone. Repeated so a restarted Dock learns it too. With
+// separate Spaces off it never hears of it, and Dock keeps its own slide: its hooks only know one display at a time.
+func tellPayload() { if separateSpaces { send(["P \(getpid())", "L \(timedTo)"] + displayLines()) } }
+tellPayload()
+Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in tellPayload() }
 // Ctrl+C / kill: put Spaces and windows back before quitting. A crash leaves the overview scaled until Dock restarts.
 signal(SIGINT, SIG_IGN)
 signal(SIGTERM, SIG_IGN)
@@ -138,6 +140,7 @@ func poll() {
     guard !gestureActive, !spaceLayoutBusy else { return }
     refreshDisplays()
     pollOtherDisplays()
+    timeAnimations(to: display(of: CGSGetActiveSpace(cid)).id)
     let before = columns
     let sync = syncColumns()
     defer { lastFront = sync.front }

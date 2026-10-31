@@ -60,7 +60,10 @@ var displaysSettling: DispatchWorkItem?
 
 func displaysChanged() {
     displaysSettling?.cancel()
-    let work = DispatchWorkItem { layoutAll() }
+    let work = DispatchWorkItem {
+        layoutAll()
+        tellPayload()
+    }
     displaysSettling = work
     DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
 }
