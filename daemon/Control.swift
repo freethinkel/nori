@@ -19,12 +19,18 @@ let usage = """
       nori focus column N
       nori focus space N|up|down
       nori focus window WID
+      nori focus slot N       Desktop N of the display that has focus
+      nori focus monitor left|right|up|down|next|previous
       (any focus takes --instant: no animation)
       nori move left|right
       nori move space N|up|down
+      nori move slot N
+      nori move monitor left|right|up|down|next|previous
       nori width grow|shrink|next|previous|toggle-full
       nori center
       nori overview
+      nori space add          a new Desktop on the display that has focus
+      nori space remove N     removes Desktop N, its windows go to the first one of its display
       nori show floating
       nori toggle floating
       nori reload             read the config again
@@ -177,6 +183,11 @@ func handle(_ args: [String]) -> String {
         guard spaces().contains(where: { $0.number == n }) else { return "error: no Desktop \(n)\n" }
         moveFocused(toDesktop: n)
         return ""
+    case ("move", "slot"):
+        guard let n = number else { break }
+        guard let desktop = desktopHere(n) else { return "error: no Desktop \(n) on this display\n" }
+        moveFocused(toDesktop: desktop)
+        return ""
     case ("focus", "column"):
         guard let n = number else { break }
         guard columns.indices.contains(n - 1) else { return "error: no column \(n)\n" }
@@ -185,7 +196,27 @@ func handle(_ args: [String]) -> String {
     case ("focus", "space"):
         guard let n = number else { break }
         return (instant ? switchSpaceInstant(to: n) : switchToSpace(n)) ? "" : "error: no Desktop \(n), or its shortcut is off in Keyboard Shortcuts → Mission Control\n"
+    case ("focus", "slot"):
+        guard let n = number else { break }
+        guard let desktop = desktopHere(n) else { return "error: no Desktop \(n) on this display\n" }
+        return (instant ? switchSpaceInstant(to: desktop) : switchToSpace(desktop)) ? "" : "error: the shortcut of Desktop \(desktop) is off in Keyboard Shortcuts → Mission Control\n"
+    case ("space", "add"):
+        guard desktopsEditable else { return "error: nori can't add Desktops on this macOS, use Mission Control\n" }
+        addDesktop(on: focusedDisplay())
+        return ""
+    case ("space", "remove"):
+        guard let n = number else { break }
+        guard desktopsEditable else { return "error: nori can't remove Desktops on this macOS, use Mission Control\n" }
+        guard let sid = spaces().first(where: { $0.number == n })?.id else { return "error: no Desktop \(n)\n" }
+        refreshDisplays()
+        guard display(of: sid).spaces.filter({ !isFullscreen($0) }).count > 1 else { return "error: the last Desktop of a display stays\n" }
+        removeDesktop(sid)
+        return ""
     // From the payload in Dock, see its header.
+    case ("payload", "desktops") where args.count == 3:
+        desktopsEditable = args[2] == "1"
+        RunLoop.main.perform(offerShortcuts)  // not the main queue: nori's own work there would wait for the alert
+        return ""
     case ("payload", "layout-done"):
         if let n = number { spaceLayoutDone(n) }
         return ""
@@ -241,9 +272,9 @@ func focusedSpace() -> UInt64 {
 }
 
 // Spaces of all displays in Mission Control order. Desktops are numbered from 1 across displays,
-// like the "Switch to Desktop N" shortcuts; fullscreen Spaces get no number. visible: shown on its display
-// ("Current Space" there), with the switch target counted as shown already.
-func spaces() -> [(id: UInt64, number: Int?, display: String, fullscreen: Bool, visible: Bool)] {
+// like the "Switch to Desktop N" shortcuts; fullscreen Spaces get no number. displayNumber: the same within its display.
+// visible: shown on its display ("Current Space" there), with the switch target counted as shown already.
+func spaces() -> [(id: UInt64, number: Int?, displayNumber: Int?, display: String, fullscreen: Bool, visible: Bool)] {
     let displays = CGSCopyManagedDisplaySpaces(cid).takeRetainedValue() as? [[String: Any]] ?? []
     let focused = focusedSpace()
     var desktops = 0
@@ -252,10 +283,11 @@ func spaces() -> [(id: UInt64, number: Int?, display: String, fullscreen: Bool, 
         let ids = list.map { ($0["id64"] as? NSNumber)?.uint64Value ?? 0 }
         let current = ((display["Current Space"] as? [String: Any])?["id64"] as? NSNumber)?.uint64Value
         let shown = ids.contains(focused) ? focused : current
+        var own = 0
         return zip(ids, list).map { id, space in
             let fullscreen = space["type"] as? Int == 4
-            if !fullscreen { desktops += 1 }
-            return (id, fullscreen ? nil : desktops, display["Display Identifier"] as? String ?? "", fullscreen, id == shown)
+            if !fullscreen { desktops += 1; own += 1 }
+            return (id, fullscreen ? nil : desktops, fullscreen ? nil : own, display["Display Identifier"] as? String ?? "", fullscreen, id == shown)
         }
     }
 }
@@ -276,6 +308,7 @@ func focusedWindows(_ listed: [Listed]) -> [UInt64: UInt32] {
     let active = CGSGetActiveSpace(cid)
     var result: [UInt64: UInt32] = [:]
     for w in listed { for space in w.spaces where space != active && result[space] == nil { result[space] = w.win.id } }
+    for space in otherStrips() { if let id = stripFocus[space], listed.contains(where: { $0.win.id == id }) { result[space] = id } }
     if let front = focusedWindowID(), listed.contains(where: { $0.win.id == front && $0.spaces.contains(active) }) { result[active] = front }
     return result
 }
@@ -302,7 +335,7 @@ func querySpaces(_ opts: [String: String]) -> [[String: Any]] {
                     "bundleId": NSRunningApplication(processIdentifier: pid)?.bundleIdentifier as Any? ?? NSNull()]
         }
         let fields: [String: Any?] = [
-            "id": space.id, "number": space.number, "display": space.display,
+            "id": space.id, "number": space.number, "displayNumber": space.displayNumber, "display": space.display,
             "type": spaceType(space.fullscreen), "isFocused": space.id == focused, "isVisible": space.visible,
             "isAnimating": spaceLayoutBusy && overviewSpaces.contains(space.id),
             "windows": wins.map(\.win.id), "columns": strip(of: space.id, listed), "apps": apps,
@@ -317,6 +350,7 @@ func queryWindows(_ opts: [String: String]) -> [[String: Any]] {
     let all = spaces()
     let numbers = Dictionary(all.compactMap { s in s.number.map { (s.id, $0) } }, uniquingKeysWith: { a, _ in a })
     let types = Dictionary(all.map { ($0.id, spaceType($0.fullscreen)) }, uniquingKeysWith: { a, _ in a })
+    let shownOn = Dictionary(all.map { ($0.id, $0.display) }, uniquingKeysWith: { a, _ in a })
     let listed = listWindows([])
     let strips = Dictionary(all.map { ($0.id, strip(of: $0.id, listed)) }, uniquingKeysWith: { a, _ in a })
     let current = rules
@@ -334,7 +368,7 @@ func queryWindows(_ opts: [String: String]) -> [[String: Any]] {
         let frame = w.win.frame
         let fields: [String: Any?] = [
             "id": id, "pid": w.win.pid, "app": appName(w), "bundleId": app?.bundleIdentifier, "title": title,
-            "space": numbers[space], "spaceId": space, "spaceType": types[space],  // a fullscreen Space has no number
+            "space": numbers[space], "spaceId": space, "spaceType": types[space], "display": shownOn[space],  // a fullscreen Space has no number
             "column": strips[space]?.firstIndex(of: id).map { $0 + 1 },
             "isFocused": id == focused, "isOnScreen": w.info[kCGWindowIsOnscreen as String] as? Bool ?? false,
             "isFloating": floatingByHand[id] != nil || rule(for: w, in: current)?.floating == true,
@@ -345,9 +379,18 @@ func queryWindows(_ opts: [String: String]) -> [[String: Any]] {
 }
 
 // Posts the system "Switch to Desktop N" shortcut (symbolic hotkeys 118…133), whatever keys it is bound to.
-func switchToSpace(_ number: Int) -> Bool {
+func postDesktopHotkey(_ number: Int) -> Bool {
     guard (1...16).contains(number), spaces().contains(where: { $0.number == number }) else { return false }
     return postSymbolicHotkey(117 + number)
+}
+
+// Numbers run across displays, so a Desktop added on one display moves the next one's past the shortcuts that are on.
+// Without its shortcut a Desktop is reached through Dock, which runs the same code ("V"), with our slide on top.
+func switchToSpace(_ number: Int) -> Bool {
+    if postDesktopHotkey(number) { return true }
+    guard desktopsEditable, let sid = spaces().first(where: { $0.number == number })?.id else { return false }
+    switchSpaceAnimated(to: sid)
+    return true
 }
 
 // Posts a system shortcut by its com.apple.symbolichotkeys id, whatever keys it is bound to; false if it is off.
@@ -366,9 +409,12 @@ func postSymbolicHotkey(_ id: Int, times: Int = 1) -> Bool {
 }
 
 func focusWindow(_ listed: Listed, instant: Bool = false) {
+    refreshDisplays()
     let active = CGSGetActiveSpace(cid)
-    if listed.spaces.contains(active) {
-        if let index = columns.firstIndex(of: listed.win.id) { focusColumn(at: index) } else { focus(listed.win) }
+    if let shown = displays.map(\.current).first(where: listed.spaces.contains) {
+        onStrip(shown) {
+            if let index = columns.firstIndex(of: listed.win.id) { focusColumn(at: index) } else { focus(listed.win) }
+        }
         return
     }
     // Accessibility only sees windows of the current Space, so go there first, and focus once Dock has made it active

@@ -32,7 +32,6 @@ func startApp() {
         watchPayload()
         checkShortcuts()
     }
-    RunLoop.main.perform(offerShortcuts)  // not the main queue: nori's own work there would wait for the alert
 }
 
 // The two nori sheets of the app icon as a silhouette: status.png (36px, 18pt @2x) in the bundle's
@@ -51,7 +50,7 @@ func reloadSettings() {
     settingsModel.refresh()
     showConfigProblems()
     applyLaunchAtLogin()
-    layout(immediate: false)
+    layoutAll()
 }
 
 final class MenuActions: NSObject, NSMenuDelegate {
@@ -205,6 +204,16 @@ func applyLaunchAtLogin() {
 
 func payloadAlive() -> Bool { alive(socketPath) }
 
+// Stops at the first answer: the payload takes connections one by one, and more at once than it queues are refused,
+// the same as when it isn't there.
+func waitForPayload() -> Bool {
+    for _ in 0..<30 {
+        if payloadAlive() { return true }
+        usleep(100_000)
+    }
+    return false
+}
+
 func alive(_ path: String) -> Bool {
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)
     defer { close(fd) }
@@ -222,8 +231,7 @@ func loadPayload() {
     case .canceled: return loadFailed(nil)
     case .failed(let error): return loadFailed(error)
     }
-    for _ in 0..<30 where !payloadAlive() { usleep(100_000) }
-    if !payloadAlive() {
+    if !waitForPayload() {
         return loadFailed("The loader finished, but Dock does not answer. Its log:\n/usr/bin/log show --last 5m --predicate 'process == \"Dock\" AND eventMessage CONTAINS \"nori\"'")
     }
     layout(immediate: false)

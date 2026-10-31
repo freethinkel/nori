@@ -4,21 +4,29 @@ import SwiftUI
 // What the window shows, as the file says on the last reload.
 @Observable final class SettingsModel {
     var values: [String: String] = [:]     // as readConfig took them: what nori runs with
+    var monitors: [String: [String: Double]] = [:]  // the same for [[monitor]] tables
+    var screens: [String] = []             // names of the displays connected now
     var problems: [String] = []            // what the last reload skipped, line by line
     var rules: [[String: TOMLValue]] = []  // every [[rule]] table in file order, valid or not
     var recording: String?                 // the binding whose recorder waits for a key press
 
     func refresh() {
         values = config
+        monitors = configFile.monitors
         problems = configFile.problems
-        let text = (try? String(contentsOfFile: configPath, encoding: .utf8)) ?? ""
+        screens = NSScreen.screens.map(\.localizedName)
+        rules = tables("rule", in: (try? String(contentsOfFile: configPath, encoding: .utf8)) ?? "")
+    }
+
+    // Every [[name]] table in file order.
+    private func tables(_ name: String, in text: String) -> [[String: TOMLValue]] {
         var count = 0
         var tables: [Int: [String: TOMLValue]] = [:]
-        for entry in parseTOML(text, onHeader: { table, index, _ in if table == "rule", let index { count = index + 1 } }, report: { _, _ in })
-        where entry.table == "rule" {
+        for entry in parseTOML(text, onHeader: { table, index, _ in if table == name, let index { count = index + 1 } }, report: { _, _ in })
+        where entry.table == name {
             tables[entry.index!, default: [:]][entry.key] = entry.value
         }
-        rules = (0..<count).map { tables[$0] ?? [:] }
+        return (0..<count).map { tables[$0] ?? [:] }
     }
 
     // Changes the file as it is on disk now, so an edit made in an editor since the last reload stays, then applies it.
@@ -46,6 +54,16 @@ import SwiftUI
         edit { settingTOML($0, table: "rule", index: index, key: key, to: value) }
     }
 
+    // Into the display's last table, as that one wins, or a new one.
+    func setPadding(_ key: String, on name: String, to value: TOMLValue) {
+        edit { file in
+            tables("monitor", in: file).lastIndex { $0["name"] == .string(name) }
+                .map { settingTOML(file, table: "monitor", index: $0, key: key, to: value) }
+                ?? appendingTOMLTable(file, "monitor", [("name", .string(name)), (key, value)])
+        }
+    }
+
+    func padding(_ key: String, on name: String) -> Double { monitors[name]?[key] ?? number(key) }
     func number(_ key: String) -> Double { values[key].flatMap(Double.init) ?? numberDefaults[key] ?? 0 }
     func flag(_ key: String) -> Bool { values[key].map { $0 == "true" } ?? flagsOn.contains(key) }
     func text(_ key: String) -> String { values[key] ?? bindingDefaults[key] ?? choiceKeys[key]?.first ?? "" }
@@ -55,7 +73,7 @@ import SwiftUI
         guard let mine = chord(text(action)) else { return [] }
         let same = { (other: Chord?) in other.map { $0.key == mine.key && $0.flags == mine.flags } ?? false }
         return bindingDefaults.keys.sorted().filter { $0 != action && same(chord(text($0))) }.map { describe($0).title }
-            + desktopHotkeys.filter { same($0.chord) }.map { "Switch to Desktop \($0.number)" }
+            + desktopHotkeys.filter { same($0.chord) && action != "focus-space-\($0.number)" }.map { "Switch to Desktop \($0.number)" }
     }
 
     // A key press while a recorder waits; the event tap hands it over instead of acting on it (main.swift).

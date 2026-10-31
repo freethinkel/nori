@@ -85,7 +85,7 @@ let tap = CGEvent.tapCreate(
         if type == .leftMouseUp {
             // A drag may have ended: send every window back to its slot. The payload eases from where it was dropped.
             // The short delay lets apps that move their own window (Electron, Chrome) apply their last move first.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { layout(immediate: false) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { settleDrop() }
             return Unmanaged.passUnretained(event)
         }
         if type == .scrollWheel {
@@ -113,8 +113,8 @@ Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
 // A peer gone mid-write (Dock restarting under the payload socket, a subscriber) must not kill the daemon: EPIPE instead.
 signal(SIGPIPE, SIG_IGN)
 // The payload turns its Space hooks off once this pid is gone. Repeated so a restarted Dock learns it too.
-send(["P \(getpid())"])
-Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in send(["P \(getpid())"]) }
+tellPayload()
+Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in tellPayload() }
 // Ctrl+C / kill: put Spaces and windows back before quitting. A crash leaves the overview scaled until Dock restarts.
 signal(SIGINT, SIG_IGN)
 signal(SIGTERM, SIG_IGN)
@@ -129,13 +129,14 @@ startMultitouch()
 startMouseDrag()
 startAnalytics()
 loadStrips()
-layout(immediate: false)
+layoutAll()
 // New window: scroll to it. Window focused by click or Cmd+Tab: scroll to it. Closed window: close the gap.
 // Runs on every app / window / Space event (Events.swift), and once a second for whatever those miss.
 var lastFront: UInt32?
 func poll() {
     defer { publishSoon() }  // subscribers, Control.swift: a Space switch or a window on another Space counts too
     guard !gestureActive, !spaceLayoutBusy else { return }
+    pollDisplays()
     let before = columns
     let sync = syncColumns()
     defer { lastFront = sync.front }

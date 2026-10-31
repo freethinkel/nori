@@ -66,8 +66,15 @@ func windows(on space: UInt64) -> [Win] {
     guard !isFullscreen(space) else { return [] }
     let current = rules
     return listWindows(.optionOnScreenOnly)
-        .filter { $0.spaces.contains(space) && floatingByHand[$0.win.id] == nil && rule(for: $0, in: current)?.floating != true && isStandard($0.win) }
+        .filter { $0.spaces.contains(space) && inStripArea($0.win) && floatingByHand[$0.win.id] == nil && rule(for: $0, in: current)?.floating != true && isStandard($0.win) }
         .map(\.win)
+}
+
+// "Displays have separate Spaces" off: one Space over all displays, and the strip stays on the main one. A window on
+// another display is left alone, unless it is in the strip already: scrolled past the edge, that is where it goes.
+// With them on, a Space is on one display, and that settles it.
+func inStripArea(_ win: Win) -> Bool {
+    separateSpaces || columns.contains(win.id) || CGDisplayBounds(CGMainDisplayID()).contains(CGPoint(x: win.frame.midX, y: win.frame.midY))
 }
 
 // Only an app's standard windows go in the strip, as in OmniWM: dialogs, floating panels, and what isn't among the

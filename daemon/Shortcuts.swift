@@ -38,7 +38,8 @@ var desktopHotkeys: [(chord: Chord, number: Int)] {
 func checkShortcuts() -> [Int] {
     desktopHotkeys = readDesktopHotkeys()
     let all = spaces()
-    let off = shortcutsOff(desktops: all.filter { $0.number != nil }.count, spaces: all.count, hotkey: symbolicHotkey)
+    // Dock's own code switches Desktops ("V") when the payload found it, so they need no shortcut then.
+    let off = shortcutsOff(desktops: desktopsEditable ? 0 : all.filter { $0.number != nil }.count, spaces: all.count, hotkey: symbolicHotkey)
     let desktops = off.filter { $0 >= 118 }.map { String($0 - 117) }
     if desktops.isEmpty {
         clearProblem("desktop-shortcuts")
@@ -59,8 +60,12 @@ func checkShortcuts() -> [Int] {
 
 private let declinedKey = "declinedShortcuts"
 
-// At launch. Declined once, the list keeps the offer and this stays quiet.
+private var offered = false
+
+// At the payload's first word, as what is needed depends on it. Declined once, the list keeps the offer and this stays quiet.
 func offerShortcuts() {
+    guard !offered else { return }
+    offered = true
     guard !checkShortcuts().isEmpty, !UserDefaults.standard.bool(forKey: declinedKey) else { return }
     let off = problems.filter { $0.fix == #selector(MenuActions.turnOnShortcuts) }.map(\.title).joined(separator: ", ")
     if alert("Turn on the Space shortcuts?",

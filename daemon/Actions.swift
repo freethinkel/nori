@@ -23,12 +23,17 @@ let actions: [String: () -> Void] = [
     "move-right": { moveColumn(by: 1) },
     "move-to-space-down": { moveFocused(toDesktopBy: 1) },
     "move-to-space-up": { moveFocused(toDesktopBy: -1) },
-].merging((1...9).map { n in ("move-to-space-\(n)", { moveFocused(toDesktop: n) }) }) { a, _ in a }
+].merging((1...9).map { n in ("focus-space-\(n)", { switchSpaceAnimated(toDesktop: n) }) }) { a, _ in a }
+    .merging((1...9).map { n in ("move-to-space-\(n)", { moveFocused(toDesktop: n) }) }) { a, _ in a }
+    .merging((1...9).map { n in ("focus-space-slot-\(n)", { if let desktop = desktopHere(n) { switchSpaceAnimated(toDesktop: desktop) } }) }) { a, _ in a }
+    .merging((1...9).map { n in ("move-to-space-slot-\(n)", { if let desktop = desktopHere(n) { moveFocused(toDesktop: desktop) } }) }) { a, _ in a }
+    .merging(monitorWays.flatMap { way in [("focus-monitor-\(way)", { focusMonitor(way) }), ("move-window-to-monitor-\(way)", { moveFocused(toMonitor: way) })] }) { a, _ in a }
 
-// Toggles: a held key must not flip them back and forth.
-let noRepeat: Set<String> = ["overview", "toggle-full-width", "toggle-floating"]
+// Toggles: a held key must not flip them back and forth. Nor is there anything to repeat in going to one Desktop.
+let noRepeat = Set(["overview", "toggle-full-width", "toggle-floating"] + (1...9).flatMap { ["focus-space-\($0)", "focus-space-slot-\($0)"] })
 
-// CLI words to action names. "focus space N", "focus column N", "focus window WID" and "move space N" take a number
+// CLI words to action names. "focus space N", "focus slot N", "focus column N", "focus window WID", "move space N" and
+// "move slot N" take a number
 // and are handled in Control.swift.
 let cliActions = [
     "focus left": "focus-left", "focus right": "focus-right", "focus first": "focus-first", "focus last": "focus-last",
@@ -37,4 +42,4 @@ let cliActions = [
     "width grow": "grow-width", "width shrink": "shrink-width", "width next": "cycle-width-forward", "width previous": "cycle-width-backward",
     "width toggle-full": "toggle-full-width", "center": "center-column", "overview": "overview",
     "show floating": "show-floating", "toggle floating": "toggle-floating",
-]
+].merging(monitorWays.flatMap { [("focus monitor \($0)", "focus-monitor-\($0)"), ("move monitor \($0)", "move-window-to-monitor-\($0)")] }) { a, _ in a }

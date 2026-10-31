@@ -1,7 +1,7 @@
 // nori payload: loaded into Dock.app by loader. Serves a line protocol on a unix socket.
-// Lines: "S wid x y"         set target; payload eases the window there
+// Lines: "S wid x y [lo hi]"  set target; payload eases the window there. lo…hi: see place
 //        "T wid a b c d tx ty"  transform
-//        "M wid x y"           move (immediate)
+//        "M wid x y [lo hi]"   move (immediate)
 //        "A wid alpha"         alpha (immediate)
 //        "E wid from to"       alpha eases from `from` to `to`, on the same curve as S
 //        "O wid order rel"     order
@@ -16,12 +16,19 @@
 // Back to the daemon, on its control socket (daemon/Control.swift), see notify_daemon:
 //        "payload\tlayout-done\t<seq>"             a Space layout ended; the strip may look at windows again
 //        "payload\tresize-settled\t<wid>\t<width>"  a width stretch reached its goal; the app can be resized now
+//        "payload\tdesktops\t<0|1>"                  whether "N" and "C" work on this macOS
 //        "payload\thooks\t<names>"                 after each "P": the hooks that didn't go in, comma-separated, or none
 //        "R wid width"         width animation, see resize_t. S and M for that window move its center meanwhile.
 //        "W wid width"         the app has resized that window to `width` (the end of a width animation)
 //        "X wid sid"           move the window to Space sid
 //        "P pid"               daemon pid. Vertical Spaces are on only while that process is alive.
 //        "I 1|0"               instant: Dock's switch frames get identity transforms (no slide) until "I 0"
+//        "B"                   empties the table of displays, see displays[]
+//        "B x y w h uuid sid0 sid1 …"  adds a display to it: its frame, its id for macOS and its Spaces
+//        "L display"           the display animations are timed to
+//        "N display"           a new Desktop on that display, see find_desktop_code
+//        "C sid"               removes that Desktop; its windows go to the display's first one
+//        "V number"            switches to that Desktop, counted across displays: what "Switch to Desktop N" runs
 // Also turns the native Spaces slide vertical, see hook_space_transform.
 // Animation runs here on a user-interactive queue, so the daemon sends one line per window, not one per frame.
 // Frames come from CVDisplayLink (vsync), and each frame moves all windows in one SLS transaction.
@@ -36,6 +43,9 @@
 #include <libkern/OSCacheControl.h>
 #include <mach/mach.h>
 #include <ptrauth.h>
+#include <crt_externs.h>
+#include <objc/message.h>
+#include <mach-o/getsect.h>
 #include <math.h>
 #include <pthread.h>
 #include <stdarg.h>
@@ -50,8 +60,7 @@
 extern int SLSMainConnectionID(void);
 extern CGError SLSGetWindowBounds(int cid, uint32_t wid, CGRect *frame);
 extern CGError SLSSetWindowTransform(int cid, uint32_t wid, CGAffineTransform t);
-extern OSStatus SLSMoveWindowWithGroup(int cid, uint32_t wid, CGPoint *point);
-// SLSMoveWindowWithGroup is exactly create + this + commit(0); point is passed by value (d0/d1).
+// SLSMoveWindowWithGroup is exactly SLSTransactionCreate + this + commit(0); point is passed by value (d0/d1).
 extern CFTypeRef SLSTransactionCreate(int cid);
 extern CGError SLSTransactionMoveWindowWithGroup(CFTypeRef transaction, uint32_t wid, CGPoint point);
 extern CGError SLSTransactionCommit(CFTypeRef transaction, int synchronous);
@@ -69,8 +78,10 @@ extern CFTypeRef CGRegionCreateWithRect(CGRect rect);
 extern bool CGRegionIsEmpty(CFTypeRef region);
 extern CGError CGSGetRegionBounds(CFTypeRef region, CGRect *bounds);
 extern uint64_t SLSGetActiveSpace(int cid);
+extern uint64_t SLSManagedDisplayGetCurrentSpace(int cid, CFStringRef display);
 extern int SLSSpaceGetType(int cid, uint64_t sid);  // 0 desktop, 4 fullscreen (an app's own Space)
 extern CFArrayRef SLSCopySpacesForWindows(int cid, int mask, CFArrayRef wids);
+extern CGError SLSGetWindowTags(int cid, uint32_t wid, uint64_t *tags, int bits);
 
 #define MAX_ANIMS 128
 
@@ -78,6 +89,7 @@ typedef struct {
     uint32_t wid;
     CGPoint cur;
     CGPoint goal;
+    double lo, hi;
 } anim_t;
 
 static dispatch_queue_t queue;
@@ -107,6 +119,42 @@ static bool instant;                  // "I 1": Dock's switch gets identity tran
 // Dock still switches the current Space: the daemon presses its shortcut, and the hooks give Dock's frames ours.
 static double overview_scale = 0.4;
 #define OVERVIEW_GAP 48.0
+// Several displays: each Space's slide and overview go by its own display. The daemon sends the table ("B"), so nothing
+// here asks WindowServer from a hook. It is empty with one display: the main display, the active Space.
+// ponytail: written on the payload queue, read on Dock's threads without a lock, like overview[]; a torn read lasts a frame.
+#define MAX_DISPLAYS 8
+static struct { CGRect frame; CFStringRef uuid; uint64_t spaces[MAX_SPACES]; int count; } displays[MAX_DISPLAYS];
+static int display_count;
+static CGRect layout_screen;     // the display the running layout is on
+static CFStringRef layout_uuid;  // and its id, NULL with one display
+static CGDirectDisplayID link_display;  // what "L" last set
+
+static int display_index(uint64_t sid)
+{
+    for (int i = 0; i < display_count; i++) {
+        for (int k = 0; k < displays[i].count; k++) if (displays[i].spaces[k] == sid) return i;
+    }
+    return -1;
+}
+
+static CGRect space_screen(uint64_t sid)
+{
+    int i = display_index(sid);
+    return i < 0 ? CGDisplayBounds(CGMainDisplayID()) : displays[i].frame;
+}
+
+// One string per display for good: a hook may be reading the one in use.
+static CFStringRef display_uuid(const char *text)
+{
+    static CFStringRef known[32];
+    CFStringRef uuid = CFStringCreateWithCString(NULL, text, kCFStringEncodingUTF8);
+    for (int i = 0; i < 32; i++) {
+        if (!known[i]) return known[i] = uuid;
+        if (CFEqual(known[i], uuid)) { CFRelease(uuid); return known[i]; }
+    }
+    return uuid;
+}
+
 #define SPRING_RESPONSE 0.28  // seconds per oscillation, like SwiftUI's .spring(response:dampingFraction:)
 #define SPRING_DAMPING 0.78
 static uint64_t layout_spaces[MAX_SPACES];
@@ -122,6 +170,7 @@ static double layout_focus, layout_progress, focus_velocity, progress_velocity;
 static double finger_progress, finger_focus;
 static uint64_t finger_progress_at, finger_focus_at;
 static uint64_t layout_started;  // ns
+static bool layout_dropped;      // a layout starts on another display: this one ends here, see step_layout
 static long layout_seq;          // from "Q", for "layout-done"
 static char control_path[256];   // the daemon's control socket
 static char hooks_failed[256];   // for "hooks", see hook()
@@ -152,6 +201,50 @@ static void notify_daemon(const char *format, ...)
 }
 
 static int anim_count;
+
+// Windows drawn away from their real place, see place.
+// ponytail: fixed table; a window past its end is just drawn where it really is.
+typedef struct {
+    uint32_t wid;
+    double shift;
+} shift_t;
+static shift_t shifts[512];
+static int shift_count;
+
+static int shift_index(uint32_t wid)
+{
+    for (int i = 0; i < shift_count; i++) if (shifts[i].wid == wid) return i;
+    return -1;
+}
+
+static double shift_of(uint32_t wid)
+{
+    int i = shift_index(wid);
+    return i < 0 ? 0 : shifts[i].shift;
+}
+
+static void shift_set(uint32_t wid, double shift)
+{
+    int i = shift_index(wid);
+    if (i >= 0 && shift == 0) shifts[i] = shifts[--shift_count];
+    else if (i >= 0) shifts[i].shift = shift;
+    else if (shift != 0 && shift_count < 512) shifts[shift_count++] = (shift_t){ wid, shift };
+}
+
+// Puts a window at p, its real x kept in lo…hi: with another display around, WindowServer hands a window to the
+// display its center gets to, and past every display to the main one's Space, whatever moved it, and the app then
+// jumps it to a place of its own (docs/WINDOWSERVER.md). So a column past the screen edge stays really on its display,
+// a window transform draws the rest of the way, and its display clips that. Without lo…hi this is a plain move.
+// The shift is whole: a transform's fraction would resample the window, and a shown column would blur.
+static void place(CFTypeRef transaction, uint32_t wid, CGPoint p, double lo, double hi)
+{
+    double real = fmin(fmax(p.x, lo), hi), shift = round(p.x - real);
+    SLSTransactionMoveWindowWithGroup(transaction, wid, CGPointMake(real, p.y));
+    if (shift == shift_of(wid)) return;
+    double m[16] = { 1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  -shift, 0, 0, 1 };  // screen -> window: drawn `shift` to the right
+    SLSTransactionSetWindowTransform3D(transaction, wid, m);
+    shift_set(wid, shift);
+}
 
 // Width animations ("R"). The window is stretched by a transform from its real width to the drawn one, which eases
 // to `goal`; the real window is kept centered on cx by a move in the same transaction.
@@ -232,11 +325,23 @@ static void chase(double *x, double value, double velocity, uint64_t at, uint64_
 // ponytail: entering one, they are held with the desktop it came from; only seen as a 0.12 s jump, not traced.
 static bool is_fullscreen(uint64_t sid) { return SLSSpaceGetType(SLSMainConnectionID(), sid) == 4; }
 
+// The current Space of the layout's display, whichever display has focus.
+static uint64_t layout_current(void)
+{
+    return layout_uuid ? SLSManagedDisplayGetCurrentSpace(SLSMainConnectionID(), layout_uuid) : SLSGetActiveSpace(SLSMainConnectionID());
+}
+
+static bool in_layout(uint64_t sid)
+{
+    for (int i = 0; i < layout_count; i++) if (layout_spaces[i] == sid) return true;
+    return false;
+}
+
 static uint64_t held_space(void)
 {
     uint64_t target = layout_spaces[layout_target];
     if (!dock_switching) return target;
-    uint64_t current = SLSGetActiveSpace(SLSMainConnectionID());
+    uint64_t current = layout_current();
     if (!is_fullscreen(current)) return current;
     if (!is_fullscreen(target)) return target;
     return dock_from && !is_fullscreen(dock_from) ? dock_from : current;
@@ -246,7 +351,7 @@ static uint64_t held_space(void)
 static void dock_switch_began(void)
 {
     if (dock_switching) return;
-    dock_from = SLSGetActiveSpace(SLSMainConnectionID());
+    dock_from = layout_current();
     dock_switching = true;
 }
 
@@ -276,14 +381,14 @@ static void step_layout(double dt)
         layout_progress = layout_goal;
         layout_focus = layout_target;
     }
-    uint64_t current = SLSGetActiveSpace(SLSMainConnectionID());
+    uint64_t current = layout_current();
     // Dock's change is committed: this frame takes the sticky windows to the target, see nori_current_space. Not into
     // a fullscreen Space: they don't go there, and stay with the desktop side (held_space) until the next switch.
     if (current == dock_current && !is_fullscreen(current)) {
         dock_switching = false;
         dock_current = 0;
     }
-    bool done = settled && layout_goal == 0 && (current == layout_spaces[layout_target] || now - layout_started > 1000000000);
+    bool done = layout_dropped || (settled && layout_goal == 0 && (current == layout_spaces[layout_target] || now - layout_started > 1000000000));
     // Our slide is over, Dock's switch isn't: the sticky windows still go with the old Space (held_space). It is put
     // where the target is, under it, so that when the current Space changes they pass from one untransformed Space
     // to another. With the old Space a screen away they left the screen for 2–4 frames at that change (recorded).
@@ -291,7 +396,7 @@ static void step_layout(double dt)
 
     CFTypeRef transaction = SLSTransactionCreate(SLSMainConnectionID());
     if (!transaction) return;
-    CGRect screen = CGDisplayBounds(CGMainDisplayID());
+    CGRect screen = layout_screen;
     CFTypeRef region = CGRegionCreateWithRect(screen);
     double scale = 1 - (1 - overview_scale) * layout_progress;
     overview_count = layout_count;  // before the transforms: the hook looks each one up, the first frame's too
@@ -333,7 +438,7 @@ static void step_layout(double dt)
         overview_active = false;
         overview_count = 0;
         layout_count = 0;
-        notify_daemon("payload\tlayout-done\t%ld\n", layout_seq);
+        if (!layout_dropped) notify_daemon("payload\tlayout-done\t%ld\n", layout_seq);
     }
     SLSTransactionCommit(transaction, 0);
     CFRelease(transaction);
@@ -431,7 +536,7 @@ static void tick(double frame)
             a.cur.y += dy * 0.25;
             anims[kept++] = a;
         }
-        SLSTransactionMoveWindowWithGroup(transaction, a.wid, a.cur);
+        place(transaction, a.wid, a.cur, a.lo, a.hi);
     }
     anim_count = kept;
     kept = 0;
@@ -483,12 +588,12 @@ static int sticky_index(uint32_t wid)
     return -1;
 }
 
-// Adds the sticky windows on the main display (the one the layout moves) to the list. One stays in it until the
-// layout ends, even if ordered out meanwhile, so it gets its identity back then. Desktop-level windows (Finder's
-// icons) are left out. Frames from SLSGetWindowBounds: CGWindowList's have the Space transform and ours in them.
+// Adds the sticky windows on the layout's display to the list. One stays in it until the layout ends, even if
+// ordered out meanwhile, so it gets its identity back then. Desktop-level windows (Finder's icons) are left out.
+// Frames from SLSGetWindowBounds: CGWindowList's have the Space transform and ours in them.
 static void find_sticky(int cid)
 {
-    CGRect screen = CGDisplayBounds(CGMainDisplayID());
+    CGRect screen = layout_screen;
     CFArrayRef windows = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID);
     for (CFIndex i = 0; windows && i < CFArrayGetCount(windows) && sticky_count < MAX_ANIMS; i++) {
         CFDictionaryRef window = CFArrayGetValueAtIndex(windows, i);
@@ -502,11 +607,85 @@ static void find_sticky(int cid)
             || !CGRectContainsPoint(screen, CGPointMake(CGRectGetMidX(frame), CGRectGetMidY(frame)))) continue;
         CFArrayRef list = CFArrayCreate(NULL, (const void **) &number, 1, &kCFTypeArrayCallBacks);
         CFArrayRef spaces = SLSCopySpacesForWindows(cid, 7, list);  // 7: all Spaces
-        if (spaces && CFArrayGetCount(spaces) > 1) sticky[sticky_count++] = (typeof(sticky[0])){ wid, frame.origin };
+        CFIndex count = spaces ? CFArrayGetCount(spaces) : 0;
+        uint64_t tags = 0;
+        // A sticky window is listed on its own display's Spaces only, so with one Desktop there on one, like any other
+        // window. The tag tells them apart then. Alone it won't do: WindowServer's overlay has it too, and no Space.
+        if (count > 1 || (count == 1 && SLSGetWindowTags(cid, wid, &tags, 64) == kCGErrorSuccess && (tags & (1ULL << 11)))) {
+            sticky[sticky_count++] = (typeof(sticky[0])){ wid, frame.origin };
+        }
         if (spaces) CFRelease(spaces);
         CFRelease(list);
     }
     if (windows) CFRelease(windows);
+}
+
+// Desktops are added and removed by Dock's own code, what + and × in Mission Control run, so that its list, its saved
+// Spaces and the windows of a removed Desktop stay in step. That code is Swift, with no symbol and no Objective-C entry
+// point, and Accessibility no longer shows Mission Control (docs/WINDOWSERVER.md). So it is found by its instructions,
+// addresses masked out. On a macOS where they differ nothing is found, and the daemon offers neither.
+// ponytail: instruction patterns of macOS 27, a new macOS may want new ones.
+typedef struct { uint32_t value, mask; } op_t;
+#define OP(word) { word, 0xffffffff }
+#define BL { 0x94000000, 0xfc000000 }
+#define B { 0x14000000, 0xfc000000 }
+#define ADRP_X8 { 0x90000008, 0x9f00001f }
+#define CBZ(reg) { 0xb4000000 | reg, 0xff00001f }
+
+// Spaces.addDesktop(display id) -> ManagedSpace, self in x20: makes the Space and adds it after the display's last Desktop.
+static const op_t add_desktop_ops[] = {
+    OP(0xd503237f), OP(0xa9bd57f6), OP(0xa9014ff4), OP(0xa9027bfd), OP(0x910083fd), OP(0xaa0003f3),
+    ADRP_X8, { 0x91000100, 0xffc003ff }, BL, BL, OP(0xaa0003f5), OP(0xaa1303e0), BL, OP(0xaa0103f3),
+    OP(0xaa1403e2), OP(0xaa1503e3), BL, OP(0xaa1303e0), BL, BL, BL, OP(0xaa1503e0),
+};
+// The middle of × in Mission Control: loads the Spaces object, then either closes a fullscreen Space, or calls
+// removeDesktop(sid, spaces, spaces, sid). That one does nothing to a display's last Desktop.
+static const op_t close_desktop_ops[] = {
+    ADRP_X8, { 0x91000108, 0xffc003ff }, OP(0xf9400100), CBZ(22), CBZ(0), BL, OP(0xaa0003f5), OP(0xaa1603e0),
+    OP(0xaa1503e1), BL, B, CBZ(0), ADRP_X8, { 0xf9400108, 0xffc003ff }, OP(0xf8686ab6), BL, OP(0xaa0003f5),
+    OP(0xaa1603e0), OP(0xaa1503e1), OP(0xaa1503e2), OP(0xaa1603e3), BL,
+};
+#define COUNT(ops) (sizeof(ops) / sizeof(ops[0]))
+
+typedef void *(*add_desktop_t)(uint64_t display, __attribute__((swift_context)) void *spaces) __attribute__((swiftcall));
+typedef uint64_t (*remove_desktop_t)(uint64_t sid, void *spaces, void *same, uint64_t also);
+static add_desktop_t add_desktop;
+static remove_desktop_t remove_desktop;
+static void **dock_spaces;
+
+// The one place in Dock's code that matches. Two would mean it isn't what we are after.
+static uint32_t *find_code(const op_t *ops, size_t count)
+{
+    unsigned long size;
+    uint32_t *text = (uint32_t *) getsectiondata((const struct mach_header_64 *) _NSGetMachExecuteHeader(), "__TEXT", "__text", &size);
+    uint32_t *found = NULL;
+    for (size_t i = 0; text && i + count <= size / 4; i++) {
+        size_t k = 0;
+        while (k < count && (text[i + k] & ops[k].mask) == ops[k].value) k++;
+        if (k < count) continue;
+        if (found) return NULL;
+        found = text + i;
+    }
+    return found;
+}
+
+static void *bl_target(uint32_t *at) { return at + ((int32_t) (*at << 6) >> 6); }
+
+// What an adrp and the add after it point at.
+static void *adrp_add_target(uint32_t *at)
+{
+    int64_t pages = (int64_t) ((uint64_t) (((at[0] >> 29) & 3) | (((at[0] >> 5) & 0x7ffff) << 2)) << 43) >> 43;
+    return (void *) (((uintptr_t) at & ~(uintptr_t) 0xfff) + (pages << 12) + ((at[1] >> 10) & 0xfff));
+}
+
+static void find_desktop_code(void)
+{
+    uint32_t *add = find_code(add_desktop_ops, COUNT(add_desktop_ops));
+    uint32_t *close = find_code(close_desktop_ops, COUNT(close_desktop_ops));
+    if (!add || !close) return;
+    add_desktop = ptrauth_sign_unauthenticated((add_desktop_t) add, ptrauth_key_function_pointer, 0);
+    remove_desktop = ptrauth_sign_unauthenticated((remove_desktop_t) bl_target(close + COUNT(close_desktop_ops) - 1), ptrauth_key_function_pointer, 0);
+    dock_spaces = adrp_add_target(close);
 }
 
 static void handle_line(char *line)
@@ -516,7 +695,8 @@ static void handle_line(char *line)
     switch (line[0]) {
     case 'S': {
         CGPoint goal;
-        if (sscanf(line + 1, "%u %lf %lf", &wid, &goal.x, &goal.y) == 3) {
+        double lo = -INFINITY, hi = INFINITY;
+        if (sscanf(line + 1, "%u %lf %lf %lf %lf", &wid, &goal.x, &goal.y, &lo, &hi) >= 3) {
             resize_t *r = resize_for(wid);
             if (r) { r->cx_goal = goal.x + r->goal / 2; break; }  // the resize owns this window's position
             anim_t *a = anim_for(wid, true);
@@ -524,9 +704,11 @@ static void handle_line(char *line)
             if (a->wid != wid) {
                 CGRect frame;
                 a->wid = wid;
-                a->cur = SLSGetWindowBounds(cid, wid, &frame) == kCGErrorSuccess ? frame.origin : goal;
+                a->cur = SLSGetWindowBounds(cid, wid, &frame) == kCGErrorSuccess ? CGPointMake(frame.origin.x + shift_of(wid), frame.origin.y) : goal;
             }
             a->goal = goal;
+            a->lo = lo;
+            a->hi = hi;
         }
         break;
     }
@@ -539,11 +721,16 @@ static void handle_line(char *line)
     }
     case 'M': {
         CGPoint p;
-        if (sscanf(line + 1, "%u %lf %lf", &wid, &p.x, &p.y) == 3) {
+        double lo = -INFINITY, hi = INFINITY;
+        if (sscanf(line + 1, "%u %lf %lf %lf %lf", &wid, &p.x, &p.y, &lo, &hi) >= 3) {
             resize_t *r = resize_for(wid);
             if (r) { r->cx = r->cx_goal = p.x + r->goal / 2; break; }
             anim_drop(wid);  // a running ease would pull the window back every frame
-            SLSMoveWindowWithGroup(cid, wid, &p);
+            CFTypeRef transaction = SLSTransactionCreate(cid);
+            if (!transaction) break;
+            place(transaction, wid, p, lo, hi);
+            SLSTransactionCommit(transaction, 0);
+            CFRelease(transaction);
         }
         break;
     }
@@ -590,9 +777,20 @@ static void handle_line(char *line)
             spaces[count++] = sid;
         }
         if (target < 0 || target >= count) break;
+        // ponytail: one layout at a time. One on another display ends where it is, with its target shown; two
+        // displays sliding at once would need this file's layout state per display.
+        CGRect screen = space_screen(spaces[target]);
+        if (layout_count && !CGRectEqualToRect(screen, layout_screen)) {
+            layout_dropped = true;
+            step_layout(0);
+            layout_dropped = false;
+        }
+        int on = display_index(spaces[target]);
+        layout_screen = screen;
+        layout_uuid = on < 0 ? NULL : displays[on].uuid;
         if (!layout_count) {
             // Start from what is on screen now: the current Space centered, no overview.
-            uint64_t active = SLSGetActiveSpace(cid);
+            uint64_t active = layout_current();
             layout_focus = target;
             for (int i = 0; i < count; i++) if (spaces[i] == active) layout_focus = i;
             layout_progress = progress_velocity = focus_velocity = 0;
@@ -636,11 +834,59 @@ static void handle_line(char *line)
         }
         break;
     }
+    case 'B': {
+        CGRect frame;
+        char uuid[64];
+        int used = 0;
+        if (line[1] == '\0') { display_count = 0; break; }
+        if (display_count == MAX_DISPLAYS || sscanf(line + 1, "%lf %lf %lf %lf %63s %n", &frame.origin.x, &frame.origin.y,
+                                                    &frame.size.width, &frame.size.height, uuid, &used) != 5) break;
+        typeof(displays[0]) *d = &displays[display_count];
+        d->frame = frame;
+        d->uuid = display_uuid(uuid);
+        d->count = 0;
+        char *rest = line + 1 + used;
+        for (char *end; d->count < MAX_SPACES; rest = end) {
+            uint64_t sid = strtoull(rest, &end, 10);
+            if (end == rest) break;
+            d->spaces[d->count++] = sid;
+        }
+        display_count++;
+        break;
+    }
+    case 'L': {
+        // Vsync of the display that is moving, not of the first one the link found.
+        CGDirectDisplayID display = (CGDirectDisplayID) strtoul(line + 1, NULL, 10);
+        if (display && display != link_display && CVDisplayLinkSetCurrentCGDisplay(display_link, display) == kCVReturnSuccess) link_display = display;
+        break;
+    }
     case 'P': {
         pid_t pid = atoi(line + 1);
         if (pid != daemon_pid) instant = false;  // a daemon that died within the second of its "I 1" sends no "I 0"
         daemon_pid = pid;
-        notify_daemon("payload\thooks\t%s\n", hooks_failed);  // on every "P": the first may beat the daemon's control socket
+        // On every "P": the first may beat the daemon's control socket.
+        notify_daemon("payload\thooks\t%s\n", hooks_failed);
+        notify_daemon("payload\tdesktops\t%d\n", add_desktop != NULL);
+        break;
+    }
+    case 'N': {
+        uint64_t display = strtoull(line + 1, NULL, 10);
+        if (add_desktop) dispatch_async(dispatch_get_main_queue(), ^{
+            void *space = add_desktop(display, *dock_spaces);
+            if (space) CFRelease(space);
+        });
+        break;
+    }
+    case 'V': {
+        long number = strtol(line + 1, NULL, 10);
+        if (dock_spaces) dispatch_async(dispatch_get_main_queue(), ^{
+            ((BOOL (*)(id, SEL, long)) objc_msgSend)(*(id *) dock_spaces, sel_registerName("switchToUserSpace:"), number - 1);
+        });
+        break;
+    }
+    case 'C': {
+        uint64_t sid = strtoull(line + 1, NULL, 10);
+        if (remove_desktop) dispatch_async(dispatch_get_main_queue(), ^{ remove_desktop(sid, *dock_spaces, *dock_spaces, sid); });
         break;
     }
     case 'I':
@@ -664,6 +910,8 @@ static void handle_line(char *line)
                 r = &resizes[resize_count++];
                 // No resize running, so no transform: these bounds are the real ones.
                 *r = (resize_t){ wid, b.size.width, width, b.size.width, CGRectGetMidX(b), CGRectGetMidX(b), 0 };
+                // ponytail: its transform goes, so a window still drawn away from its real place (place) jumps there.
+                shift_set(wid, 0);
             }
             r->goal = width;
             r->notified = false;
@@ -749,7 +997,6 @@ static void *serve(void *arg)
 // Works because Dock is CS_DEBUGGED after injection, so a modified code page doesn't kill it.
 // ponytail: prologues are checked byte for byte; another macOS build with different ones goes without that hook, and
 // the daemon lists it with what that costs (hookLosses, daemon/Payload.swift).
-// ponytail: main display aspect only; spaces on a display with another aspect slide the wrong distance.
 __attribute__((visibility("hidden"))) void *nori_transform_resume, *nori_shape_resume, *nori_current_resume, *nori_hide_resume;
 extern char nori_transform_stub[], nori_transform_prologue[], nori_shape_stub[], nori_shape_prologue[];
 extern char nori_current_stub[], nori_current_prologue[], nori_hide_stub[], nori_hide_prologue[];
@@ -786,7 +1033,7 @@ const CGAffineTransform *nori_space_transform(const CGAffineTransform *t, uint64
 {
     static __thread CGAffineTransform vertical;
     // A layout runs to its end even if the daemon is gone, so the sticky windows get their identity back.
-    if (overview_active) {
+    if (overview_active && in_layout(sid)) {
         // Dock's first frame: the sticky windows still go with the Space that last became shown (the target), and
         // over to the current one from the next frame (recorded in the overview: a frame one slot off, -725, when
         // this frame already undid the current one). Dock transforms both Spaces in that transaction.
@@ -802,7 +1049,7 @@ const CGAffineTransform *nori_space_transform(const CGAffineTransform *t, uint64
     if (!daemon_alive()) return t;
     if (instant) return &CGAffineTransformIdentity;  // no slide: both Spaces in place, the shown one on top
     if (!t || t->a != 1 || t->b != 0 || t->c != 0 || t->d != 1 || t->tx == 0) return t;
-    CGRect screen = CGDisplayBounds(CGMainDisplayID());
+    CGRect screen = space_screen(sid);
     vertical = *t;
     vertical.ty += t->tx * screen.size.height / screen.size.width;
     vertical.tx = 0;
@@ -818,7 +1065,7 @@ __attribute__((visibility("hidden"), used))
 void nori_current_space(CFTypeRef transaction, uint64_t sid)
 {
     (void) transaction;
-    if (overview_active) dock_current = sid;
+    if (overview_active && in_layout(sid)) dock_current = sid;
 }
 
 // SLSTransactionHideSpace(transaction, sid): Dock hides the Space it leaves in the transaction that ends its switch,
@@ -841,9 +1088,9 @@ CFTypeRef nori_space_shape(CFTypeRef region, uint64_t sid)
 {
     static __thread CFTypeRef replaced;
     if (!region || !daemon_alive()) return region;
-    CGRect screen = CGDisplayBounds(CGMainDisplayID());
+    CGRect screen = space_screen(sid);
     CGRect box;
-    if (overview_active || instant) {
+    if ((overview_active && in_layout(sid)) || instant) {
         box = screen;
     } else {
         if (CGRegionIsEmpty(region) || CGSGetRegionBounds(region, &box) != kCGErrorSuccess) return region;
@@ -1010,6 +1257,8 @@ static void nori_payload_init(void)
     CVDisplayLinkCreateWithActiveCGDisplays(&display_link);
     CVDisplayLinkSetOutputCallback(display_link, on_frame, NULL);
     CVDisplayLinkStart(display_link);
+    find_desktop_code();
+    NSLog(@"nori: Dock's Desktop code %s", add_desktop ? "found" : "not found");
     pthread_t thread;
     pthread_create(&thread, NULL, serve, path);
     pthread_detach(thread);

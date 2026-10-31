@@ -4,18 +4,22 @@
 import Cocoa
 
 // Top level: numbers (missing: numberDefaults, else 0), flags (missing: false, or true for flagsOn) and choices (missing: the first). [bindings]: key bindings (missing: the default below).
-// [[rule]]: app rules, see Rules.swift. Unknown keys and bad values are reported and skipped.
-let numberKeys = ["gap", "padding-top", "padding-bottom", "padding-left", "padding-right", "resize-step", "inactive-opacity", "overview-scale",
+// [[rule]]: app rules, see Rules.swift. [[monitor]]: one display's padding. Unknown keys and bad values are reported and skipped.
+let paddingKeys = ["padding-top", "padding-bottom", "padding-left", "padding-right"]
+let numberKeys = ["gap"] + paddingKeys + ["resize-step", "inactive-opacity", "overview-scale",
                   "swipe-speed", "space-swipe-distance", "overview-swipe-distance"]
 let numberDefaults: [String: Double] = ["resize-step": 10, "inactive-opacity": 1, "overview-scale": 0.4,
                                          "swipe-speed": 1.3, "space-swipe-distance": 50, "overview-swipe-distance": 30]  // the rest: 0
-let flagKeys = ["launch-at-login", "always-center-single-column", "wrap-around", "analytics", "leave-system-gestures"]
+let flagKeys = ["padding-per-monitor", "launch-at-login", "always-center-single-column", "wrap-around", "analytics", "leave-system-gestures"]
 let flagsOn = ["analytics"]
 let choiceKeys = ["overview-background": ["none", "blur"], "center-focused-column": ["always", "never", "on-overflow"],
                   "gesture-strip": swipeChoices(["sideways"], fingers: 3), "gesture-spaces": swipeChoices(["vertical"], fingers: 3),
                   "gesture-overview": swipeChoices(["vertical", "pinch"], fingers: 4)]
 let modifierKeys = ["mouse-modifier"]  // modifiers joined by "+", at least one
-// Every action has a binding; "none" unbinds one. The actions themselves are in Actions.swift.
+// The ways the display actions go, niri's. Which display that is: `neighbour` in Displays.swift.
+let monitorWays = ["left", "right", "up", "down", "next", "previous"]
+// Every action has a binding; "none" unbinds one. The actions themselves are in Actions.swift. The display actions have
+// no keys by default: with one display they do nothing, and a key of theirs would just stop reaching apps.
 let bindingDefaults = ["focus-left": "option+h", "focus-right": "option+l", "focus-first": "ctrl+option+h", "focus-last": "ctrl+option+l",
                        "focus-space-down": "option+j", "focus-space-up": "option+k", "center-column": "option+c",
                        "overview": "option+o", "show-floating": "option+f", "toggle-floating": "option+shift+v",
@@ -23,7 +27,10 @@ let bindingDefaults = ["focus-left": "option+h", "focus-right": "option+l", "foc
                        "cycle-width-forward": "option+.", "cycle-width-backward": "option+,", "toggle-full-width": "option+shift+f",
                        "move-left": "option+shift+h", "move-right": "option+shift+l",
                        "move-to-space-down": "option+shift+j", "move-to-space-up": "option+shift+k"]
+    .merging((1...9).map { ("focus-space-\($0)", "option+\($0)") }) { a, _ in a }
     .merging((1...9).map { ("move-to-space-\($0)", "option+shift+\($0)") }) { a, _ in a }
+    .merging((1...9).flatMap { [("focus-space-slot-\($0)", "none"), ("move-to-space-slot-\($0)", "none")] }) { a, _ in a }
+    .merging(monitorWays.flatMap { [("focus-monitor-\($0)", "none"), ("move-window-to-monitor-\($0)", "none")] }) { a, _ in a }
 // NORI_CONFIG: another file, to try settings out without touching your own.
 let configPath = ProcessInfo.processInfo.environment["NORI_CONFIG"] ?? NSHomeDirectory() + "/.config/nori/config.toml"
 
@@ -46,6 +53,7 @@ padding-top = 40          # below the menu bar
 padding-bottom = 0        # above the Dock, or the bottom of the screen
 padding-left = 24
 padding-right = 24
+# padding-per-monitor = true  # each display its own padding, see [[monitor]] at the end. Default false: these on all
 
 # Where the strip puts the focused window:
 #   "always"       in the center of the screen
@@ -74,8 +82,8 @@ resize-step = 10          # how much grow-width and shrink-width change a window
 # Key bindings: modifiers and one key joined by "+". Modifiers: option, ctrl, cmd, shift. Keys: a to z, 0 to 9,
 # - = , . and left, right, up, down. Keys are physical keys on the US layout, so a binding stays put in any
 # keyboard layout. "none" turns a binding off. Each action is also a command, see `nori help`.
-# Option+1…9 aren't here: they are macOS's "Switch to Desktop N" shortcuts, set in System Settings → Keyboard →
-# Keyboard Shortcuts → Mission Control, and nori animates them.
+# Desktop numbers run across displays, like macOS's own shortcuts: with two Desktops on the first display, the second
+# one's start at 3. The focus-space-slot and move-to-space-slot actions count on the display that has focus instead.
 [bindings]
 focus-left = "option+h"             # the window to the left / right
 focus-right = "option+l"
@@ -83,6 +91,7 @@ focus-first = "ctrl+option+h"       # the first / last window of the strip
 focus-last = "ctrl+option+l"
 focus-space-down = "option+j"       # the Space below / above
 focus-space-up = "option+k"
+\((1...9).map { "focus-space-\($0) = \"option+\($0)\"" + ($0 == 1 ? "           # go to Desktop 1, and so on" : "") }.joined(separator: "\n"))
 center-column = "option+c"          # scroll the focused window to the center, once
 overview = "option+o"               # all Spaces of the display, with live windows
 show-floating = "option+f"          # windows outside the strip (floating rules, dialogs, PiP) above it, focus stays
@@ -97,13 +106,18 @@ move-right = "option+shift+l"
 move-to-space-down = "option+shift+j"  # send the focused window to the Space below / above
 move-to-space-up = "option+shift+k"
 \((1...9).map { "move-to-space-\($0) = \"option+shift+\($0)\"" + ($0 == 1 ? "   # send the focused window to Desktop 1, and so on" : "") }.joined(separator: "\n"))
+# With several displays. No keys by default, try "ctrl+option+left". next and previous go round.
+\((1...9).map { "focus-space-slot-\($0) = \"none\"" + ($0 == 1 ? "      # Desktop 1 of the display that has focus, as Mission Control labels it" : "") }.joined(separator: "\n"))
+\((1...9).map { "move-to-space-slot-\($0) = \"none\"" + ($0 == 1 ? "    # send the focused window there" : "") }.joined(separator: "\n"))
+\(monitorWays.map { "focus-monitor-\($0) = \"none\"" + ($0 == "left" ? "       # focus goes to the display on that side" : "") }.joined(separator: "\n"))
+\(monitorWays.map { "move-window-to-monitor-\($0) = \"none\"" + ($0 == "left" ? "  # the focused window goes there, and focus with it" : "") }.joined(separator: "\n"))
 
 # App rules. One [[rule]] table each; the first rule that matches a window wins.
 #   app       the app's name or bundle id, any case. Find them with:
 #             nori query windows | jq -r '.[] | "\\(.app)\\t\\(.bundleId)"' | sort -u
 #   title     optional: a regular expression the window title must contain, any case
 # and at least one of:
-#   space     new windows of the app go to Desktop N, once; move one back by hand and it stays
+#   space     new windows of the app go to Desktop N, across all displays, once; move one back by hand and it stays
 #   floating  true: its windows stay out of the strip, where you put them
 #   ignore    true: nori doesn't move or list its windows at all
 #   width     new windows take N % of the screen width, once
@@ -126,6 +140,14 @@ move-to-space-up = "option+shift+k"
 # title = "Picture in Picture"   # only this Safari window floats, the others stay in the strip
 # floating = true
 
+# Padding of one display, with padding-per-monitor on. One [[monitor]] table each; name is the display's, as System
+# Settings → Displays shows it. A padding left out, or a display without a table, takes the one at the top of this file.
+#
+# [[monitor]]
+# name = "Studio Display"
+# padding-top = 16
+# padding-left = 48
+
 """
 
 func writeDefaultConfig() {
@@ -138,13 +160,15 @@ func writeDefaultConfig() {
     try? defaultConfig.write(toFile: configPath, atomically: true, encoding: .utf8)
 }
 
-// Numbers, flags and bindings as strings by key; the rules in file order; what was skipped and why, one line each, for
-// Settings, the menu (Problems.swift) and stderr.
-func parseConfig(_ text: String) -> (values: [String: String], rules: [Rule], problems: [String]) {
+// Numbers, flags and bindings as strings by key; the rules in file order; paddings by display name; what was skipped and
+// why, one line each, for Settings, the menu (Problems.swift) and stderr.
+// ponytail: two displays of one name share a table, unless macOS numbers them; match on the UUID if that bites.
+func parseConfig(_ text: String) -> (values: [String: String], rules: [Rule], monitors: [String: [String: Double]], problems: [String]) {
     var problems: [String] = []
     let report = { (line: Int, message: String) in problems.append("line \(line): \(message)") }
     var values: [String: String] = [:]
     var ruleTables: [Int: [String: TOMLValue]] = [:]
+    var monitorTables: [Int: [String: TOMLValue]] = [:]
     for entry in parseTOML(text, report: report) {
         switch (entry.table, entry.value) {
         case ("", .number(let n)) where numberKeys.contains(entry.key): values[entry.key] = String(n)
@@ -153,28 +177,41 @@ func parseConfig(_ text: String) -> (values: [String: String], rules: [Rule], pr
         case ("", .string(let s)) where modifierKeys.contains(entry.key) && modifiers(s) != nil: values[entry.key] = s
         case ("bindings", .string(let s)) where bindingDefaults[entry.key] != nil && (s == "none" || chord(s) != nil): values[entry.key] = s
         case ("rule", _) where entry.index != nil: ruleTables[entry.index!, default: [:]][entry.key] = entry.value
+        case ("monitor", .string) where entry.index != nil && entry.key == "name",
+             ("monitor", .number) where entry.index != nil && paddingKeys.contains(entry.key):
+            monitorTables[entry.index!, default: [:]][entry.key] = entry.value
         default: report(entry.line, "skipping \(entry.key): unknown key or bad value")
         }
+    }
+    var monitors: [String: [String: Double]] = [:]
+    for i in monitorTables.keys.sorted() {
+        let table = monitorTables[i]!
+        guard case .string(let name)? = table["name"] else {
+            problems.append("skipping [[monitor]] #\(i + 1): needs name = \"…\"")
+            continue
+        }
+        for key in paddingKeys { if case .number(let n)? = table[key] { monitors[name, default: [:]][key] = n } }
     }
     let rules = ruleTables.keys.sorted().compactMap { i in
         let rule = makeRule(ruleTables[i]!)
         if rule == nil { problems.append("skipping [[rule]] #\(i + 1): needs app = \"…\" and space = N, floating = true, ignore = true or width = N, with a valid title and width") }
         return rule
     }
-    return (values, rules, problems)
+    return (values, rules, monitors, problems)
 }
 
-func readConfig() -> (values: [String: String], rules: [Rule], problems: [String]) {
+func readConfig() -> (values: [String: String], rules: [Rule], monitors: [String: [String: Double]], problems: [String]) {
     writeDefaultConfig()
     guard let text = try? String(contentsOfFile: configPath, encoding: .utf8) else {
         fputs("cannot read \(configPath)\n", stderr)
-        return ([:], [], ["cannot read \(configPath), so nori runs on its defaults"])
+        return ([:], [], [:], ["cannot read \(configPath), so nori runs on its defaults"])
     }
     let parsed = parseConfig(text)
     for problem in parsed.problems { fputs("config.toml: \(problem)\n", stderr) }
     if !parsed.problems.isEmpty {
         fputs("config.toml: top level: \((numberKeys + flagKeys + choiceKeys.keys + modifierKeys).joined(separator: ", ")); "
-            + "[bindings]: \(bindingDefaults.keys.sorted().joined(separator: ", ")); [[rule]]: app, title, space, floating, ignore, width\n", stderr)
+            + "[bindings]: \(bindingDefaults.keys.sorted().joined(separator: ", ")); [[rule]]: app, title, space, floating, ignore, width; "
+            + "[[monitor]]: name, \(paddingKeys.joined(separator: ", "))\n", stderr)
     }
     return parsed
 }
@@ -188,10 +225,11 @@ func number(_ key: String) -> CGFloat { CGFloat(config[key].flatMap(Double.init)
 var launchAtLogin: Bool { config["launch-at-login"] == "true" }
 var overviewBlur: Bool { config["overview-background"] == "blur" }
 var gap: CGFloat { number("gap") }
-var paddingTop: CGFloat { number("padding-top") }
-var paddingBottom: CGFloat { number("padding-bottom") }
-var paddingLeft: CGFloat { number("padding-left") }
-var paddingRight: CGFloat { number("padding-right") }
+var paddingPerMonitor: Bool { config["padding-per-monitor"] == "true" }
+// On the display of this name: its [[monitor]] table's with padding-per-monitor on, else the shared one.
+func padding(_ key: String, on name: @autoclosure () -> String?) -> CGFloat {
+    (paddingPerMonitor ? name().flatMap { configFile.monitors[$0]?[key] } : nil).map { CGFloat($0) } ?? number(key)
+}
 var resizeStep: CGFloat { number("resize-step") }  // percent of the usable width
 var centerFocusedColumn: String { config["center-focused-column"] ?? "always" }  // see Scroll.swift
 var alwaysCenterSingleColumn: Bool { config["always-center-single-column"] == "true" }

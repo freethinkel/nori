@@ -198,10 +198,13 @@ struct GestureRow: View {
 // each write rewrites the file and lays the windows out.
 struct NumberRow: View {
     let key: String
+    var monitor: String?  // one display's padding, not the shared one
     @State private var draft: Double?  // the slider's value while it moves
 
+    private var current: Double { monitor.map { settingsModel.padding(key, on: $0) } ?? settingsModel.number(key) }
+
     var body: some View {
-        let value = settingsModel.number(key)
+        let value = current
         let (title, help) = describe(key)
         let range = numberRanges[key] ?? (0...200, 0...500, 1)
         let typed = Binding(get: { draft ?? value }, set: save)
@@ -246,7 +249,8 @@ struct NumberRow: View {
         let range = numberRanges[key] ?? (0...200, 0...500, 1)
         let new = min(max(snap(new), range.limits.lowerBound), range.limits.upperBound)
         draft = nil
-        if new != settingsModel.number(key) { settingsModel.set(key, to: .number(new)) }
+        guard new != current else { return }
+        if let monitor { settingsModel.setPadding(key, on: monitor, to: .number(new)) } else { settingsModel.set(key, to: .number(new)) }
     }
 }
 

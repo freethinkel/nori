@@ -72,13 +72,15 @@ let sidebar: [[Page]] = [[.general], [.layout, .focus], [.hotkeys, .gestures, .r
 // Each page's cards, by config key. A key Config.swift has and no card lists lands on an "Other" card (Hotkeys for a
 // binding, General for the rest), so a new setting shows up here before anyone places it.
 let pageCards: [Page: [(title: String, keys: [String])]] = [
-    .layout: [("Columns", ["gap", "resize-step"]), ("Screen padding", ["padding-top", "padding-bottom", "padding-left", "padding-right"])],
+    .layout: [("Columns", ["gap", "resize-step"]), ("Screen padding", ["padding-per-monitor"] + paddingKeys)],
     .focus: [("Centering", ["center-focused-column", "always-center-single-column"]), ("Unfocused windows", ["inactive-opacity"]),
              ("Navigation", ["wrap-around"])],
     .hotkeys: [("Mouse", ["mouse-modifier"]),
                ("Columns", ["focus-left", "focus-right", "focus-first", "focus-last", "center-column", "move-left", "move-right"]),
                ("Width", ["grow-width", "shrink-width", "cycle-width-forward", "cycle-width-backward", "toggle-full-width"]),
-               ("Spaces", ["focus-space-down", "focus-space-up", "move-to-space-down", "move-to-space-up"] + (1...9).map { "move-to-space-\($0)" }),
+               ("Spaces", ["focus-space-down", "focus-space-up"] + (1...9).map { "focus-space-\($0)" } + ["move-to-space-down", "move-to-space-up"] + (1...9).map { "move-to-space-\($0)" }),
+               ("Spaces of the display that has focus", (1...9).map { "focus-space-slot-\($0)" } + (1...9).map { "move-to-space-slot-\($0)" }),
+               ("Displays", monitorWays.map { "focus-monitor-\($0)" } + monitorWays.map { "move-window-to-monitor-\($0)" }),
                ("Overview", ["overview"]), ("Floating windows", ["show-floating", "toggle-floating"])],
     .general: [("Startup", ["launch-at-login"]), ("Overview", ["overview-background", "overview-scale"])],
     .gestures: [("Actions", ["gesture-strip", "gesture-spaces", "gesture-overview"]),
@@ -97,6 +99,7 @@ func cards(_ page: Page) -> [(title: String, keys: [String])] {
 let descriptions: [String: (title: String, help: String)] = [
     "gap": ("Gap", "Between windows"),
     "resize-step": ("Resize step", "For Wider and Narrower, of the screen width"),
+    "padding-per-monitor": ("Per monitor", "Each display has its own padding"),
     "padding-top": ("Top", "From the menu bar"),
     "padding-bottom": ("Bottom", "From the Dock or the bottom of the screen"),
     "padding-left": ("Left", ""),
@@ -140,7 +143,14 @@ let descriptions: [String: (title: String, help: String)] = [
 
 func describe(_ key: String) -> (title: String, help: String) {
     if let known = descriptions[key] { return known }
+    if key.hasPrefix("focus-space-slot-"), let n = Int(key.dropFirst(17)) { return ("Desktop \(n)", "") }
+    if key.hasPrefix("move-to-space-slot-"), let n = Int(key.dropFirst(19)) { return ("Move window to Desktop \(n)", "") }
+    if key.hasPrefix("focus-space-"), let n = Int(key.dropFirst(12)) { return ("Desktop \(n)", "Numbers run across displays") }
     if key.hasPrefix("move-to-space-"), let n = Int(key.dropFirst(14)) { return ("Move window to Desktop \(n)", "") }
+    if let way = monitorWays.first(where: { key.hasSuffix("-monitor-\($0)") }) {
+        let side = ["up": "the display above", "down": "the display below", "left": "the display to the left", "right": "the display to the right"][way] ?? "the \(way) display"
+        return (key.hasPrefix("focus") ? "Focus \(side)" : "Move window to \(side)", "")
+    }
     return (key, "")
 }
 
