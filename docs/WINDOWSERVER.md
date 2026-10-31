@@ -135,6 +135,16 @@ The first part was seen on a virtual display beside one real display, with test 
 - A press posted with `CGEventSource` nil keeps `eventSourceUserData` on its way to a session tap, which tells nori's own presses from a person's: not looked at on its own yet. A key posted that way opens Mission Control like the real one (symbolic hotkey 32). `open -a "Mission Control"` toggled it too, by Dock's log, but a capture 1.4 s later showed plain desktops: the second of two toggles, or too early, wasn't told apart.
 - `NSScreen.visibleFrame` of the LG had no top inset, the built-in display 38. The real menu bar was hidden here, so that was only the notch. What it says with a menu bar shown on a display that isn't the main one: not verified.
 
+### Creating and removing Desktops (macOS 27)
+
+Looked for a way to add or remove a real Desktop from nori. None found that is clean; nothing here was called.
+
+- **Accessibility is closed.** Dock has a group with `AXIdentifier` `mc` (title "Mission Control"), the root of Hammerspoon's way (`mc.spaces.add`, `AXRemoveDesktop`), but with Mission Control open on screen it still has no children. `AXUIElementCopyElementAtPosition` over the row of Desktops gets the windows below it, not Dock. Verified. `CoreDockSendNotification("com.apple.expose.awake")` was sent too; whether it still opens Mission Control wasn't told apart. Ctrl+↑ posted as a key does.
+- **No Objective-C method for it.** `-addSpace:forDisplayUUID:` and `-removeSpace:` in Dock belong to the wallpaper manager, which is told of Spaces. `Spaces` and `ManagedSpace` have no add or remove. The buttons are Swift: `SpacesBarAddLayerController`, `SpacesBarCloseLayerController`, without `@objc` methods. Read from `dyld_info -objc`.
+- **A service is there, behind a private entitlement.** Dock's strings have `com.apple.dock.spaces`, `Connection denied. Expected com.apple.private.dock.spaces`, and near the performance tests (`com.apple.dock.ppt`) the messages `createSpaces`, `destroySpaces`, `switchSpace`, with `Invalid createSpaces message. No spacesCount.`. From strings only: protocols and what `destroySpaces` destroys weren't looked into.
+- `SLSSpaceCreate`, `SLSSpaceDestroy` and `SLSTransactionDestroySpace` make Spaces of WindowServer, which Dock's own list wouldn't have: not a Desktop in Mission Control. Not tried.
+- Left: calling Dock's Swift code from the payload, as yabai does by searching for its byte patterns per macOS version, or clicking + in Mission Control, at a place no API gives, with Mission Control showing for a moment.
+
 ## Granting Accessibility (macOS 27)
 
 - With Filesystem Protections off, root can write `kTCCServiceAccessibility` rows into `/Library/Application Support/com.apple.TCC/TCC.db` (schema version 36, journal mode `delete`). Rows aren't signed; the `integrity_flag` table is only `_sqlite3_integrity_check`'s result. Verified with an ad hoc signed probe app: `client` the bundle id, `client_type` 0, `auth_value` 2, `auth_reason` 4, `auth_version` 1, `flags` 0, `csreq` from `SecCodeCopyDesignatedRequirement` + `SecRequirementCopyData`, same as a row System Settings writes. Not tried with a Developer ID signature.
