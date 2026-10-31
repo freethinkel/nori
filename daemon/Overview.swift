@@ -302,7 +302,8 @@ func addButtonRect(_ i: Int) -> CGRect {
 }
 
 // On Space `sid`. The frame is in the Space's coordinates: scaled down with it, a button comes out at its size.
-func spaceButton(_ symbol: String, frame: NSRect, on sid: UInt64) -> NSWindow {
+// below: how far under its frame it is drawn, in those coordinates.
+func spaceButton(_ symbol: String, frame: NSRect, on sid: UInt64, below: CGFloat = 0) -> NSWindow {
     let window = NSWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
     window.isOpaque = false
     window.backgroundColor = .clear
@@ -318,13 +319,27 @@ func spaceButton(_ symbol: String, frame: NSRect, on sid: UInt64) -> NSWindow {
     view.layer?.cornerRadius = frame.height / 2
     window.contentView = view
     window.orderFrontRegardless()
-    _ = CGSSpaceAddWindowsAndRemoveFromSpaces(cid, sid, [window.windowNumber] as CFArray, 7)
-    window.animator().alphaValue = 1
+    fadeIn(window, on: sid, below: below)
     return window
+}
+
+// AppKit orders a window in a moment later and on the current Space, undoing a move and a transform made before that.
+// It has no Space until then (docs/WINDOWSERVER.md).
+func fadeIn(_ window: NSWindow, on sid: UInt64, below: CGFloat) {
+    guard window.isVisible else { return }  // the overview closed meanwhile
+    let wids = [window.windowNumber] as CFArray
+    guard (CGSCopySpacesForWindows(cid, 7, wids)?.takeRetainedValue() as? [UInt64])?.isEmpty == false else {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { fadeIn(window, on: sid, below: below) }
+        return
+    }
+    _ = CGSSpaceAddWindowsAndRemoveFromSpaces(cid, sid, wids, 7)
+    if below != 0 { send(["D \(window.windowNumber) 1 0 0 0 0 1 0 0 0 0 1 0 0 \(-below) 0 1"]) }
+    window.animator().alphaValue = 1
 }
 
 func showSpaceButtons() {
     guard desktopsEditable, let screen = nsScreen(of: overviewDisplay) else { return }
+    watchHover()
     let desktops = overviewSpaces.filter { !isFullscreen($0) }
     let removable = desktops.count > 1 ? desktops : []  // a display's last Desktop stays
     for sid in Array(closeButtons.keys) where !removable.contains(sid) { closeButtons.removeValue(forKey: sid)?.orderOut(nil) }
@@ -334,8 +349,7 @@ func showSpaceButtons() {
     }
     guard let last = desktops.last, addButton?.space != last else { return }
     addButton?.window.orderOut(nil)
-    let window = spaceButton("plus", frame: NSRect(x: screen.frame.midX - add / 2, y: screen.frame.minY + inset, width: add, height: add), on: last)
-    send(["D \(window.windowNumber) 1 0 0 0 0 1 0 0 0 0 1 0 0 \(-(inset + add + addButtonOffset / overviewScale)) 0 1"])
+    let window = spaceButton("plus", frame: NSRect(x: screen.frame.midX - add / 2, y: screen.frame.minY + inset, width: add, height: add), on: last, below: inset + add + addButtonOffset / overviewScale)
     addButton = (window, last)
 }
 
@@ -351,20 +365,77 @@ func showSpaceButtonsSoon() {
 }
 
 func hideSpaceButtons() {
+    stopWatchingHover()
     for window in closeButtons.values { window.orderOut(nil) }
     closeButtons = [:]
     addButton?.window.orderOut(nil)
     addButton = nil
 }
 
+func closeButtonSpace(at point: CGPoint) -> UInt64? {
+    overviewSpaces.enumerated().first { closeButtons[$0.element] != nil && closeButtonRect($0.offset).contains(point) }?.element
+}
+
+func isOverAddButton(_ point: CGPoint) -> Bool {
+    guard let sid = addButton?.space, let i = overviewSpaces.firstIndex(of: sid) else { return false }
+    return addButtonRect(i).contains(point)
+}
+
 func pressSpaceButton(at point: CGPoint) -> Bool {
-    for (i, sid) in overviewSpaces.enumerated() where closeButtons[sid] != nil && closeButtonRect(i).contains(point) {
+    if let sid = closeButtonSpace(at: point) {
         removeDesktop(sid)
         return true
     }
-    guard let sid = addButton?.space, let i = overviewSpaces.firstIndex(of: sid), addButtonRect(i).contains(point) else { return false }
+    guard isOverAddButton(point) else { return false }
     addDesktopInOverview()
     return true
+}
+
+// The pointer is a hand over a button. They are pictures, so this goes by the rects too. The app below sets its own
+// cursor a moment after a move and on entering its views, so moves over a button don't reach it, and the hand is set
+// again while the pointer stays. This tap is on only while the buttons are up: the main one would see every move, always.
+// nori is a background app, and macOS ignores its cursor without the connection property.
+@_silgen_name("CGSSetConnectionProperty") func CGSSetConnectionProperty(_ cid: Int32, _ target: Int32, _ key: CFString, _ value: CFTypeRef) -> Int32
+
+var hoverTap: CFMachPort?
+var handTimer: Timer?
+
+func watchHover() {
+    if hoverTap == nil {
+        _ = CGSSetConnectionProperty(cid, cid, "SetsCursorInBackground" as CFString, kCFBooleanTrue)
+        hoverTap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: 1 << CGEventType.mouseMoved.rawValue,
+            callback: { _, type, event, _ in
+                if type == .tapDisabledByTimeout && overviewOpen { watchHover() }
+                return type == .mouseMoved && hover(at: event.location) ? nil : Unmanaged.passUnretained(event)
+            },
+            userInfo: nil
+        )
+        if let hoverTap { CFRunLoopAddSource(CFRunLoopGetCurrent(), CFMachPortCreateRunLoopSource(nil, hoverTap, 0), .commonModes) }
+    }
+    if let hoverTap { CGEvent.tapEnable(tap: hoverTap, enable: true) }
+}
+
+func stopWatchingHover() {
+    if let hoverTap { CGEvent.tapEnable(tap: hoverTap, enable: false) }
+    showHand(false)
+}
+
+// Whether the point is over a button.
+func hover(at point: CGPoint) -> Bool {
+    let over = closeButtonSpace(at: point) != nil || isOverAddButton(point)
+    showHand(over)
+    return over
+}
+
+func showHand(_ show: Bool) {
+    guard show != (handTimer != nil) else { return }
+    handTimer?.invalidate()
+    handTimer = show ? .scheduledTimer(withTimeInterval: 0.03, repeats: true) { _ in NSCursor.pointingHand.set() } : nil
+    (show ? NSCursor.pointingHand : NSCursor.arrow).set()
 }
 
 func addDesktopInOverview() {
@@ -383,7 +454,7 @@ func addDesktopInOverview() {
 func overviewRefresh() {
     guard overviewOpen else { return }
     let target = overviewSpaces[overviewTarget]
-    useStack(on: display(of: target))
+    useStack(on: displays.first { $0.id == overviewDisplay.id } ?? overviewDisplay)  // the target may be the Desktop that went
     if let index = overviewSpaces.firstIndex(of: target) { overviewTarget = index }
     sendLayout(open: true, spring: false)
 }
