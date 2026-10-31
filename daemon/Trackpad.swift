@@ -20,7 +20,10 @@ func swallowSystemGesture() -> Bool {
     ourGesture(fingerCount) || CACurrentMediaTime() < systemGestureUntil && ourGesture(systemGestureFingers)
 }
 
-var swipeScale: CGFloat { CGDisplayBounds(CGMainDisplayID()).width * swipeSpeed }  // points per full trackpad width
+// A sideways swipe moves the strip of the display under the pointer, whichever has focus: the fingers aren't on
+// any display, and the pointer is where the eyes are. On lift that strip's column takes focus.
+var swipeSpace: UInt64 = 0
+var swipeScale: CGFloat = 0  // points per full trackpad width
 let swipeThreshold: CGFloat = 0.02  // trackpad widths before the direction is decided
 
 var gestureActive = false
@@ -58,8 +61,10 @@ func endSwipe() {
     if gestureActive {
         gestureActive = false
         // ponytail: fixed throw; real momentum would decay over frames
-        let rest = scroll(syncColumns().wins).snap(stripOffset - swipeVelocity * 8, focused: focusedIndex())
-        focusColumn(at: rest.index, offset: rest.offset)
+        onStrip(swipeSpace) {
+            let rest = scroll(syncColumns().wins).snap(stripOffset - swipeVelocity * 8, focused: focusedIndex())
+            focusColumn(at: rest.index, offset: rest.offset)
+        }
     }
     if spaceSwiping {
         spaceSwiping = false
@@ -134,7 +139,10 @@ func touchFrame(count: Int32, center: CGPoint?, spread: CGFloat = 0, time: CFTim
             return
         case "gesture-strip":
             gestureActive = true
-            stripOffset -= (swipeTravel.x - dx) * swipeScale  // the travel before this frame counts too
+            let under = pointerDisplay()
+            swipeSpace = under.current
+            swipeScale = under.frame.width * swipeSpeed
+            onStrip(swipeSpace) { stripOffset -= (swipeTravel.x - dx) * swipeScale }  // the travel before this frame counts too
         default:
             swipeIgnored = true
             return
@@ -143,8 +151,10 @@ func touchFrame(count: Int32, center: CGPoint?, spread: CGFloat = 0, time: CFTim
     // Fingers right: strip right, so content follows the fingers like natural scrolling.
     let delta = dx * swipeScale
     swipeVelocity = swipeVelocity * 0.5 + delta * 0.5
-    stripOffset -= delta
-    layout(immediate: true)
+    onStrip(swipeSpace) {
+        stripOffset -= delta
+        layout(immediate: true)
+    }
 }
 
 // Touches come from MultitouchSupport (private framework, same as OmniWM). Set macOS horizontal gestures (swipe between

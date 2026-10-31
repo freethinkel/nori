@@ -26,9 +26,60 @@ func focusedIndex() -> Int {
     return columnCenters.indices.min { abs(columnCenters[$0] - stripOffset) < abs(columnCenters[$1] - stripOffset) } ?? 0
 }
 
-// Each Space keeps its own strip; the one in use lives in the globals above.
+// Each Space keeps its own strip; the one in use lives in the globals above. That is the focused display's, unless
+// onStrip has put another one there.
 var currentSpace: UInt64 = 0
 var savedStrips: [UInt64: (columns: [UInt32], centers: [CGFloat], offset: CGFloat)] = [:]
+var stripSpace: UInt64?  // set by onStrip
+
+func swapStrip(to space: UInt64) {
+    guard space != currentSpace else { return }
+    savedStrips[currentSpace] = (columns, columnCenters, stripOffset)
+    (columns, columnCenters, stripOffset) = savedStrips[space] ?? ([], [], 0)
+    currentSpace = space
+}
+
+// Runs body with the strip of a Space on another display in use. It must be on screen: syncColumns goes by the
+// on-screen windows, and would empty a strip that isn't.
+func onStrip<T>(_ space: UInt64, _ body: () -> T) -> T {
+    let outer = stripSpace
+    stripSpace = space
+    swapStrip(to: space)
+    defer {
+        stripSpace = outer
+        swapStrip(to: outer ?? CGSGetActiveSpace(cid))
+    }
+    return body()
+}
+
+// What the displays without focus show.
+func otherStrips() -> [UInt64] {
+    guard displays.count > 1 else { return [] }
+    let active = CGSGetActiveSpace(cid)
+    return displays.map(\.current).filter { $0 != active }
+}
+
+// Every strip on screen, after something that may have moved windows on any display.
+func layoutAll() {
+    refreshDisplays()
+    layout(immediate: false)
+    for space in otherStrips() { onStrip(space) { layout(immediate: false) } }
+}
+
+// Windows that came or went on the displays without focus. Nothing takes focus there: a new window is just shown.
+func pollOtherDisplays() {
+    for space in otherStrips() {
+        onStrip(space) {
+            let before = columns
+            let sync = syncColumns()
+            if let index = sync.inserted {
+                stripFocus[space] = sync.wins[index].id
+                stripOffset = scroll(sync.wins).rest(index, from: stripOffset, previous: nil)
+            }
+            if columns != before { layout(immediate: false) }
+        }
+    }
+}
 
 // Windows of every Space as of the last real look at them, for while a Space layout runs.
 // ponytail: entries of closed windows stay, like sizedTo's.
@@ -46,12 +97,8 @@ var originalFrames: [UInt32: CGRect] = [:]
 func syncColumns() -> (wins: [Win], inserted: Int?, front: UInt32?) {
     // The Space id is right even mid-slide, so the strip follows it first: keeping the old Space's strip there made
     // Option+H/L focus a window of the old Space, and macOS switched back to it.
-    let space = mainSpace()
-    if space != currentSpace {
-        savedStrips[currentSpace] = (columns, columnCenters, stripOffset)
-        (columns, columnCenters, stripOffset) = savedStrips[space] ?? ([], [], 0)
-        currentSpace = space
-    }
+    let space = stripSpace ?? CGSGetActiveSpace(cid)
+    swapStrip(to: space)
     guard !spaceLayoutBusy else { return (withPendingWidths(columns.compactMap { lastSeen[$0] }), nil, nil) }
     let live = placeByRules(windows(on: space), on: space).filter { !movedAway.contains($0.id) }
     let byId = Dictionary(live.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
@@ -100,22 +147,25 @@ var instantMoves = false  // a `--instant` request is being handled: "M" instead
 // With another display around, a window must not really cross the edge of its own (keptOn in Scroll.swift): " lo hi"
 // for "S" and "M" says how far it may go, and the payload draws the rest. Nothing with one display: no limit.
 func moveLimits(_ width: CGFloat) -> String {
-    guard otherDisplays else { return "" }
-    let range = keptOn(CGDisplayBounds(CGMainDisplayID()), width: width)
+    guard displays.count > 1 else { return "" }
+    let range = keptOn(display(of: currentSpace).frame, width: width)
     return " \(range.lowerBound) \(range.upperBound)"
 }
 
 // Where a window drawn at x really is. CGWindowList gives the drawn x, Accessibility moves the real window.
 func realX(_ x: CGFloat, width: CGFloat) -> CGFloat {
-    guard otherDisplays else { return x }
-    let range = keptOn(CGDisplayBounds(CGMainDisplayID()), width: width)
+    guard displays.count > 1 else { return x }
+    let range = keptOn(display(of: currentSpace).frame, width: width)
     return min(max(x, range.lowerBound), range.upperBound)
 }
 
-// Between the menu bar and the Dock, minus padding. CG y grows down from the top of the main display.
+// Between the menu bar and the Dock, minus padding, on the strip's display. Each display has its own menu bar, the
+// Dock is on one. CG y grows down from the top of the main display.
 func stripArea() -> CGRect {
-    let screen = CGDisplayBounds(CGMainDisplayID())
-    let visible = NSScreen.screens.first.map { (top: $0.frame.maxY - $0.visibleFrame.maxY, bottom: $0.visibleFrame.minY - $0.frame.minY) } ?? (0, 0)
+    let shown = display(of: currentSpace)
+    let screen = shown.frame
+    let nsScreen = NSScreen.screens.first { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == shown.id }
+    let visible = nsScreen.map { (top: $0.frame.maxY - $0.visibleFrame.maxY, bottom: $0.visibleFrame.minY - $0.frame.minY) } ?? (0, 0)
     let top = screen.minY + visible.top + paddingTop
     return CGRect(x: screen.minX + paddingLeft, y: top, width: screen.width - paddingLeft - paddingRight,
                   height: screen.maxY - visible.bottom - paddingBottom - top)
@@ -123,10 +173,10 @@ func stripArea() -> CGRect {
 
 // immediate: "M" moves right away (used while the finger is down). Otherwise "S" sets a target and the payload eases there.
 func layout(immediate: Bool) {
-    let screen = CGDisplayBounds(CGMainDisplayID())
+    let wins = syncColumns().wins
+    let screen = display(of: currentSpace).frame
     let area = stripArea()
     let top = area.minY, height = area.height, centerX = area.midX
-    let wins = syncColumns().wins
     let strip = scroll(wins), bounds = strip.bounds
     columnCenters = strip.centers
     let clamped = min(max(bounds.lowerBound, stripOffset), bounds.upperBound)
@@ -160,7 +210,13 @@ func layout(immediate: Bool) {
         resized = true
     }
     // An app that resizes may commit its frame at the position it last knew; put it back in its column.
-    if resized { DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { layout(immediate: false) } }
+    if resized {
+        let space = currentSpace
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            refreshDisplays()
+            if otherStrips().contains(space) { onStrip(space) { layout(immediate: false) } } else { layout(immediate: false) }
+        }
+    }
 }
 
 // inactive-opacity: the strip's unfocused windows are translucent, the focused one opaque, so the focus shows.

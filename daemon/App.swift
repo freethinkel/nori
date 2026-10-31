@@ -42,7 +42,7 @@ func reloadSettings() {
     configFile = readConfig()
     settingsModel.refresh()
     applyLaunchAtLogin()
-    layout(immediate: false)
+    layoutAll()
 }
 
 final class MenuActions: NSObject, NSMenuDelegate {

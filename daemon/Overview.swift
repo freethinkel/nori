@@ -52,7 +52,8 @@ func pressDesktop(_ number: Int) {
 func pressSpace(_ sid: UInt64) {
     guard sid != CGSGetActiveSpace(cid) else { return }
     if let number = spaces().first(where: { $0.id == sid })?.number { return pressDesktop(number) }
-    let stack = displaySpaces()
+    refreshDisplays()
+    let stack = stack(on: display(of: sid))
     guard let index = stack.ids.firstIndex(of: sid) else { return }
     let steps = index - stack.current
     if !postSymbolicHotkey(steps > 0 ? 81 : 79, times: abs(steps)) {
@@ -74,18 +75,10 @@ func switchSpaceInstant(to number: Int) -> Bool {
     return true
 }
 
-// Desktops and fullscreen Spaces of the main display, in Mission Control order: the stack the overview shows and
-// Space switches slide through.
+// The stack the overview shows and Space switches slide through: the main display's.
 func displaySpaces() -> (ids: [UInt64], current: Int) {
-    let active = mainSpace()
-    let displays = CGSCopyManagedDisplaySpaces(cid).takeRetainedValue() as? [[String: Any]] ?? []
-    for display in displays {
-        let spaces = (display["Spaces"] as? [[String: Any]] ?? [])
-            .filter { [0, 4].contains($0["type"] as? Int) }  // 0 desktop, 4 fullscreen
-            .compactMap { ($0["id64"] as? NSNumber)?.uint64Value }
-        if let current = spaces.firstIndex(of: active) { return (spaces, current) }
-    }
-    return ([active], 0)
+    refreshDisplays()
+    return stack(on: displays[0])
 }
 
 // The strip must not look at windows while a Space layout is on (see syncColumns). The payload says when one
@@ -213,7 +206,7 @@ func closeOverview(at index: Int) {
 func resetOverview() {
     guard overviewOpen else { return }
     overviewOpen = false
-    overviewTarget = overviewSpaces.firstIndex(of: mainSpace()) ?? overviewTarget
+    overviewTarget = stack(on: displays[0]).current
     sendLayout(open: false, spring: false)
 }
 

@@ -53,7 +53,20 @@ func observe(_ app: NSRunningApplication) {
     axObservers[pid] = observer
 }
 
+// A display came, went or changed size, or the main display changed. macOS goes on moving windows for a while after
+// that, so every strip is laid out once it has stopped: windows of a removed display are on a Desktop of another one
+// by then, and join that strip when it is next shown.
+var displaysSettling: DispatchWorkItem?
+
+func displaysChanged() {
+    displaysSettling?.cancel()
+    let work = DispatchWorkItem { layoutAll() }
+    displaysSettling = work
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1, execute: work)
+}
+
 func startEvents() {
+    NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { _ in displaysChanged() }
     NSWorkspace.shared.runningApplications.forEach(observe)
     let center = NSWorkspace.shared.notificationCenter
     func app(_ note: Notification) -> NSRunningApplication? { note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication }

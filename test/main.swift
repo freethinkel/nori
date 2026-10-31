@@ -128,12 +128,37 @@ assert(strip(wide, "on-overflow").rest(1, from: 200, previous: nil) == 410)
 assert(strip(narrow, "on-overflow").rest(2, from: 350, previous: 0) == 350)
 assert(strip(wide, "on-overflow").bounds == 0...1220 && strip(wide, "on-overflow").snap(600, focused: 0) == (610, 1))
 
-// A window's center stays on its display, even for an odd width: past the first or last point it would be handed over.
-let shown = CGRect(x: -1000, y: 0, width: 1000, height: 800)
-assert(keptOn(shown, width: 300) == -1149 ... -151)
-assert(keptOn(shown, width: 301).lowerBound + 150.5 > shown.minX && keptOn(shown, width: 301).upperBound + 150.5 < shown.maxX)
-
 print("scroll: ok")
+
+// Displays: the main one, one left of it (negative x), a short one right of it and one above that one.
+let main = CGRect(x: 0, y: 0, width: 3008, height: 1692), left = CGRect(x: -1920, y: 200, width: 1920, height: 1080)
+let right = CGRect(x: 3008, y: 800, width: 1000, height: 600), above = CGRect(x: 3008, y: -700, width: 1000, height: 600)
+let frames = [main, left, right, above]
+
+// A window's center stays on its display, even for an odd width: past the first or last point it would be handed over.
+assert(keptOn(left, width: 300) == -2069 ... -151)
+assert(keptOn(left, width: 301).lowerBound + 150.5 > left.minX && keptOn(left, width: 301).upperBound + 150.5 < left.maxX)
+
+// A point: on a display, the one it is on; between them, the nearest. Edges belong to the display that starts there.
+assert(displayIndex(at: CGPoint(x: -1, y: 300), in: frames) == 1 && displayIndex(at: CGPoint(x: 0, y: 300), in: frames) == 0)
+assert(displayIndex(at: CGPoint(x: 3500, y: 600), in: frames) == 2)  // in the gap between the two on the right
+assert(displayIndex(at: CGPoint(x: -3000, y: 1300), in: frames) == 1 && displayIndex(at: .zero, in: []) == nil)
+
+// Left and right need an overlap across the way, up and down too, and the nearest center wins.
+assert(neighbour(of: 0, in: frames, "left") == 1 && neighbour(of: 1, in: frames, "right") == 0)
+assert(neighbour(of: 0, in: frames, "right") == 2)  // the one above doesn't reach the main display's top
+assert(neighbour(of: 2, in: frames, "left") == 0 && neighbour(of: 3, in: frames, "left") == nil)
+assert(neighbour(of: 2, in: frames, "up") == 3 && neighbour(of: 3, in: frames, "down") == 2)
+assert(neighbour(of: 1, in: frames, "left") == nil && neighbour(of: 0, in: frames, "up") == nil)
+let nearest = [main, CGRect(x: 3008, y: 0, width: 1000, height: 800), CGRect(x: 4008, y: 0, width: 1000, height: 800)]
+assert(neighbour(of: 0, in: nearest, "right") == 1 && neighbour(of: 2, in: nearest, "left") == 1)
+
+// Next and previous go round left to right, then top to bottom; alone, nowhere.
+assert(neighbour(of: 1, in: frames, "next") == 0 && neighbour(of: 0, in: frames, "next") == 3 && neighbour(of: 3, in: frames, "next") == 2)
+assert(neighbour(of: 2, in: frames, "next") == 1 && neighbour(of: 1, in: frames, "previous") == 2)
+assert(neighbour(of: 0, in: [main], "next") == nil && neighbour(of: 0, in: [main], "previous") == nil)
+
+print("displays: ok")
 
 // Rules: a table needs app and an action; title must be a valid regex, width 0 < n <= 100.
 assert(makeRule(["app": .string("Safari"), "title": .string("Picture in Picture"), "floating": .bool(true)])?.title == "Picture in Picture")

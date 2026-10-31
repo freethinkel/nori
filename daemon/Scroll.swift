@@ -6,13 +6,6 @@
 
 import CoreGraphics
 
-// How far the left edge of a window this wide may go and stay on `display`. WindowServer hands a window over the
-// moment its center leaves the display it is on, to the display there or, with none there, to the main one's Space
-// (docs/WINDOWSERVER.md). One point in from each edge: a center exactly on it may count for the neighbour.
-func keptOn(_ display: CGRect, width: CGFloat) -> ClosedRange<CGFloat> {
-    (display.minX - width / 2).rounded(.up) + 1...(display.maxX - width / 2).rounded(.down) - 1
-}
-
 struct Scroll {
     let widths: [CGFloat]  // columns left to right
     let view: CGFloat      // the usable width: screen minus padding

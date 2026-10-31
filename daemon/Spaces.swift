@@ -1,7 +1,7 @@
 // Option+J/K (config: focus-space-down, focus-space-up): Space below / above, like niri's workspace down / up.
 // Fullscreen Spaces are in the stack where Mission Control has them. The switch itself is Dock's, see pressSpace.
 // In the overview they move the centered Space instead, see below.
-// ponytail: main display only, Desktops 1…16 (the ones that have such a shortcut).
+// ponytail: Desktops 1…16 (the ones that have such a shortcut).
 
 import Cocoa
 
@@ -20,25 +20,59 @@ func isFullscreen(_ space: UInt64) -> Bool {
     return fullscreenSpaces[space] ?? false  // not listed (yet): asked again next time
 }
 
-// Another display with Spaces of its own is around. NSScreen lists a sleeping display too, unlike
-// CGGetActiveDisplayList, which goes empty when they all sleep.
-var otherDisplays: Bool { NSScreen.screens.count > 1 && NSScreen.screensHaveSeparateSpaces }
+// What a display shows. With "Displays have separate Spaces" off there is one entry, for the main display, whatever
+// is connected: macOS keeps one list of Spaces, and calls it "Main" (not verified, that takes a logout).
+struct Display {
+    let id: CGDirectDisplayID
+    let uuid: String
+    let spaces: [UInt64]  // Desktops and fullscreen Spaces in Mission Control order: the stack the overview shows
+    let current: UInt64   // the active Space, on the display that has focus
+    var frame: CGRect { CGDisplayBounds(id) }
+}
 
-// The Space the main display shows: the one nori manages. CGSGetActiveSpace answers for the display that has focus,
-// and that display's windows aren't nori's: laid out in the main display's coordinates, they would leave their own.
-func mainSpace() -> UInt64 {
+let separateSpaces = NSScreen.screensHaveSeparateSpaces
+
+// Main display first. Read again before each use that needs the current Spaces: macOS tells of no Space changing on a
+// display without focus. Kept when macOS lists none, as it may in the middle of a change.
+var displays = [Display(id: CGMainDisplayID(), uuid: "", spaces: [], current: 0)]
+
+func refreshDisplays() {
     let active = CGSGetActiveSpace(cid)
-    guard otherDisplays, let uuid = CGDisplayCreateUUIDFromDisplayID(CGMainDisplayID())?.takeRetainedValue(),
-          let id = CFUUIDCreateString(nil, uuid) as String? else { return active }
-    let displays = CGSCopyManagedDisplaySpaces(cid).takeRetainedValue() as? [[String: Any]] ?? []
-    let main = displays.first { $0["Display Identifier"] as? String == id }
-    return ((main?["Current Space"] as? [String: Any])?["id64"] as? NSNumber)?.uint64Value ?? active
+    let list = CGSCopyManagedDisplaySpaces(cid).takeRetainedValue() as? [[String: Any]] ?? []
+    let read = list.map { entry -> Display in
+        let uuid = entry["Display Identifier"] as? String ?? ""
+        let id = CFUUIDCreateFromString(nil, uuid as CFString).map { CGDisplayGetDisplayIDFromUUID($0) } ?? 0
+        let spaces = (entry["Spaces"] as? [[String: Any]] ?? [])
+            .filter { [0, 4].contains($0["type"] as? Int) }  // 0 desktop, 4 fullscreen
+            .compactMap { ($0["id64"] as? NSNumber)?.uint64Value }
+        let listed = ((entry["Current Space"] as? [String: Any])?["id64"] as? NSNumber)?.uint64Value ?? spaces.first ?? 0
+        return Display(id: id != 0 ? id : CGMainDisplayID(), uuid: uuid, spaces: spaces, current: spaces.contains(active) ? active : listed)
+    }
+    if !read.isEmpty { displays = read.filter { $0.id == CGMainDisplayID() } + read.filter { $0.id != CGMainDisplayID() } }
+}
+
+func display(of space: UInt64) -> Display { displays.first { $0.spaces.contains(space) } ?? displays[0] }
+
+// The display that has focus, and the one under the pointer, as of now.
+func focusedDisplay() -> Display {
+    refreshDisplays()
+    return display(of: CGSGetActiveSpace(cid))
+}
+
+func pointerDisplay() -> Display {
+    refreshDisplays()
+    return displays[displayIndex(at: CGEvent(source: nil)?.location ?? .zero, in: displays.map(\.frame)) ?? 0]
+}
+
+// The stack a display's Spaces slide through, and the index of the one it shows.
+func stack(on display: Display) -> (ids: [UInt64], current: Int) {
+    display.spaces.isEmpty ? ([display.current], 0) : (display.spaces, display.spaces.firstIndex(of: display.current) ?? 0)
 }
 
 // The Desktop number `delta` Desktops below (+) or above (-) the current one on its display, for moving a window
 // there; fullscreen Spaces don't count. Past either end: nil, or round to the other end with wrap-around.
 func neighbourDesktop(_ delta: Int) -> Int? {
-    let all = spaces(), active = mainSpace()
+    let all = spaces(), active = CGSGetActiveSpace(cid)
     guard let display = all.first(where: { $0.id == active })?.display else { return nil }
     let desktops = all.filter { $0.display == display && !$0.fullscreen }
     guard let i = desktops.firstIndex(where: { $0.id == active }) else { return nil }
@@ -46,10 +80,10 @@ func neighbourDesktop(_ delta: Int) -> Int? {
     return desktops.indices.contains(j) ? desktops[j].number : nil
 }
 
-// The Space `delta` below (+) or above (-) the current one in the display's stack (displaySpaces), fullscreen ones
-// included. Past either end: nil, or round to the other end with wrap-around.
+// The Space `delta` below (+) or above (-) the current one in the focused display's stack, fullscreen ones included.
+// Past either end: nil, or round to the other end with wrap-around.
 func neighbourSpace(_ delta: Int) -> UInt64? {
-    let stack = displaySpaces()
+    let stack = stack(on: focusedDisplay())
     let j = wrapAround ? (stack.current + delta + stack.ids.count) % stack.ids.count : stack.current + delta
     return stack.ids.indices.contains(j) ? stack.ids[j] : nil
 }

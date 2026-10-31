@@ -362,9 +362,12 @@ func postSymbolicHotkey(_ id: Int, times: Int = 1) -> Bool {
 }
 
 func focusWindow(_ listed: Listed, instant: Bool = false) {
+    refreshDisplays()
     let active = CGSGetActiveSpace(cid)
-    if listed.spaces.contains(active) {
-        if let index = columns.firstIndex(of: listed.win.id) { focusColumn(at: index) } else { focus(listed.win) }
+    if let shown = displays.map(\.current).first(where: listed.spaces.contains) {
+        onStrip(shown) {
+            if let index = columns.firstIndex(of: listed.win.id) { focusColumn(at: index) } else { focus(listed.win) }
+        }
         return
     }
     // Accessibility only sees windows of the current Space, so go there first, and focus once Dock has made it active
