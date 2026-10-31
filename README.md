@@ -19,6 +19,7 @@ It's a prototype. WindowServer moves the windows, not Accessibility. A dylib loa
 - Fullscreen Spaces sit in the vertical stack where Mission Control has them, so Opt+J/K, the swipes and the overview reach them. nori switches to one with Dock's "Move left/right a space" shortcut, see [macOS settings](#3-macos-settings).
 - Spaces switch vertically, on the same curve as windows. nori catches every "Switch to Desktop N" press, from the keyboard, from Opt+J/K or from `nori focus space`. Dock still switches the Space and the payload draws the slide. If nori quits or crashes, Dock goes back to its usual horizontal animation.
 - An overview like niri's shows all Spaces of the display stacked and scaled down, with live windows. Four fingers drive it. It follows the swipe, stretches past fully open or closed, and on lift springs open or shut depending on how fast you threw it.
+- Every display has its own strips, one per Space, laid out from that display's size, menu bar and Dock. See [Several displays](#several-displays).
 
 ## Setup
 
@@ -133,7 +134,22 @@ Every row with a config name can be rebound in `[bindings]`, or unbound with `"n
 | Opt+F | every window of this Space outside the strip (floating rules, dialogs, panels, PiP) comes above the strip's. Focus stays where it was. Config name `show-floating` |
 | Opt+Shift+V | the focused window leaves the strip and floats in the middle of the screen at 2/3 of its width and height; again on that window puts it back right of the focused column, at its old width. nori remembers it across restarts. Config name `toggle-floating` |
 | in the overview: H/L or ←/→, J/K or ↓/↑, Return | move through the centered Space's columns, bring the Space below or above to the center, pick it |
+| no keys by default | focus the display on that side, or send the focused window there with focus following it. Config names `focus-monitor-left`, `-right`, `-up`, `-down`, `-next`, `-previous` and `move-window-to-monitor-` with the same ways |
 | 4 fingers up / down | the overview follows the swipe and settles open or closed on lift. This replaces Mission Control on four fingers, with Mission Control's gesture turned off while nori runs |
+
+## Several displays
+
+With "Displays have separate Spaces" on, the macOS default in System Settings → Desktop & Dock, each display shows its own Space and has its own strips. `gap` and the paddings are the same everywhere. Displays can differ in size, scale and refresh rate, and sit on any side of the main one.
+
+- Keys and the CLI act on the display that has focus, the one macOS gives the active menu bar to. So do a click and Cmd+Tab: click a window on another display and its strip scrolls to it.
+- Swipes act on the display under the pointer, whichever has focus: the fingers aren't on any display, and the pointer is where you are looking. On lift focus goes there.
+- A Space switch slides on its own display and the others stay still. "Switch to Desktop N" can land on any display, since Desktop numbers run across them, like `nori focus space N`, `move-to-space-N` and a rule's `space = N`: a window sent to another display's Desktop joins the strip there.
+- The overview opens on one display: the focused one for the key, the one under the pointer for a swipe. The others stay as they are, and a click on one closes the overview. `overview-background = "blur"` uses that display's wallpaper.
+- A window you drag to another display joins that display's strip, right of its focused column.
+- `focus-monitor-*` and `move-window-to-monitor-*` go by position, as in niri: left and right need a display that overlaps this one's height, up and down its width, and the nearest center wins. Next and previous go round, left to right, then top to bottom.
+- When you connect or remove a display, or change its resolution or the main display, every strip is laid out again about a second later, once macOS has stopped moving windows. macOS puts the windows of a removed display on the first Desktop of the display that is left, and they join that strip when it is shown. Connect it again and macOS brings them back.
+
+With "Displays have separate Spaces" off, one Space spans all displays. The strip stays on the main display. Windows on the others are left alone, unless they were in the strip already: dragged away they come back, and a column past the edge shows up on the display there. The overview and the Space swipe are off, and Spaces switch with Dock's own slide.
 
 ## Config
 
@@ -196,7 +212,7 @@ space = 3
 
 Missing numbers are 0, unless a default is shown above. A missing binding keeps the default shown above; `"none"` unbinds the action. A binding is modifiers and one key joined by `+`. Modifiers are `option` or `alt`, `ctrl`, `cmd` and `shift`. The key is a letter, a digit, `-`, `=`, `,`, `.`, `left`, `right`, `up` or `down`, and nori reads it as a physical key on the US layout, so the binding stays put when you switch layouts.
 
-`overview-background = "blur"` puts the current wallpaper of the main display, blurred and dimmed by 30%, around and between the Spaces in the overview. It is read when the overview opens, so a wallpaper change shows up on the next open. `overview-scale` takes effect on the next open too. The payload learns it from the daemon, so after updating from a version without this setting it needs a reload (Restart Dock and Reload Payload in the menu).
+`overview-background = "blur"` puts the current wallpaper of the display, blurred and dimmed by 30%, around and between the Spaces in the overview. It is read when the overview opens, so a wallpaper change shows up on the next open. `overview-scale` takes effect on the next open too. The payload learns it from the daemon, so after updating from a version without this setting it needs a reload (Restart Dock and Reload Payload in the menu).
 
 A gesture is 3, 4 or 5 fingers and a way, or `"none"`. Each action takes only the way it moves: `sideways` for the strip, `vertical` for Spaces, `vertical` or `pinch` for the overview, where closing the fingers in opens it and spreading them closes it. A swipe belongs to one action: in Settings, picking one in use moves the other action to the fingers this one left, and in the file the first of strip, Spaces, overview wins. macOS gets the swipes of a finger count no action is on. `leave-system-gestures = true` keeps Mission Control and App Exposé on from the next launch. macOS may then act on nori's swipes too, so turn off nori's gestures on the finger count they use.
 
@@ -263,9 +279,11 @@ nori focus left|right|first|last        # a column of the current Space
 nori focus column N                     # column N on the current Space, counting from 1
 nori focus space N|up|down              # Desktop N or the neighbour, through "Switch to Desktop N"
 nori focus window WID                   # a window by id, switching Spaces if needed
+nori focus monitor left|right|up|down|next|previous   # the display on that side
                                         # any focus takes --instant: no slide, no ease
 nori move left|right                    # the focused window one column over
 nori move space N|up|down               # the focused window to Desktop N or the neighbour
+nori move monitor left|right|up|down|next|previous    # the focused window to that display, focus with it
 nori width grow|shrink                  # by resize-step
 nori width next|previous                # the next of 1/3, 1/2, 2/3
 nori width toggle-full                  # full width, and back
@@ -288,7 +306,7 @@ A Space has `id`, `number`, `display`, `type`, `isFocused`, `isVisible`, `isAnim
 
 A bar can skip the CLI and talk to the socket `/tmp/nori-ctl_$USER.socket` itself. A request is the CLI's arguments joined by tabs, one line, like `query\tspaces\n` or `subscribe\n`. nori answers and closes the connection, except after `subscribe`. The socket path and this format are public: they change only with a note in the release.
 
-A window has `id`, `pid`, `app`, `bundleId`, `title`, `space`, `spaceId`, `spaceType`, `column`, `isFocused`, `isOnScreen`, `isFloating` and `frame`. `space` is the Desktop number, missing for a window in a fullscreen app's Space. `spaceType` is that Space's `type`, `desktop` or `fullscreen`. `column` counts from 1 and is missing for windows outside the strip. `--app` matches the app name or bundle id in any case. Desktops count from 1 across all displays, like the system shortcuts. Fullscreen Spaces have no number, and their `type` is `fullscreen`.
+A window has `id`, `pid`, `app`, `bundleId`, `title`, `space`, `spaceId`, `spaceType`, `display`, `column`, `isFocused`, `isOnScreen`, `isFloating` and `frame`. `space` is the Desktop number, missing for a window in a fullscreen app's Space. `spaceType` is that Space's `type`, `desktop` or `fullscreen`, and `display` its `display`, the UUID macOS has for that display. `column` counts from 1 and is missing for windows outside the strip. `--app` matches the app name or bundle id in any case. Desktops count from 1 across all displays, like the system shortcuts. Fullscreen Spaces have no number, and their `type` is `fullscreen`.
 
 nori sees the titles of windows on other Spaces only with Screen Recording permission. When you run it from a terminal, the terminal needs that permission. Titles on the current Space come from Accessibility.
 
@@ -298,7 +316,9 @@ nori sees the titles of windows on other Spaces only with Screen Recording permi
 
 - One window per column.
 - nori learns about new windows and focus changes from Accessibility and NSWorkspace notifications. If a window closes and focus doesn't move, nori notices on its next poll, up to a second later.
-- Main display only.
+- One Space layout at a time. A Space switch or the overview on one display ends one still running on another where it is, with its Space shown.
+- With several displays a column past the edge of its display isn't really there: WindowServer would hand it to the next display, so it stays on its own and a window transform draws it the rest of the way. A sheet attached to such a column shows at the real place.
+- A display that comes back gets new Spaces from macOS, so its strips start over: the same windows, in the order they opened.
 - On quit, windows go back to where they were before nori. Windows of the current Space get their size back too; Accessibility doesn't reach other Spaces, so windows there keep the size nori gave them. After a crash windows stay where nori put them until the next nori quits: it remembers their frames in `~/Library/Application Support/nori/strips.json`.
 
 ## Analytics

@@ -41,12 +41,13 @@ func refreshDisplays() {
     let list = CGSCopyManagedDisplaySpaces(cid).takeRetainedValue() as? [[String: Any]] ?? []
     let read = list.map { entry -> Display in
         let uuid = entry["Display Identifier"] as? String ?? ""
+        // "Main" parses as a zero UUID, which gives display 1: no such display.
         let id = CFUUIDCreateFromString(nil, uuid as CFString).map { CGDisplayGetDisplayIDFromUUID($0) } ?? 0
         let spaces = (entry["Spaces"] as? [[String: Any]] ?? [])
             .filter { [0, 4].contains($0["type"] as? Int) }  // 0 desktop, 4 fullscreen
             .compactMap { ($0["id64"] as? NSNumber)?.uint64Value }
         let listed = ((entry["Current Space"] as? [String: Any])?["id64"] as? NSNumber)?.uint64Value ?? spaces.first ?? 0
-        return Display(id: id != 0 ? id : CGMainDisplayID(), uuid: uuid, spaces: spaces, current: spaces.contains(active) ? active : listed)
+        return Display(id: CGDisplayIsOnline(id) != 0 ? id : CGMainDisplayID(), uuid: uuid, spaces: spaces, current: spaces.contains(active) ? active : listed)
     }
     if !read.isEmpty { displays = read.filter { $0.id == CGMainDisplayID() } + read.filter { $0.id != CGMainDisplayID() } }
 }

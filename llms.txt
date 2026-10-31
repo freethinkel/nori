@@ -51,6 +51,8 @@ move-right = "option+shift+l"
 move-to-space-down = "option+shift+j"  # send the focused window to the Space below / above
 move-to-space-up = "option+shift+k"
 move-to-space-1 = "option+shift+1"  # send the focused window to Desktop 1; move-to-space-1 … move-to-space-9
+focus-monitor-left = "none"         # focus the display on that side: -left, -right, -up, -down, -next, -previous
+move-window-to-monitor-left = "none"  # send the focused window there, focus with it; the same six ways
 
 [[rule]]
 app = "Telegram"
@@ -61,7 +63,7 @@ Top-level keys are only `gap`, `padding-top`, `padding-bottom`, `padding-left`, 
 
 ## Bindings
 
-The only bindable actions are the ones in the `[bindings]` block above: `focus-left`, `focus-right`, `focus-first`, `focus-last`, `focus-space-down`, `focus-space-up`, `center-column`, `overview`, `show-floating`, `toggle-floating`, `grow-width`, `shrink-width`, `cycle-width-forward`, `cycle-width-backward`, `toggle-full-width`, `move-left`, `move-right`, `move-to-space-down`, `move-to-space-up` and `move-to-space-1` … `move-to-space-9`. A missing one keeps its default; `"none"` unbinds it. Every action is also a CLI command (`nori focus left`, `nori move space up`, `nori width toggle-full`, `nori center`, `nori overview`, `nori show floating`, see `nori help`), for people who drive nori from Raycast, Hammerspoon or a bar.
+The only bindable actions are the ones in the `[bindings]` block above: `focus-left`, `focus-right`, `focus-first`, `focus-last`, `focus-space-down`, `focus-space-up`, `center-column`, `overview`, `show-floating`, `toggle-floating`, `grow-width`, `shrink-width`, `cycle-width-forward`, `cycle-width-backward`, `toggle-full-width`, `move-left`, `move-right`, `move-to-space-down`, `move-to-space-up`, `move-to-space-1` … `move-to-space-9`, and `focus-monitor-` and `move-window-to-monitor-` with `left`, `right`, `up`, `down`, `next` or `previous`. A missing one keeps its default; `"none"` unbinds it. The display actions are `"none"` by default: someone with several displays picks keys for them, like `ctrl+option+left`. Every action is also a CLI command (`nori focus left`, `nori move space up`, `nori focus monitor right`, `nori move monitor right`, `nori width toggle-full`, `nori center`, `nori overview`, `nori show floating`, see `nori help`), for people who drive nori from Raycast, Hammerspoon or a bar.
 
 A binding is modifiers and one key joined by `+`, like `"ctrl+shift+1"`. Modifiers: `option` (or `alt`, `opt`), `ctrl` (or `control`), `cmd` (or `command`), `shift`. The key is one letter `a`–`z`, a digit `0`–`9`, `-`, `=`, `,`, `.`, `left`, `right`, `up` or `down`. No function keys, space, return or other punctuation. Keys are physical keys on the US layout, so a binding stays put when the person switches keyboard layouts. One chord per action: an action can't have two keys.
 
@@ -115,7 +117,9 @@ or `osascript -e 'id of app "AppName"'`.
 
 ## Not configurable
 
-Animation speed and curves, gestures, the number of fingers, column widths other than `resize-step`, the fixed 1/3, 1/2, 2/3 presets and a rule's `width`, multiple displays (nori uses the main one), several windows per column. Don't offer settings for these.
+Animation speed and curves, gestures, the number of fingers, column widths other than `resize-step`, the fixed 1/3, 1/2, 2/3 presets and a rule's `width`, gaps or paddings per display, several windows per column. Don't offer settings for these.
+
+With several displays each one has its own strips. Keys act on the display that has focus, swipes on the one under the pointer, and `gap` and the paddings apply to all. That needs "Displays have separate Spaces" on, the macOS default. With it off the strip stays on the main display.
 
 ## More
 
