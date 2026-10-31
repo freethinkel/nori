@@ -12,7 +12,7 @@ var drag: (id: UInt32, grab: CGPoint, origin: CGPoint, width: CGFloat)?
 
 // Topmost strip window under the point. On-screen windows come front to back.
 func stripWindow(at point: CGPoint) -> Win? {
-    windows(on: CGSGetActiveSpace(cid)).first { $0.frame.contains(point) && columns.contains($0.id) }
+    windows(on: mainSpace()).first { $0.frame.contains(point) && columns.contains($0.id) }
 }
 
 func startMouseDrag() {

@@ -44,9 +44,9 @@ var originalFrames: [UInt32: CGRect] = [:]
 // While the overview or a Space slide is on, CGWindowList reports frames after the Space transform (scaled,
 // moved, other Spaces' windows on screen), so the strip keeps the frames it saw last and changes nothing.
 func syncColumns() -> (wins: [Win], inserted: Int?, front: UInt32?) {
-    // The active Space id is right even mid-slide, so the strip follows it first: keeping the old Space's strip
-    // there made Option+H/L focus a window of the old Space, and macOS switched back to it.
-    let space = CGSGetActiveSpace(cid)
+    // The Space id is right even mid-slide, so the strip follows it first: keeping the old Space's strip there made
+    // Option+H/L focus a window of the old Space, and macOS switched back to it.
+    let space = mainSpace()
     if space != currentSpace {
         savedStrips[currentSpace] = (columns, columnCenters, stripOffset)
         (columns, columnCenters, stripOffset) = savedStrips[space] ?? ([], [], 0)
@@ -97,6 +97,21 @@ func rubberBand(_ over: CGFloat, _ dimension: CGFloat) -> CGFloat {
 
 var instantMoves = false  // a `--instant` request is being handled: "M" instead of "S", with the usual bookkeeping
 
+// With another display around, a window must not really cross the edge of its own (keptOn in Scroll.swift): " lo hi"
+// for "S" and "M" says how far it may go, and the payload draws the rest. Nothing with one display: no limit.
+func moveLimits(_ width: CGFloat) -> String {
+    guard otherDisplays else { return "" }
+    let range = keptOn(CGDisplayBounds(CGMainDisplayID()), width: width)
+    return " \(range.lowerBound) \(range.upperBound)"
+}
+
+// Where a window drawn at x really is. CGWindowList gives the drawn x, Accessibility moves the real window.
+func realX(_ x: CGFloat, width: CGFloat) -> CGFloat {
+    guard otherDisplays else { return x }
+    let range = keptOn(CGDisplayBounds(CGMainDisplayID()), width: width)
+    return min(max(x, range.lowerBound), range.upperBound)
+}
+
 // Between the menu bar and the Dock, minus padding. CG y grows down from the top of the main display.
 func stripArea() -> CGRect {
     let screen = CGDisplayBounds(CGMainDisplayID())
@@ -121,7 +136,7 @@ func layout(immediate: Bool) {
     if !immediate { stripOffset = clamped }
     send(wins.enumerated().map { index, win in
         let x = centerX + columnCenters[index] - offset - win.frame.width / 2
-        return "\(immediate || instantMoves ? "M" : "S") \(win.id) \(x) \(top)"
+        return "\(immediate || instantMoves ? "M" : "S") \(win.id) \(x) \(top)\(moveLimits(win.frame.width))"
     })
     guard !immediate else { return }
     saveStrips()
@@ -136,8 +151,9 @@ func layout(immediate: Bool) {
         }
         sizedTo[win.id] = (height, nil)
         pendingWidths[win.id] = width
+        let x = realX(win.frame.minX, width: width)
         axQueue.async {  // off the main thread: a hung app must not stall the strip
-            let took = setFrame(win, CGRect(x: win.frame.minX, y: top, width: width, height: height))
+            let took = setFrame(win, CGRect(x: x, y: top, width: width, height: height))
             // No answer: the height it had counts as taken, so a hung app isn't asked on every layout.
             DispatchQueue.main.async { if sizedTo[win.id]?.height == height { sizedTo[win.id]?.took = took?.height ?? win.frame.height } }
         }

@@ -1,7 +1,7 @@
 // nori payload: loaded into Dock.app by loader. Serves a line protocol on a unix socket.
-// Lines: "S wid x y"         set target; payload eases the window there
+// Lines: "S wid x y [lo hi]"  set target; payload eases the window there. lo…hi: see place
 //        "T wid a b c d tx ty"  transform
-//        "M wid x y"           move (immediate)
+//        "M wid x y [lo hi]"   move (immediate)
 //        "A wid alpha"         alpha (immediate)
 //        "E wid from to"       alpha eases from `from` to `to`, on the same curve as S
 //        "O wid order rel"     order
@@ -49,8 +49,7 @@
 extern int SLSMainConnectionID(void);
 extern CGError SLSGetWindowBounds(int cid, uint32_t wid, CGRect *frame);
 extern CGError SLSSetWindowTransform(int cid, uint32_t wid, CGAffineTransform t);
-extern OSStatus SLSMoveWindowWithGroup(int cid, uint32_t wid, CGPoint *point);
-// SLSMoveWindowWithGroup is exactly create + this + commit(0); point is passed by value (d0/d1).
+// SLSMoveWindowWithGroup is exactly SLSTransactionCreate + this + commit(0); point is passed by value (d0/d1).
 extern CFTypeRef SLSTransactionCreate(int cid);
 extern CGError SLSTransactionMoveWindowWithGroup(CFTypeRef transaction, uint32_t wid, CGPoint point);
 extern CGError SLSTransactionCommit(CFTypeRef transaction, int synchronous);
@@ -77,6 +76,7 @@ typedef struct {
     uint32_t wid;
     CGPoint cur;
     CGPoint goal;
+    double lo, hi;
 } anim_t;
 
 static dispatch_queue_t queue;
@@ -150,6 +150,50 @@ static void notify_daemon(const char *format, ...)
 }
 
 static int anim_count;
+
+// Windows drawn away from their real place, see place.
+// ponytail: fixed table; a window past its end is just drawn where it really is.
+typedef struct {
+    uint32_t wid;
+    double shift;
+} shift_t;
+static shift_t shifts[512];
+static int shift_count;
+
+static int shift_index(uint32_t wid)
+{
+    for (int i = 0; i < shift_count; i++) if (shifts[i].wid == wid) return i;
+    return -1;
+}
+
+static double shift_of(uint32_t wid)
+{
+    int i = shift_index(wid);
+    return i < 0 ? 0 : shifts[i].shift;
+}
+
+static void shift_set(uint32_t wid, double shift)
+{
+    int i = shift_index(wid);
+    if (i >= 0 && shift == 0) shifts[i] = shifts[--shift_count];
+    else if (i >= 0) shifts[i].shift = shift;
+    else if (shift != 0 && shift_count < 512) shifts[shift_count++] = (shift_t){ wid, shift };
+}
+
+// Puts a window at p, its real x kept in lo…hi: with another display around, WindowServer hands a window to the
+// display its center gets to, and past every display to the main one's Space, whatever moved it, and the app then
+// jumps it to a place of its own (docs/WINDOWSERVER.md). So a column past the screen edge stays really on its display,
+// a window transform draws the rest of the way, and its display clips that. Without lo…hi this is a plain move.
+// The shift is whole: a transform's fraction would resample the window, and a shown column would blur.
+static void place(CFTypeRef transaction, uint32_t wid, CGPoint p, double lo, double hi)
+{
+    double real = fmin(fmax(p.x, lo), hi), shift = round(p.x - real);
+    SLSTransactionMoveWindowWithGroup(transaction, wid, CGPointMake(real, p.y));
+    if (shift == shift_of(wid)) return;
+    double m[16] = { 1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  -shift, 0, 0, 1 };  // screen -> window: drawn `shift` to the right
+    SLSTransactionSetWindowTransform3D(transaction, wid, m);
+    shift_set(wid, shift);
+}
 
 // Width animations ("R"). The window is stretched by a transform from its real width to the drawn one, which eases
 // to `goal`; the real window is kept centered on cx by a move in the same transaction.
@@ -414,7 +458,7 @@ static void tick(double frame)
             a.cur.y += dy * 0.25;
             anims[kept++] = a;
         }
-        SLSTransactionMoveWindowWithGroup(transaction, a.wid, a.cur);
+        place(transaction, a.wid, a.cur, a.lo, a.hi);
     }
     anim_count = kept;
     kept = 0;
@@ -499,7 +543,8 @@ static void handle_line(char *line)
     switch (line[0]) {
     case 'S': {
         CGPoint goal;
-        if (sscanf(line + 1, "%u %lf %lf", &wid, &goal.x, &goal.y) == 3) {
+        double lo = -INFINITY, hi = INFINITY;
+        if (sscanf(line + 1, "%u %lf %lf %lf %lf", &wid, &goal.x, &goal.y, &lo, &hi) >= 3) {
             resize_t *r = resize_for(wid);
             if (r) { r->cx_goal = goal.x + r->goal / 2; break; }  // the resize owns this window's position
             anim_t *a = anim_for(wid, true);
@@ -507,9 +552,11 @@ static void handle_line(char *line)
             if (a->wid != wid) {
                 CGRect frame;
                 a->wid = wid;
-                a->cur = SLSGetWindowBounds(cid, wid, &frame) == kCGErrorSuccess ? frame.origin : goal;
+                a->cur = SLSGetWindowBounds(cid, wid, &frame) == kCGErrorSuccess ? CGPointMake(frame.origin.x + shift_of(wid), frame.origin.y) : goal;
             }
             a->goal = goal;
+            a->lo = lo;
+            a->hi = hi;
         }
         break;
     }
@@ -522,11 +569,16 @@ static void handle_line(char *line)
     }
     case 'M': {
         CGPoint p;
-        if (sscanf(line + 1, "%u %lf %lf", &wid, &p.x, &p.y) == 3) {
+        double lo = -INFINITY, hi = INFINITY;
+        if (sscanf(line + 1, "%u %lf %lf %lf %lf", &wid, &p.x, &p.y, &lo, &hi) >= 3) {
             resize_t *r = resize_for(wid);
             if (r) { r->cx = r->cx_goal = p.x + r->goal / 2; break; }
             anim_drop(wid);  // a running ease would pull the window back every frame
-            SLSMoveWindowWithGroup(cid, wid, &p);
+            CFTypeRef transaction = SLSTransactionCreate(cid);
+            if (!transaction) break;
+            place(transaction, wid, p, lo, hi);
+            SLSTransactionCommit(transaction, 0);
+            CFRelease(transaction);
         }
         break;
     }
@@ -643,6 +695,8 @@ static void handle_line(char *line)
                 r = &resizes[resize_count++];
                 // No resize running, so no transform: these bounds are the real ones.
                 *r = (resize_t){ wid, b.size.width, width, b.size.width, CGRectGetMidX(b), CGRectGetMidX(b), 0 };
+                // ponytail: its transform goes, so a window still drawn away from its real place (place) jumps there.
+                shift_set(wid, 0);
             }
             r->goal = width;
             r->notified = false;

@@ -20,10 +20,25 @@ func isFullscreen(_ space: UInt64) -> Bool {
     return fullscreenSpaces[space] ?? false  // not listed (yet): asked again next time
 }
 
+// Another display with Spaces of its own is around. NSScreen lists a sleeping display too, unlike
+// CGGetActiveDisplayList, which goes empty when they all sleep.
+var otherDisplays: Bool { NSScreen.screens.count > 1 && NSScreen.screensHaveSeparateSpaces }
+
+// The Space the main display shows: the one nori manages. CGSGetActiveSpace answers for the display that has focus,
+// and that display's windows aren't nori's: laid out in the main display's coordinates, they would leave their own.
+func mainSpace() -> UInt64 {
+    let active = CGSGetActiveSpace(cid)
+    guard otherDisplays, let uuid = CGDisplayCreateUUIDFromDisplayID(CGMainDisplayID())?.takeRetainedValue(),
+          let id = CFUUIDCreateString(nil, uuid) as String? else { return active }
+    let displays = CGSCopyManagedDisplaySpaces(cid).takeRetainedValue() as? [[String: Any]] ?? []
+    let main = displays.first { $0["Display Identifier"] as? String == id }
+    return ((main?["Current Space"] as? [String: Any])?["id64"] as? NSNumber)?.uint64Value ?? active
+}
+
 // The Desktop number `delta` Desktops below (+) or above (-) the current one on its display, for moving a window
 // there; fullscreen Spaces don't count. Past either end: nil, or round to the other end with wrap-around.
 func neighbourDesktop(_ delta: Int) -> Int? {
-    let all = spaces(), active = CGSGetActiveSpace(cid)
+    let all = spaces(), active = mainSpace()
     guard let display = all.first(where: { $0.id == active })?.display else { return nil }
     let desktops = all.filter { $0.display == display && !$0.fullscreen }
     guard let i = desktops.firstIndex(where: { $0.id == active }) else { return nil }

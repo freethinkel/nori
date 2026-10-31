@@ -128,6 +128,11 @@ assert(strip(wide, "on-overflow").rest(1, from: 200, previous: nil) == 410)
 assert(strip(narrow, "on-overflow").rest(2, from: 350, previous: 0) == 350)
 assert(strip(wide, "on-overflow").bounds == 0...1220 && strip(wide, "on-overflow").snap(600, focused: 0) == (610, 1))
 
+// A window's center stays on its display, even for an odd width: past the first or last point it would be handed over.
+let shown = CGRect(x: -1000, y: 0, width: 1000, height: 800)
+assert(keptOn(shown, width: 300) == -1149 ... -151)
+assert(keptOn(shown, width: 301).lowerBound + 150.5 > shown.minX && keptOn(shown, width: 301).upperBound + 150.5 < shown.maxX)
+
 print("scroll: ok")
 
 // Rules: a table needs app and an action; title must be a valid regex, width 0 < n <= 100.

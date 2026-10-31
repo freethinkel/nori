@@ -74,10 +74,10 @@ func switchSpaceInstant(to number: Int) -> Bool {
     return true
 }
 
-// Desktops and fullscreen Spaces of the display that shows the active Space, in Mission Control order: the stack the
-// overview shows and Space switches slide through.
+// Desktops and fullscreen Spaces of the main display, in Mission Control order: the stack the overview shows and
+// Space switches slide through.
 func displaySpaces() -> (ids: [UInt64], current: Int) {
-    let active = CGSGetActiveSpace(cid)
+    let active = mainSpace()
     let displays = CGSCopyManagedDisplaySpaces(cid).takeRetainedValue() as? [[String: Any]] ?? []
     for display in displays {
         let spaces = (display["Spaces"] as? [[String: Any]] ?? [])
@@ -213,7 +213,7 @@ func closeOverview(at index: Int) {
 func resetOverview() {
     guard overviewOpen else { return }
     overviewOpen = false
-    overviewTarget = overviewSpaces.firstIndex(of: CGSGetActiveSpace(cid)) ?? overviewTarget
+    overviewTarget = overviewSpaces.firstIndex(of: mainSpace()) ?? overviewTarget
     sendLayout(open: false, spring: false)
 }
 
@@ -309,14 +309,14 @@ func overviewMouseDragged(at point: CGPoint) {
     guard drag.moved || hypot(dx, dy) >= 6 else { return }
     drag.moved = true
     overviewDrag = drag
-    send(["M \(drag.window) \(drag.origin.x + dx / overviewScale) \(drag.origin.y + dy / overviewScale)"])
+    send(["M \(drag.window) \(drag.origin.x + dx / overviewScale) \(drag.origin.y + dy / overviewScale)\(moveLimits(lastSeen[drag.window]?.frame.width ?? 0))"])
 }
 
 func overviewMouseUp(at point: CGPoint) {
     defer { overviewDrag = nil }
     guard overviewOpen else { return }
     guard let drag = overviewDrag, drag.moved else { return overviewClick(at: point) }
-    send(["M \(drag.window) \(drag.origin.x) \(drag.origin.y)"])  // back in its slot, or where it lands elsewhere
+    send(["M \(drag.window) \(drag.origin.x) \(drag.origin.y)\(moveLimits(lastSeen[drag.window]?.frame.width ?? 0))"])  // back in its slot, or where it lands elsewhere
     guard let to = overviewIndex(at: point), to != drag.from, !isFullscreen(overviewSpaces[to]) else { return }
     let sid = overviewSpaces[to]
     movedAway.insert(drag.window)  // Move.swift: out of this strip until CGWindowList agrees
