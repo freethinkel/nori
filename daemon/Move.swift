@@ -28,6 +28,8 @@ func moveFocused(toDesktop number: Int) {
     let i = focusedIndex()
     guard wins.indices.contains(i), let sid = spaces().first(where: { $0.number == number })?.id, sid != currentSpace else { return }
     let moving = wins[i].id
+    refreshDisplays()
+    if display(of: sid).id != display(of: currentSpace).id { fit(wins[i], to: display(of: sid)) }
     // Its column closes right away and the neighbour takes focus first: if the moved window's app were still
     // frontmost when the window leaves, macOS would follow it to the other Space.
     movedAway.insert(moving)
@@ -58,13 +60,18 @@ func moveFocused(toMonitor way: String) {
     let wins = syncColumns().wins, i = focusedIndex()
     guard wins.indices.contains(i) else { return }
     let moving = wins[i].id
-    let usable = paddedWidth(of: target)
-    if wins[i].frame.width > usable { pendingWidths[moving] = usable }
-    sizedTo[moving] = nil  // that strip's layout stretches it to its height
+    fit(wins[i], to: target)
     movedAway.insert(moving)
     layout(immediate: false)  // its column closes
     send(["X \(moving) \(sid)"])
     followMoved(moving, to: sid)
+}
+
+// A window on its way to another display: not wider than that strip's room, and its layout stretches it to its height.
+func fit(_ win: Win, to display: Display) {
+    let usable = paddedWidth(of: display)
+    if win.frame.width > usable { pendingWidths[win.id] = usable }
+    sizedTo[win.id] = nil
 }
 
 // Waits for CGWindowList to show the window on its Space, then lets that strip take it and gives it focus.

@@ -237,5 +237,6 @@ for key in ["app", "title", "space", "floating", "ignore", "width"] { assert(def
 
 // The display actions have no keys by default, so they can't take any from apps or from another action.
 assert(monitorWays.allSatisfy { bindingDefaults["focus-monitor-\($0)"] == "none" && bindingDefaults["move-window-to-monitor-\($0)"] == "none" })
+assert((1...9).allSatisfy { bindingDefaults["focus-space-slot-\($0)"] == "none" && bindingDefaults["move-to-space-slot-\($0)"] == "none" })
 
 print("default config: ok")

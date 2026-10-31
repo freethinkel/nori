@@ -119,9 +119,8 @@ func sendLayout(open: Bool, spring: Bool) {
 }
 
 // Every "Switch to Desktop N" press lands here (keys, nori focus space), and Dock switches under our slide.
-func switchSpaceAnimated(toDesktop number: Int, onThisDisplay: Bool) {
-    let desktop = onThisDisplay ? desktopHere(number) : number
-    if let sid = spaces().first(where: { $0.number == desktop })?.id { switchSpaceAnimated(to: sid) }
+func switchSpaceAnimated(toDesktop number: Int) {
+    if let sid = spaces().first(where: { $0.number == number })?.id { switchSpaceAnimated(to: sid) }
 }
 
 // Option+J/K too, which may land on a fullscreen Space.

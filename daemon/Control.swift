@@ -19,16 +19,18 @@ let usage = """
       nori focus column N
       nori focus space N|up|down
       nori focus window WID
+      nori focus slot N       Desktop N of the display that has focus
       nori focus monitor left|right|up|down|next|previous
       (any focus takes --instant: no animation)
       nori move left|right
       nori move space N|up|down
+      nori move slot N
       nori move monitor left|right|up|down|next|previous
       nori width grow|shrink|next|previous|toggle-full
       nori center
       nori overview
       nori space add          a new Desktop on the display that has focus
-      nori space remove N     removes its Desktop N, its windows go to the first one
+      nori space remove N     removes Desktop N, its windows go to the first one of its display
       nori show floating
       nori toggle floating
       nori reload             read the config again
@@ -175,6 +177,11 @@ func handle(_ args: [String]) -> String {
         return json(queryWindows(opts))
     case ("move", "space"):
         guard let n = number else { break }
+        guard spaces().contains(where: { $0.number == n }) else { return "error: no Desktop \(n)\n" }
+        moveFocused(toDesktop: n)
+        return ""
+    case ("move", "slot"):
+        guard let n = number else { break }
         guard let desktop = desktopHere(n) else { return "error: no Desktop \(n) on this display\n" }
         moveFocused(toDesktop: desktop)
         return ""
@@ -185,6 +192,9 @@ func handle(_ args: [String]) -> String {
         return ""
     case ("focus", "space"):
         guard let n = number else { break }
+        return (instant ? switchSpaceInstant(to: n) : switchToSpace(n)) ? "" : "error: no Desktop \(n), or its shortcut is off in Keyboard Shortcuts → Mission Control\n"
+    case ("focus", "slot"):
+        guard let n = number else { break }
         guard let desktop = desktopHere(n) else { return "error: no Desktop \(n) on this display\n" }
         return (instant ? switchSpaceInstant(to: desktop) : switchToSpace(desktop)) ? "" : "error: the shortcut of Desktop \(desktop) is off in Keyboard Shortcuts → Mission Control\n"
     case ("space", "add"):
@@ -194,10 +204,10 @@ func handle(_ args: [String]) -> String {
     case ("space", "remove"):
         guard let n = number else { break }
         guard desktopsEditable else { return "error: nori can't remove Desktops on this macOS, use Mission Control\n" }
-        let desktops = desktopsHere()
-        guard desktops.indices.contains(n - 1) else { return "error: no Desktop \(n) on this display\n" }
-        guard desktops.count > 1 else { return "error: the last Desktop of a display stays\n" }
-        removeDesktop(desktops[n - 1].id)
+        guard let sid = spaces().first(where: { $0.number == n })?.id else { return "error: no Desktop \(n)\n" }
+        refreshDisplays()
+        guard display(of: sid).spaces.filter({ !isFullscreen($0) }).count > 1 else { return "error: the last Desktop of a display stays\n" }
+        removeDesktop(sid)
         return ""
     // From the payload in Dock, see its header.
     case ("payload", "desktops") where args.count == 3:
@@ -376,9 +386,6 @@ func switchToSpace(_ number: Int) -> Bool {
     return true
 }
 
-// Marks our own presses. Their Desktop number runs across displays; a person's counts on the display that has focus.
-let noriPress: Int64 = 0x6e6f7269
-
 // Posts a system shortcut by its com.apple.symbolichotkeys id, whatever keys it is bound to; false if it is off.
 // Read each time, so turning one on in System Settings works without a restart.
 func postSymbolicHotkey(_ id: Int, times: Int = 1) -> Bool {
@@ -390,7 +397,6 @@ func postSymbolicHotkey(_ id: Int, times: Int = 1) -> Bool {
         for down in [true, false] {
             let event = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(keys[1]), keyDown: down)
             event?.flags = CGEventFlags(rawValue: UInt64(keys[2]))  // NSEvent modifier bits, same as CGEventFlags
-            event?.setIntegerValueField(.eventSourceUserData, value: noriPress)
             event?.post(tap: .cghidEventTap)
         }
     }

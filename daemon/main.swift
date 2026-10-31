@@ -58,9 +58,7 @@ let tap = CGEvent.tapCreate(
                 passDesktopHotkeys -= 1
                 return Unmanaged.passUnretained(event)
             }
-            if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
-                switchSpaceAnimated(toDesktop: number, onThisDisplay: event.getIntegerValueField(.eventSourceUserData) != noriPress)
-            }
+            if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 { switchSpaceAnimated(toDesktop: number) }
             return nil
         }
         if type == .keyDown, let name = boundAction(event) {  // [bindings] → Actions.swift

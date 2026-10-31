@@ -23,14 +23,17 @@ let actions: [String: () -> Void] = [
     "move-right": { moveColumn(by: 1) },
     "move-to-space-down": { moveFocused(toDesktopBy: 1) },
     "move-to-space-up": { moveFocused(toDesktopBy: -1) },
-].merging((1...9).map { n in ("focus-space-\(n)", { switchSpaceAnimated(toDesktop: n, onThisDisplay: true) }) }) { a, _ in a }
-    .merging((1...9).map { n in ("move-to-space-\(n)", { if let desktop = desktopHere(n) { moveFocused(toDesktop: desktop) } }) }) { a, _ in a }
+].merging((1...9).map { n in ("focus-space-\(n)", { switchSpaceAnimated(toDesktop: n) }) }) { a, _ in a }
+    .merging((1...9).map { n in ("move-to-space-\(n)", { moveFocused(toDesktop: n) }) }) { a, _ in a }
+    .merging((1...9).map { n in ("focus-space-slot-\(n)", { if let desktop = desktopHere(n) { switchSpaceAnimated(toDesktop: desktop) } }) }) { a, _ in a }
+    .merging((1...9).map { n in ("move-to-space-slot-\(n)", { if let desktop = desktopHere(n) { moveFocused(toDesktop: desktop) } }) }) { a, _ in a }
     .merging(monitorWays.flatMap { way in [("focus-monitor-\(way)", { focusMonitor(way) }), ("move-window-to-monitor-\(way)", { moveFocused(toMonitor: way) })] }) { a, _ in a }
 
 // Toggles: a held key must not flip them back and forth. Nor is there anything to repeat in going to one Desktop.
-let noRepeat = Set(["overview", "toggle-full-width", "toggle-floating"] + (1...9).map { "focus-space-\($0)" })
+let noRepeat = Set(["overview", "toggle-full-width", "toggle-floating"] + (1...9).flatMap { ["focus-space-\($0)", "focus-space-slot-\($0)"] })
 
-// CLI words to action names. "focus space N", "focus column N", "focus window WID" and "move space N" take a number
+// CLI words to action names. "focus space N", "focus slot N", "focus column N", "focus window WID", "move space N" and
+// "move slot N" take a number
 // and are handled in Control.swift.
 let cliActions = [
     "focus left": "focus-left", "focus right": "focus-right", "focus first": "focus-first", "focus last": "focus-last",

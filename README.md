@@ -129,7 +129,7 @@ Every row with a config name can be rebound in `[bindings]`, or unbound with `"n
 | Opt+Shift+J / Opt+Shift+K | send the focused window to the Space below / above. Config names `move-to-space-down`, `move-to-space-up` |
 | Opt + left drag (`mouse-modifier`) | move the window under the pointer. It trades places with a neighbour once it passes the neighbour's center |
 | Opt + right drag (`mouse-modifier`) | resize the window under the pointer. It takes focus, and both edges follow the pointer, or only the right one when `center-focused-column` doesn't center it |
-| Opt+1…9 | Desktop 1…9 of the display that has focus. Config names `focus-space-1` to `focus-space-9` |
+| Opt+1…9 | Desktop 1…9, on whichever display it is. Config names `focus-space-1` to `focus-space-9` |
 | Opt+O | overview. Click a Space to pick it and the window under the pointer. Drag a window onto another Space to move it there. Esc or Opt+O closes it. Config name `overview` |
 | Opt+F | every window of this Space outside the strip (floating rules, dialogs, panels, PiP) comes above the strip's. Focus stays where it was. Config name `show-floating` |
 | Opt+Shift+V | the focused window leaves the strip and floats in the middle of the screen at 2/3 of its width and height; again on that window puts it back right of the focused column, at its old width. nori remembers it across restarts. Config name `toggle-floating` |
@@ -144,10 +144,10 @@ With "Displays have separate Spaces" on, the macOS default in System Settings �
 - Keys and the CLI act on the display that has focus, the one macOS gives the active menu bar to. So do a click and Cmd+Tab: click a window on another display and its strip scrolls to it.
 - Swipes act on the display under the pointer, whichever has focus: the fingers aren't on any display, and the pointer is where you are looking. On lift focus goes there.
 - A Space switch slides on its own display and the others stay still.
-- Desktop numbers count per display, as Mission Control labels them and like niri's workspaces: Option+N, `nori focus space N` and `move-to-space-N` mean the Nth Desktop of the display that has focus. Only the system's "Switch to Desktop N" shortcuts number them across displays, and so does a rule's `space = N`, so a Desktop added on one display shifts the rules of the next. `nori query spaces` gives both.
-- Opt+J/K and Opt+Shift+J/K go on past the last Desktop of a display to the display above or below it, unless `wrap-around` is on. That sends a window to a stacked display without a key of its own; beside each other, bind `move-window-to-monitor-left` and `-right`. On the new display Opt+Shift+N sends it to the Desktop you want.
+- Desktop numbers run across displays, like the system's "Switch to Desktop N" shortcuts and a rule's `space = N`: with two Desktops on the first display, the next one's start at 3. So Option+N and Option+Shift+N reach any Desktop from any display, and focus stays where it is when a window leaves. Mission Control labels each display from 1, and a Desktop added on one display shifts the numbers of the next. `focus-space-slot-N` and `move-to-space-slot-N` count on the display that has focus, as Mission Control does; they have no keys by default. `nori query spaces` gives both numbers.
+- Opt+J/K and Opt+Shift+J/K go on past the last Desktop of a display to the display above or below it, unless `wrap-around` is on. Beside each other, bind `move-window-to-monitor-left` and `-right`.
 - A display that shows an empty Desktop can't take focus from keys: macOS has nothing there to make key. It gets focus with the first window you move or open there, or from a window of another Desktop of it.
-- In the overview × in the top right corner of a Desktop removes it: its windows go to the display's first Desktop, and the one before it comes up. + just below the last Desktop adds one after it and slides there. `nori space add` and `nori space remove N` do the same for the display that has focus. This runs Dock's own code, found by its instructions, so a new macOS may change it: then nori leaves the buttons out, and Mission Control still has them, Ctrl+↑ by default.
+- In the overview × in the top right corner of a Desktop removes it: its windows go to the display's first Desktop, and the one before it comes up. + just below the last Desktop adds one after it and slides there. `nori space add` adds one on the display that has focus, and `nori space remove N` removes one. This runs Dock's own code, found by its instructions, so a new macOS may change it: then nori leaves the buttons out, and Mission Control still has them, Ctrl+↑ by default.
 - The overview opens on one display: the focused one for the key, the one under the pointer for a swipe. The others stay as they are, and a click on one closes the overview. `overview-background = "blur"` uses that display's wallpaper.
 - A window you drag to another display joins that display's strip, right of its focused column.
 - `focus-monitor-*` and `move-window-to-monitor-*` go by position, as in niri: left and right need a display that overlaps this one's height, up and down its width, and the nearest center wins. Next and previous go round, left to right, then top to bottom.
@@ -283,7 +283,8 @@ nori query spaces [--current]           # number, windows, apps with their windo
 nori query windows [--space N] [--current] [--app NAME] [--id WID] [--focused]
 nori focus left|right|first|last        # a column of the current Space
 nori focus column N                     # column N on the current Space, counting from 1
-nori focus space N|up|down              # Desktop N of the display that has focus, or the neighbour
+nori focus space N|up|down              # Desktop N, on whichever display it is, or the neighbour
+nori focus slot N                       # Desktop N of the display that has focus
 nori focus window WID                   # a window by id, switching Spaces if needed
 nori focus monitor left|right|up|down|next|previous   # the display on that side
                                         # any focus takes --instant: no slide, no ease
@@ -296,7 +297,7 @@ nori width toggle-full                  # full width, and back
 nori center                             # scroll the focused window to the center
 nori overview                           # open or close the overview
 nori space add                          # a new Desktop on the display that has focus
-nori space remove N                     # removes its Desktop N, its windows go to the first one
+nori space remove N                     # removes Desktop N, its windows go to the first one of its display
 nori show floating                      # windows outside the strip above it
 nori toggle floating                    # the focused window out of the strip and back
 nori reload                             # read the config again, like "Reload Config"
@@ -314,7 +315,7 @@ A Space has `id`, `number`, `display`, `type`, `isFocused`, `isVisible`, `isAnim
 
 A bar can skip the CLI and talk to the socket `/tmp/nori-ctl_$USER.socket` itself. A request is the CLI's arguments joined by tabs, one line, like `query\tspaces\n` or `subscribe\n`. nori answers and closes the connection, except after `subscribe`. The socket path and this format are public: they change only with a note in the release.
 
-A window has `id`, `pid`, `app`, `bundleId`, `title`, `space`, `spaceId`, `spaceType`, `display`, `column`, `isFocused`, `isOnScreen`, `isFloating` and `frame`. `space` is the Desktop number, missing for a window in a fullscreen app's Space. `spaceType` is that Space's `type`, `desktop` or `fullscreen`, and `display` its `display`, the UUID macOS has for that display. `column` counts from 1 and is missing for windows outside the strip. `--app` matches the app name or bundle id in any case. `number` and `space` count Desktops from 1 across all displays, as the system shortcuts do, and `displayNumber` of a Space counts them on its own display, as Mission Control, Option+N and `nori focus space N` do. Fullscreen Spaces have neither, and their `type` is `fullscreen`.
+A window has `id`, `pid`, `app`, `bundleId`, `title`, `space`, `spaceId`, `spaceType`, `display`, `column`, `isFocused`, `isOnScreen`, `isFloating` and `frame`. `space` is the Desktop number, missing for a window in a fullscreen app's Space. `spaceType` is that Space's `type`, `desktop` or `fullscreen`, and `display` its `display`, the UUID macOS has for that display. `column` counts from 1 and is missing for windows outside the strip. `--app` matches the app name or bundle id in any case. `number` and `space` count Desktops from 1 across all displays, as Option+N, `nori focus space N` and the system shortcuts do, and `displayNumber` of a Space counts them on its own display, as Mission Control and the slot actions do. Fullscreen Spaces have neither, and their `type` is `fullscreen`.
 
 nori sees the titles of windows on other Spaces only with Screen Recording permission. When you run it from a terminal, the terminal needs that permission. Titles on the current Space come from Accessibility.
 

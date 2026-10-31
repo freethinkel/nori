@@ -29,6 +29,7 @@ let bindingDefaults = ["focus-left": "option+h", "focus-right": "option+l", "foc
                        "move-to-space-down": "option+shift+j", "move-to-space-up": "option+shift+k"]
     .merging((1...9).map { ("focus-space-\($0)", "option+\($0)") }) { a, _ in a }
     .merging((1...9).map { ("move-to-space-\($0)", "option+shift+\($0)") }) { a, _ in a }
+    .merging((1...9).flatMap { [("focus-space-slot-\($0)", "none"), ("move-to-space-slot-\($0)", "none")] }) { a, _ in a }
     .merging(monitorWays.flatMap { [("focus-monitor-\($0)", "none"), ("move-window-to-monitor-\($0)", "none")] }) { a, _ in a }
 // NORI_CONFIG: another file, to try settings out without touching your own.
 let configPath = ProcessInfo.processInfo.environment["NORI_CONFIG"] ?? NSHomeDirectory() + "/.config/nori/config.toml"
@@ -81,7 +82,8 @@ resize-step = 10          # how much grow-width and shrink-width change a window
 # Key bindings: modifiers and one key joined by "+". Modifiers: option, ctrl, cmd, shift. Keys: a to z, 0 to 9,
 # - = , . and left, right, up, down. Keys are physical keys on the US layout, so a binding stays put in any
 # keyboard layout. "none" turns a binding off. Each action is also a command, see `nori help`.
-# With several displays a Desktop's number counts on the display that has focus, as Mission Control labels it.
+# Desktop numbers run across displays, like macOS's own shortcuts: with two Desktops on the first display, the second
+# one's start at 3. The focus-space-slot and move-to-space-slot actions count on the display that has focus instead.
 [bindings]
 focus-left = "option+h"             # the window to the left / right
 focus-right = "option+l"
@@ -105,6 +107,8 @@ move-to-space-down = "option+shift+j"  # send the focused window to the Space be
 move-to-space-up = "option+shift+k"
 \((1...9).map { "move-to-space-\($0) = \"option+shift+\($0)\"" + ($0 == 1 ? "   # send the focused window to Desktop 1, and so on" : "") }.joined(separator: "\n"))
 # With several displays. No keys by default, try "ctrl+option+left". next and previous go round.
+\((1...9).map { "focus-space-slot-\($0) = \"none\"" + ($0 == 1 ? "      # Desktop 1 of the display that has focus, as Mission Control labels it" : "") }.joined(separator: "\n"))
+\((1...9).map { "move-to-space-slot-\($0) = \"none\"" + ($0 == 1 ? "    # send the focused window there" : "") }.joined(separator: "\n"))
 \(monitorWays.map { "focus-monitor-\($0) = \"none\"" + ($0 == "left" ? "       # focus goes to the display on that side" : "") }.joined(separator: "\n"))
 \(monitorWays.map { "move-window-to-monitor-\($0) = \"none\"" + ($0 == "left" ? "  # the focused window goes there, and focus with it" : "") }.joined(separator: "\n"))
 

@@ -38,7 +38,7 @@ focus-first = "ctrl+option+h"       # focus the first / last column
 focus-last = "ctrl+option+l"
 focus-space-down = "option+j"       # go to the Space below / above
 focus-space-up = "option+k"
-focus-space-1 = "option+1"          # go to Desktop 1 of the display that has focus; focus-space-1 … focus-space-9
+focus-space-1 = "option+1"          # go to Desktop 1, on whichever display it is; focus-space-1 … focus-space-9
 center-column = "option+c"          # scroll the focused window to the center, whatever center-focused-column says
 overview = "option+o"
 show-floating = "option+f"          # windows outside the strip (floating rules, dialogs, PiP) above it, focus stays
@@ -55,6 +55,8 @@ move-to-space-up = "option+shift+k"
 move-to-space-1 = "option+shift+1"  # send the focused window to Desktop 1; move-to-space-1 … move-to-space-9
 focus-monitor-left = "none"         # focus the display on that side: -left, -right, -up, -down, -next, -previous
 move-window-to-monitor-left = "none"  # send the focused window there, focus with it; the same six ways
+focus-space-slot-1 = "none"         # Desktop 1 of the display that has focus, 1 to 9
+move-to-space-slot-1 = "none"       # send the focused window there, 1 to 9
 
 [[rule]]
 app = "Telegram"
@@ -69,7 +71,7 @@ Top-level keys are only `gap`, `padding-top`, `padding-bottom`, `padding-left`, 
 
 ## Bindings
 
-The only bindable actions are the ones in the `[bindings]` block above: `focus-left`, `focus-right`, `focus-first`, `focus-last`, `focus-space-down`, `focus-space-up`, `focus-space-1` … `focus-space-9`, `center-column`, `overview`, `show-floating`, `toggle-floating`, `grow-width`, `shrink-width`, `cycle-width-forward`, `cycle-width-backward`, `toggle-full-width`, `move-left`, `move-right`, `move-to-space-down`, `move-to-space-up`, `move-to-space-1` … `move-to-space-9`, and `focus-monitor-` and `move-window-to-monitor-` with `left`, `right`, `up`, `down`, `next` or `previous`. A missing one keeps its default; `"none"` unbinds it. The display actions are `"none"` by default: someone with several displays picks keys for them, like `ctrl+option+left`. Every action is also a CLI command (`nori focus left`, `nori move space up`, `nori focus monitor right`, `nori move monitor right`, `nori width toggle-full`, `nori center`, `nori overview`, `nori show floating`, see `nori help`; `nori space add` and `nori space remove N` have no binding), for people who drive nori from Raycast, Hammerspoon or a bar.
+The only bindable actions are the ones in the `[bindings]` block above: `focus-left`, `focus-right`, `focus-first`, `focus-last`, `focus-space-down`, `focus-space-up`, `focus-space-1` … `focus-space-9`, `focus-space-slot-1` … `focus-space-slot-9`, `center-column`, `overview`, `show-floating`, `toggle-floating`, `grow-width`, `shrink-width`, `cycle-width-forward`, `cycle-width-backward`, `toggle-full-width`, `move-left`, `move-right`, `move-to-space-down`, `move-to-space-up`, `move-to-space-1` … `move-to-space-9`, `move-to-space-slot-1` … `move-to-space-slot-9`, and `focus-monitor-` and `move-window-to-monitor-` with `left`, `right`, `up`, `down`, `next` or `previous`. A missing one keeps its default; `"none"` unbinds it. The display actions are `"none"` by default: someone with several displays picks keys for them, like `ctrl+option+left`. Every action is also a CLI command (`nori focus left`, `nori move space up`, `nori focus monitor right`, `nori move monitor right`, `nori width toggle-full`, `nori center`, `nori overview`, `nori show floating`, see `nori help`; `nori space add` and `nori space remove N` have no binding), for people who drive nori from Raycast, Hammerspoon or a bar.
 
 A binding is modifiers and one key joined by `+`, like `"ctrl+shift+1"`. Modifiers: `option` (or `alt`, `opt`), `ctrl` (or `control`), `cmd` (or `command`), `shift`. The key is one letter `a`–`z`, a digit `0`–`9`, `-`, `=`, `,`, `.`, `left`, `right`, `up` or `down`. No function keys, space, return or other punctuation. Keys are physical keys on the US layout, so a binding stays put when the person switches keyboard layouts. One chord per action: an action can't have two keys.
 
@@ -105,7 +107,7 @@ title = "Picture in Picture"
 floating = true        # only Safari windows with that title float; put a plain app = "Safari" rule after it for the rest
 ```
 
-- `space = N`, a whole number from 1. Here Desktops count from 1 across all displays, as the system shortcuts do, while Mission Control, Option+N and `move-to-space-N` count on each display. nori moves each window once, the first time it sees it, including windows already open at start. Moved back by hand, it stays.
+- `space = N`, a whole number from 1. Desktops count from 1 across all displays, like Option+N and `move-to-space-N`, while Mission Control's labels and the slot actions count on each display. nori moves each window once, the first time it sees it, including windows already open at start. Moved back by hand, it stays.
 - `floating = true` suits apps whose main windows shouldn't be columns: calculators, color pickers, small utilities. Dialogs, panels, sheets and browser popups already stay out of the strip without a rule.
 - `ignore = true` suits launchers, menu bar apps and overlays. Raycast, Alfred, Spotlight and LaunchBar are ignored already, no rule needed; a rule in the config for one of them takes precedence.
 - `width = N`, a number over 0 up to 100, percent of the usable width. Applied once, when the window joins the strip; a later resize by hand or key stays.

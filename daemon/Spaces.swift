@@ -137,7 +137,7 @@ func desktopsHere() -> [(id: UInt64, number: Int?, displayNumber: Int?, display:
 }
 
 // Desktop n of the display that has focus, as Mission Control labels it and like niri's workspaces, given as the number
-// across displays that the system shortcuts go by.
+// across displays that everything else goes by.
 func desktopHere(_ n: Int) -> Int? {
     let desktops = desktopsHere()
     return desktops.indices.contains(n - 1) ? desktops[n - 1].number : nil
