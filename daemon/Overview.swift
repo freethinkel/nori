@@ -112,6 +112,7 @@ func sendLayout(open: Bool, spring: Bool) {
     timeAnimations(to: overviewDisplay.id)
     send(displayLines() + ["Q \(layoutSeq)", "Z \(overviewScale)", "Y \(spring ? 1 : 0) \(overviewTarget) \(open ? 1 : 0) " + overviewSpaces.map(String.init).joined(separator: " ")])
     publishSoon()  // isAnimating, for subscribers
+    if open { updateSpaceButtons() }
 }
 
 // Every "Switch to Desktop N" press lands here (keys, nori focus space), and Dock switches under our slide.
@@ -150,6 +151,7 @@ func openOverview() {
     useStack(on: focusedDisplay())
     overviewOpen = true
     showBackdrop()
+    showSpaceButtons()
     sendLayout(open: true, spring: true)
 }
 
@@ -160,6 +162,7 @@ func beginOverviewSwipe() {
         if under.id != focusedDisplay().id { focusDisplay(under) }  // keys in the overview go by focus
         useStack(on: under)
         showBackdrop()
+        showSpaceButtons()
     }
     sendLayout(open: overviewOpen, spring: true)  // starts the layout if it isn't running
     overviewOpen = true  // the strip stays off its windows while the Spaces are transformed
@@ -208,6 +211,7 @@ func endSpaceSwipe(focus: CGFloat, velocity: CGFloat) {
 func closeOverview(at index: Int) {
     guard overviewOpen else { return }
     overviewOpen = false
+    hideSpaceButtons()
     overviewTarget = index
     sendLayout(open: false, spring: true)
     pressSpace(overviewSpaces[index])
@@ -217,6 +221,7 @@ func closeOverview(at index: Int) {
 func resetOverview() {
     guard overviewOpen else { return }
     overviewOpen = false
+    hideSpaceButtons()
     refreshDisplays()
     overviewTarget = stack(on: display(of: overviewSpaces[overviewTarget])).current
     sendLayout(open: false, spring: false)
@@ -272,6 +277,97 @@ func blurred(_ url: URL) -> CGImage? {
     guard let image = CIImage(contentsOf: url) else { return nil }
     let small = image.transformed(by: CGAffineTransform(scaleX: 960 / image.extent.width, y: 960 / image.extent.width))
     return CIContext().createCGImage(small.clampedToExtent().applyingGaussianBlur(sigma: 24), from: small.extent)
+}
+
+// × and + beside the Space at the center of the open overview: that Desktop goes, or a new one comes after the last and
+// slides to the center. A picture only: the event tap keeps clicks in the overview from reaching anything, and
+// overviewClick goes by spaceButtonRects. In a Space of its own, like the backdrop, here above the desktops.
+// Needs Dock's code (Spaces.swift); without it the overview has no buttons.
+var spaceButtons: (window: NSWindow, space: UInt64, close: NSView)?
+let spaceButtonSize: CGFloat = 36
+
+func spaceButtonRects() -> (close: CGRect, add: CGRect) {
+    let center = overviewRect(overviewTarget), size = CGSize(width: spaceButtonSize, height: spaceButtonSize)
+    let close = CGRect(origin: CGPoint(x: center.maxX + 14, y: center.minY), size: size)
+    return (close, close.offsetBy(dx: 0, dy: spaceButtonSize + 10))
+}
+
+func spaceButton(_ symbol: String) -> NSImageView {
+    let view = NSImageView(image: NSImage(systemSymbolName: symbol, accessibilityDescription: nil) ?? NSImage())
+    view.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
+    view.contentTintColor = .white
+    view.wantsLayer = true
+    view.layer?.backgroundColor = NSColor(white: 0, alpha: 0.55).cgColor
+    view.layer?.cornerRadius = spaceButtonSize / 2
+    return view
+}
+
+func showSpaceButtons() {
+    guard desktopsEditable, let screen = nsScreen(of: overviewDisplay) else { return }
+    if spaceButtons == nil {
+        let height = spaceButtonSize * 2 + 10
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: spaceButtonSize, height: height), styleMask: .borderless, backing: .buffered, defer: false)
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.level = NSWindow.Level(Int(CGWindowLevelForKey(.desktopWindow)))  // not layer 0: no one lists it as an app window
+        window.ignoresMouseEvents = true
+        let close = spaceButton("xmark"), add = spaceButton("plus")
+        close.frame = NSRect(x: 0, y: spaceButtonSize + 10, width: spaceButtonSize, height: spaceButtonSize)
+        add.frame = NSRect(x: 0, y: 0, width: spaceButtonSize, height: spaceButtonSize)
+        window.contentView!.addSubview(close)
+        window.contentView!.addSubview(add)
+        window.orderFrontRegardless()
+        let space = CGSSpaceCreate(cid, 1, 0)
+        _ = CGSSpaceSetAbsoluteLevel(cid, space, 1)
+        spaceButtons = (window, space, close)
+    }
+    let top = spaceButtonRects().close, display = overviewDisplay.frame
+    spaceButtons!.window.setFrameTopLeftPoint(NSPoint(x: top.minX, y: screen.frame.maxY - (top.minY - display.minY)))
+    // Moved to another display it would have gone to that display's Space.
+    _ = CGSSpaceAddWindowsAndRemoveFromSpaces(cid, spaceButtons!.space, [spaceButtons!.window.windowNumber] as CFArray, 7)
+    _ = CGSShowSpaces(cid, [spaceButtons!.space] as CFArray)
+    updateSpaceButtons()
+}
+
+func hideSpaceButtons() {
+    if let space = spaceButtons?.space { _ = CGSHideSpaces(cid, [space] as CFArray) }
+}
+
+// A fullscreen Space and a display's last Desktop have no ×.
+func canRemoveCentered() -> Bool {
+    overviewSpaces.indices.contains(overviewTarget) && !isFullscreen(overviewSpaces[overviewTarget])
+        && overviewSpaces.filter { !isFullscreen($0) }.count > 1
+}
+
+func updateSpaceButtons() { spaceButtons?.close.isHidden = !canRemoveCentered() }
+
+func pressSpaceButton(at point: CGPoint) -> Bool {
+    guard desktopsEditable else { return false }
+    let rects = spaceButtonRects()
+    if rects.close.contains(point) {
+        if canRemoveCentered() { removeDesktop(overviewSpaces[overviewTarget]) }
+        return true
+    }
+    guard rects.add.contains(point) else { return false }
+    let shown = overviewDisplay
+    addDesktop(on: shown)
+    whenSpaces(of: shown, differFrom: shown.spaces) { ids in
+        overviewRefresh()
+        guard overviewOpen, let new = ids.first(where: { !shown.spaces.contains($0) }), let index = overviewSpaces.firstIndex(of: new) else { return }
+        overviewTarget = index
+        sendLayout(open: true, spring: false)
+        pressSpace(new)
+    }
+    return true
+}
+
+// The open overview after Desktops came or went.
+func overviewRefresh() {
+    guard overviewOpen else { return }
+    let target = overviewSpaces[overviewTarget]
+    useStack(on: display(of: target))
+    if let index = overviewSpaces.firstIndex(of: target) { overviewTarget = index }
+    sendLayout(open: true, spring: false)
 }
 
 // Where Space i sits in the open overview, in CG coordinates.
@@ -332,6 +428,7 @@ func overviewMouseUp(at point: CGPoint) {
 }
 
 func overviewClick(at point: CGPoint) {
+    if pressSpaceButton(at: point) { return }
     guard let hit = overviewHit(at: point) else { return closeOverview(at: overviewTarget) }
     closeOverview(at: hit.space)
     guard let window = hit.window else { return }

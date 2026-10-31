@@ -111,14 +111,33 @@ var desktopsEditable = false
 
 func addDesktop(on display: Display) { send(["N \(display.id)"]) }
 
+// Dock's list changes a moment after "N" and "C". Then gives the display's Spaces as they are.
+func whenSpaces(of display: Display, differFrom ids: [UInt64], tries: Int = 40, then: @escaping ([UInt64]) -> Void) {
+    refreshDisplays()
+    let now = displays.first { $0.id == display.id }?.spaces ?? ids
+    guard now == ids, tries > 0 else { return then(now) }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { whenSpaces(of: display, differFrom: ids, tries: tries - 1, then: then) }
+}
+
 // Dock sends its windows to the display's first Desktop. It isn't removed while on screen: first the display leaves it.
 func removeDesktop(_ sid: UInt64) {
     refreshDisplays()
     let shown = display(of: sid), desktops = shown.spaces.filter { !isFullscreen($0) }
     guard desktops.count > 1, desktops.contains(sid) else { return }
-    guard sid == shown.current else { return send(["C \(sid)"]) }
-    switchSpaceAnimated(to: desktops[0] == sid ? desktops[1] : desktops[0])
-    whenSpaceChanges(from: sid) { send(["C \(sid)"]) }
+    let remove = {
+        send(["C \(sid)"])
+        whenSpaces(of: shown, differFrom: shown.spaces) { _ in overviewRefresh() }
+    }
+    guard sid == shown.current else { return remove() }
+    let other = desktops[0] == sid ? desktops[1] : desktops[0]
+    if overviewOpen, let index = overviewSpaces.firstIndex(of: other) {
+        overviewTarget = index
+        sendLayout(open: true, spring: false)
+        pressSpace(other)
+    } else {
+        switchSpaceAnimated(to: other)
+    }
+    whenSpaceChanges(from: sid, then: remove)
 }
 
 // The Desktops of the display that has focus, fullscreen Spaces left out.

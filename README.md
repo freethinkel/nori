@@ -146,7 +146,7 @@ With "Displays have separate Spaces" on, the macOS default in System Settings �
 - A Space switch slides on its own display and the others stay still.
 - Desktop numbers count per display, as Mission Control labels them and like niri's workspaces: Option+N, `nori focus space N` and `move-to-space-N` mean the Nth Desktop of the display that has focus. Only the system's "Switch to Desktop N" shortcuts number them across displays, and so does a rule's `space = N`, so a Desktop added on one display shifts the rules of the next. `nori query spaces` gives both.
 - Opt+J/K and Opt+Shift+J/K go on past the last Desktop of a display to the display above or below it, unless `wrap-around` is on. That sends a window to a stacked display without a key of its own; beside each other, bind `move-window-to-monitor-left` and `-right`. On the new display Opt+Shift+N sends it to the Desktop you want.
-- New Desktops come from Mission Control, Ctrl+↑ by default: each display has its own row at the top, with + at its right end. Moving the pointer over a Desktop there shows the × that removes it.
+- The overview has × and + beside the Space at the center: × removes that Desktop, and its windows go to the display's first one, + adds a Desktop after the last and slides to it. `nori space add` and `nori space remove N` do the same for the display that has focus. This runs Dock's own code, found by its instructions, so a new macOS may change it: then nori leaves the buttons out, and Mission Control still has them, Ctrl+↑ by default.
 - The overview opens on one display: the focused one for the key, the one under the pointer for a swipe. The others stay as they are, and a click on one closes the overview. `overview-background = "blur"` uses that display's wallpaper.
 - A window you drag to another display joins that display's strip, right of its focused column.
 - `focus-monitor-*` and `move-window-to-monitor-*` go by position, as in niri: left and right need a display that overlaps this one's height, up and down its width, and the nearest center wins. Next and previous go round, left to right, then top to bottom.
@@ -293,6 +293,8 @@ nori width next|previous                # the next of 1/3, 1/2, 2/3
 nori width toggle-full                  # full width, and back
 nori center                             # scroll the focused window to the center
 nori overview                           # open or close the overview
+nori space add                          # a new Desktop on the display that has focus
+nori space remove N                     # removes its Desktop N, its windows go to the first one
 nori show floating                      # windows outside the strip above it
 nori toggle floating                    # the focused window out of the strip and back
 nori reload                             # read the config again, like "Reload Config"
