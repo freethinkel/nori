@@ -107,7 +107,8 @@ func whenSpaces(of display: Display, differFrom ids: [UInt64], tries: Int = 40, 
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { whenSpaces(of: display, differFrom: ids, tries: tries - 1, then: then) }
 }
 
-// Dock sends its windows to the display's first Desktop. It isn't removed while on screen: first the display leaves it.
+// Dock sends its windows to the display's first Desktop. It isn't removed while on screen: first the display goes to
+// the Desktop before it, or after it if it is the first.
 func removeDesktop(_ sid: UInt64) {
     refreshDisplays()
     let shown = display(of: sid), desktops = shown.spaces.filter { !isFullscreen($0) }
@@ -117,7 +118,7 @@ func removeDesktop(_ sid: UInt64) {
         whenSpaces(of: shown, differFrom: shown.spaces) { _ in overviewRefresh() }
     }
     guard sid == shown.current else { return remove() }
-    let other = desktops[0] == sid ? desktops[1] : desktops[0]
+    let other = desktops[desktops[0] == sid ? 1 : desktops.firstIndex(of: sid)! - 1]
     if overviewOpen, let index = overviewSpaces.firstIndex(of: other) {
         overviewTarget = index
         sendLayout(open: true, spring: false)
