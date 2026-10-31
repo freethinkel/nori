@@ -280,14 +280,16 @@ func blurred(_ url: URL) -> CGImage? {
     return CIContext().createCGImage(small.clampedToExtent().applyingGaussianBlur(sigma: 24), from: small.extent)
 }
 
-// In the open overview × in the top right corner of each Desktop removes it, and a larger + at the bottom of the last
-// one adds a Desktop after it and slides there. Each is a window of nori's on that Desktop, so its Space's own transform
-// carries and scales it. They fade in once the overview has settled and go as it closes. Only pictures: the event tap
+// In the open overview × in the top right corner of each Desktop removes it, and a larger + just below the last one
+// adds a Desktop after it and slides there. Each is a window of nori's on that Desktop, so its Space's own transform
+// carries and scales it. + is really at the bottom of the display and drawn further down by a window transform: past
+// the display's edge the window would go over to the next display (docs/WINDOWSERVER.md). They fade in once the overview has settled and go as it closes. Only pictures: the event tap
 // keeps clicks in the overview from reaching anything, and overviewClick goes by the rects. Needs Dock's code (Spaces.swift).
 var closeButtons: [UInt64: NSWindow] = [:]
 var addButton: (window: NSWindow, space: UInt64)?
 let closeButtonSize: CGFloat = 28  // on screen in the overview, like the rest
 let addButtonSize: CGFloat = 48
+let addButtonOffset: CGFloat = 16  // below the Desktop
 let spaceButtonInset: CGFloat = 12
 
 func closeButtonRect(_ i: Int) -> CGRect {
@@ -297,7 +299,7 @@ func closeButtonRect(_ i: Int) -> CGRect {
 
 func addButtonRect(_ i: Int) -> CGRect {
     let picture = overviewRect(i)
-    return CGRect(x: picture.midX - addButtonSize / 2, y: picture.maxY - spaceButtonInset - addButtonSize, width: addButtonSize, height: addButtonSize)
+    return CGRect(x: picture.midX - addButtonSize / 2, y: picture.maxY + addButtonOffset, width: addButtonSize, height: addButtonSize)
 }
 
 // On Space `sid`. The frame is in the Space's coordinates: scaled down with it, a button comes out at its size.
@@ -333,7 +335,9 @@ func showSpaceButtons() {
     }
     guard let last = desktops.last, addButton?.space != last else { return }
     addButton?.window.orderOut(nil)
-    addButton = (spaceButton("plus", frame: NSRect(x: screen.frame.midX - add / 2, y: screen.frame.minY + inset, width: add, height: add), on: last), last)
+    let window = spaceButton("plus", frame: NSRect(x: screen.frame.midX - add / 2, y: screen.frame.minY + inset, width: add, height: add), on: last)
+    send(["D \(window.windowNumber) 1 0 0 0 0 1 0 0 0 0 1 0 0 \(-(inset + add + addButtonOffset / overviewScale)) 0 1"])
+    addButton = (window, last)
 }
 
 // ponytail: a fixed wait for the overview's spring, as an open overview sends no "layout-done"; on a slow frame they
