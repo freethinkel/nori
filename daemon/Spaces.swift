@@ -113,7 +113,8 @@ func desktopsHere() -> [(id: UInt64, number: Int?, displayNumber: Int?, display:
     return all.filter { $0.display == display && !$0.fullscreen }
 }
 
-// Desktop n of the display that has focus, like niri's workspaces, as the number across displays that macOS goes by.
+// Desktop n of the display that has focus, as Mission Control labels it and like niri's workspaces, given as the number
+// across displays that the system shortcuts go by.
 func desktopHere(_ n: Int) -> Int? {
     let desktops = desktopsHere()
     return desktops.indices.contains(n - 1) ? desktops[n - 1].number : nil
@@ -146,5 +147,6 @@ func switchSpace(by delta: Int) {
         pressSpace(overviewSpaces[target])
         return
     }
-    if let sid = neighbourSpace(delta) { switchSpaceAnimated(to: sid) }
+    // Past the last Space of its display, focus goes on to the display on that side, if there is one.
+    if let sid = neighbourSpace(delta) { switchSpaceAnimated(to: sid) } else { focusMonitor(delta > 0 ? "down" : "up") }
 }

@@ -18,8 +18,9 @@ func moveColumn(by delta: Int) {
 // Windows just sent to another Space, kept out of the strip until CGWindowList stops showing them here.
 var movedAway: Set<UInt32> = []
 
+// Past the last Desktop of its display the window goes on to the display on that side, if there is one.
 func moveFocused(toDesktopBy delta: Int) {
-    if let number = neighbourDesktop(delta) { moveFocused(toDesktop: number) }
+    if let number = neighbourDesktop(delta) { moveFocused(toDesktop: number) } else { moveFocused(toMonitor: delta > 0 ? "down" : "up") }
 }
 
 func moveFocused(toDesktop number: Int) {

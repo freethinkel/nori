@@ -105,7 +105,7 @@ title = "Picture in Picture"
 floating = true        # only Safari windows with that title float; put a plain app = "Safari" rule after it for the rest
 ```
 
-- `space = N`, a whole number from 1. Here Desktops count from 1 across all displays, as Mission Control does, while Option+N and `move-to-space-N` count on the display that has focus. nori moves each window once, the first time it sees it, including windows already open at start. Moved back by hand, it stays.
+- `space = N`, a whole number from 1. Here Desktops count from 1 across all displays, as the system shortcuts do, while Mission Control, Option+N and `move-to-space-N` count on each display. nori moves each window once, the first time it sees it, including windows already open at start. Moved back by hand, it stays.
 - `floating = true` suits apps whose main windows shouldn't be columns: calculators, color pickers, small utilities. Dialogs, panels, sheets and browser popups already stay out of the strip without a rule.
 - `ignore = true` suits launchers, menu bar apps and overlays. Raycast, Alfred, Spotlight and LaunchBar are ignored already, no rule needed; a rule in the config for one of them takes precedence.
 - `width = N`, a number over 0 up to 100, percent of the usable width. Applied once, when the window joins the strip; a later resize by hand or key stays.
