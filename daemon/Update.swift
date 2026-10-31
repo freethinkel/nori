@@ -1,15 +1,19 @@
 // Updating Nori.app from its GitHub releases, the way Shepherd does: the latest release's Nori.dmg, mounted and its app
 // copied next to the running one, checked to be signed by the running app's team, swapped in, then a relaunch that reloads the
-// payload. Checked at launch and every 6 hours, and by hand from the menu's "Check for Updates…", which turns into
-// "Update to vX" once a release is found. Only a Developer ID build (a CI release) updates itself: an ad hoc build
-// from make app has no team to check a download against, and shows no such item.
+// payload. Checked at launch, every 6 hours and on each open of the menu, and by hand from the menu's "Check for Updates…",
+// which turns into "Update to vX" once a release is found. Only a Developer ID build (a CI release) installs one: an ad hoc
+// build from make app has no team to check a download against, so it opens the release page. build/nori has no version to
+// compare and shows no such item.
 
 import Cocoa
 
 private let latestRelease = URL(string: "https://api.github.com/repos/freethinkel/nori/releases/latest")!
+private let releasePage = URL(string: "https://github.com/freethinkel/nori/releases/latest")!
 private var offered: (version: String, url: URL)?
+private var canInstall = false
 private var updating = false
 private var checking = false
+private var askedByHand = false
 private let checkTitle = "Check for Updates…"
 
 let updateItem: NSMenuItem = {
@@ -26,18 +30,27 @@ extension MenuActions {
 }
 
 func startUpdates() {
-    guard Bundle.main.bundleURL.pathExtension == "app", team(Bundle.main.bundleURL) != nil else { return }
+    guard Bundle.main.bundleURL.pathExtension == "app" else { return }
+    canInstall = team(Bundle.main.bundleURL) != nil
     updateItem.isHidden = false
     checkForUpdate(byHand: false)
     Timer.scheduledTimer(withTimeInterval: 6 * 3600, repeats: true) { _ in checkForUpdate(byHand: false) }
 }
 
+// What the item says when nothing is going on.
+private func showOffer() { updateItem.title = offered.map { "Update to v\($0.version)" } ?? checkTitle }
+
 // A release is "v1.2.0" with Nori.dmg among its assets; newer when its version sorts after ours, number by number.
-// A check by hand says what it found, also when there is nothing new or GitHub can't be reached; the timer's is quiet.
+// A check by hand says what it found, also when there is nothing new or GitHub can't be reached, and one made while a
+// quiet check runs takes that check's answer. A quiet check that can't reach GitHub keeps a release it found before.
 func checkForUpdate(byHand: Bool) {
-    guard !checking, !updating else { return }
+    guard !updating else { return }
+    if byHand {
+        askedByHand = true
+        updateItem.title = "Checking for Updates…"
+    }
+    guard !checking else { return }
     checking = true
-    if byHand { updateItem.title = "Checking for Updates…" }
     var request = URLRequest(url: latestRelease)
     request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
     URLSession.shared.dataTask(with: request) { data, _, error in
@@ -51,21 +64,26 @@ func checkForUpdate(byHand: Bool) {
             found = (String(tag.dropFirst()), url)
         }
         DispatchQueue.main.async {
+            let byHand = askedByHand
             checking = false
+            askedByHand = false
+            guard !updating else { return }  // Update chosen while this ran: the item says Downloading.
             guard let found else {
-                updateItem.title = checkTitle
+                showOffer()
                 if byHand { alert("Could not check for updates", error?.localizedDescription ?? "GitHub has no nori release with Nori.dmg.", ["OK"]) }
                 return
             }
             guard found.version.compare(current, options: .numeric) == .orderedDescending else {
-                updateItem.title = checkTitle
+                offered = nil
+                showOffer()
                 if byHand { alert("nori is up to date", "v\(current) is the latest release.", ["OK"]) }
                 return
             }
             offered = found
-            updateItem.title = "Update to v\(found.version)"
-            if byHand, alert("nori v\(found.version) is available", "You have v\(current). nori restarts after the update.",
-                             ["Update", "Later"]) == .alertFirstButtonReturn {
+            showOffer()
+            if byHand, alert("nori v\(found.version) is available",
+                             "You have v\(current). " + (canInstall ? "nori restarts after the update." : "A local build can't update itself, so this opens the release page."),
+                             [canInstall ? "Update" : "Open Release Page", "Later"]) == .alertFirstButtonReturn {
                 installUpdate()
             }
         }
@@ -74,6 +92,10 @@ func checkForUpdate(byHand: Bool) {
 
 func installUpdate() {
     guard let release = offered, !updating else { return }
+    guard canInstall else {
+        NSWorkspace.shared.open(releasePage)
+        return
+    }
     updating = true
     updateItem.title = "Downloading v\(release.version)…"
     URLSession.shared.downloadTask(with: release.url) { file, _, error in
@@ -82,7 +104,7 @@ func installUpdate() {
         DispatchQueue.main.async {
             guard let failure else { return relaunch() }
             updating = false
-            updateItem.title = "Update to v\(release.version)"
+            showOffer()
             alert("Could not update nori", failure, ["OK"])
         }
     }.resume()

@@ -37,7 +37,7 @@ func statusIcon() -> NSImage? {
     return image
 }
 
-// "Reload Config" (⌘R), `nori reload` and every change in the Settings window.
+// `nori reload`, and "Reload Config" and every change in the Settings window.
 func reloadSettings() {
     configFile = readConfig()
     settingsModel.refresh()
@@ -48,22 +48,17 @@ func reloadSettings() {
 final class MenuActions: NSObject, NSMenuDelegate {
     @objc func openSettings() { showSettings() }
 
-    @objc func openConfig() {
+    func openConfig() {
         writeDefaultConfig()
         _ = shell("/usr/bin/open", ["-t", configPath])
     }
 
-    @objc func reloadConfig() { reloadSettings() }
-
-    // config.default.toml: every setting with its default, rewritten on each start, for a config from an older version.
-    @objc func showAllSettings() {
-        writeDefaultConfig()
-        _ = shell("/usr/bin/open", ["-t", defaultConfigPath])
-    }
     @objc func reloadPayload() { loadPayload() }
 
     // Whether the payload answers in Dock, under the item that reloads it; a socket connect, so read on each open.
+    // A new release shows up the same way: the check runs behind the open menu and renames its item.
     func menuWillOpen(_ menu: NSMenu) {
+        if !updateItem.isHidden { checkForUpdate(byHand: false) }
         let loaded = payloadAlive()
         if #available(macOS 14.4, *) {
             payloadItem.subtitle = loaded ? "Payload is running in Dock" : "Payload is not running in Dock"
@@ -88,14 +83,7 @@ func menu() -> NSMenu {
     menu.addItem(withTitle: "nori", action: nil, keyEquivalent: "")
     menu.addItem(updateItem)
     menu.addItem(.separator())
-    for (title, action, key) in [
-        ("Settings…", #selector(MenuActions.openSettings), ","),
-        ("Open Config", #selector(MenuActions.openConfig), ""),
-        ("Reload Config", #selector(MenuActions.reloadConfig), "r"),
-        ("Show All Settings", #selector(MenuActions.showAllSettings), ""),
-    ] {
-        menu.addItem(withTitle: title, action: action, keyEquivalent: key).target = menuActions
-    }
+    menu.addItem(withTitle: "Settings…", action: #selector(MenuActions.openSettings), keyEquivalent: ",").target = menuActions
     payloadItem.target = menuActions
     menu.addItem(payloadItem)
     menu.addItem(.separator())

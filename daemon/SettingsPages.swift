@@ -23,7 +23,7 @@ struct SettingsPage: View {
     }
 }
 
-// What runs, the way Rex shows its server. Only a Developer ID build updates itself: Update.swift hides the item elsewhere.
+// What runs, the way Rex shows its server. build/nori has no version to compare: Update.swift hides the item there.
 struct AboutCard: View {
     var body: some View {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
