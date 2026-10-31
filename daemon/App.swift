@@ -17,14 +17,22 @@ func startApp() {
         exit(1)
     }
     statusItem.button?.image = statusIcon()
+    statusItem.button?.imagePosition = .imageLeading  // the "!" of Problems.swift beside it
     statusItem.menu = menu()
+    showConfigProblems()
     guard bootSetupDone() else { exit(1) }
     waitForAccessibility()
     let gesturesChanged = leaveSystemGestures ? putBackSystemGestures() : disableSystemGestures()
     // After an update Dock still runs the old payload.
     if gesturesChanged || !payloadAlive() || CommandLine.arguments.contains("--updated") { loadPayload() }
+    quitIfLoadFails = false
     applyLaunchAtLogin()
     startUpdates()
+    Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in
+        watchPayload()
+        checkShortcuts()
+    }
+    RunLoop.main.perform(offerShortcuts)  // not the main queue: nori's own work there would wait for the alert
 }
 
 // The two nori sheets of the app icon as a silhouette: status.png (36px, 18pt @2x) in the bundle's
@@ -41,6 +49,7 @@ func statusIcon() -> NSImage? {
 func reloadSettings() {
     configFile = readConfig()
     settingsModel.refresh()
+    showConfigProblems()
     applyLaunchAtLogin()
     layout(immediate: false)
 }
@@ -53,15 +62,17 @@ final class MenuActions: NSObject, NSMenuDelegate {
         _ = shell("/usr/bin/open", ["-t", configPath])
     }
 
-    @objc func reloadPayload() { loadPayload() }
+    @objc func reloadPayload() { reloadDockPayload() }
 
     // Whether the payload answers in Dock, under the item that reloads it; a socket connect, so read on each open.
     // A new release shows up the same way: the check runs behind the open menu and renames its item.
     func menuWillOpen(_ menu: NSMenu) {
         if !updateItem.isHidden { checkForUpdate(byHand: false) }
         let loaded = payloadAlive()
+        let unhooked = problems.filter { $0.key.hasPrefix("hook-") }.count
         if #available(macOS 14.4, *) {
-            payloadItem.subtitle = loaded ? "Payload is running in Dock" : "Payload is not running in Dock"
+            payloadItem.subtitle = !loaded ? "Payload is not running in Dock"
+                : "Payload is running in Dock" + (unhooked > 0 ? ", \(unhooked) of \(hookLosses.count) hooks failed" : "")
         } else {
             payloadItem.state = loaded ? .on : .off
         }
@@ -181,13 +192,14 @@ func designatedRequirement() -> Data? {
 // under the user's control too. Nothing to do for build/nori run from a terminal.
 func applyLaunchAtLogin() {
     guard Bundle.main.bundleURL.pathExtension == "app" else { return }
+    clearProblem("launch-at-login")
     let service = SMAppService.mainApp
     let registered = service.status == .enabled || service.status == .requiresApproval
     guard launchAtLogin != registered else { return }
     do {
         if launchAtLogin { try service.register() } else { try service.unregister() }
     } catch {
-        fputs("launch-at-login: \(error.localizedDescription)\n", stderr)
+        report(Problem(key: "launch-at-login", title: "launch-at-login did not apply", help: error.localizedDescription))
     }
 }
 
@@ -207,23 +219,24 @@ func loadPayload() {
     let script = "killall Dock; for i in 1 2 3 4 5 6 7 8 9 10; do sleep 0.5; \(loader) \(payload) && exit 0; done; exit 1"
     switch runAsAdmin(script, prompt: "nori is loading its helper into Dock.") {
     case .done: break
-    case .canceled:
-        restoreSystemGestures()
-        exit(0)
-    case .failed(let error):
-        alert("Could not load nori into Dock", error, ["Quit"])
-        restoreSystemGestures()
-        exit(1)
+    case .canceled: return loadFailed(nil)
+    case .failed(let error): return loadFailed(error)
     }
     for _ in 0..<30 where !payloadAlive() { usleep(100_000) }
     if !payloadAlive() {
-        alert("nori is not running in Dock",
-              "The loader finished, but Dock does not answer. Its log:\n/usr/bin/log show --last 5m --predicate 'process == \"Dock\" AND eventMessage CONTAINS \"nori\"'",
-              ["Quit"])
-        restoreSystemGestures()
-        exit(1)
+        return loadFailed("The loader finished, but Dock does not answer. Its log:\n/usr/bin/log show --last 5m --predicate 'process == \"Dock\" AND eventMessage CONTAINS \"nori\"'")
     }
     layout(immediate: false)
+}
+
+// At launch nori is no use without the payload, so it quits. Once running it stays, and the problem stays listed.
+var quitIfLoadFails = true
+
+func loadFailed(_ error: String?) {
+    if let error { alert("Could not load nori into Dock", error, [quitIfLoadFails ? "Quit" : "OK"]) }
+    guard quitIfLoadFails else { return }
+    restoreSystemGestures()
+    exit(error == nil ? 0 : 1)
 }
 
 // Output and errors of a command, for checks like csrutil and nvram.

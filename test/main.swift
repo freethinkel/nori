@@ -149,6 +149,33 @@ assert(asked == 3, "\(asked)")
 
 print("rules: ok")
 
+// Config problems are plain lines, for Settings and the menu; what is fine still applies.
+let broken = parseConfig("gap = 8\nnope = 1\npadding-top = \"x\"\n[bindings]\noverview = \"option+?\"\n[[rule]]\napp = \"A\"\n[[rule]]\napp = \"B\"\nspace = 2\n")
+assert(broken.values == ["gap": "8.0"] && broken.rules.map(\.app) == ["B"], "\(broken)")
+assert(broken.problems.count == 4 && broken.problems[0].hasPrefix("line 2: skipping nope") && broken.problems[3].hasPrefix("skipping [[rule]] #1"), "\(broken.problems)")
+assert(parseConfig("a = [1]\n").problems.count == 1 && parseConfig(defaultConfig).problems.isEmpty)
+
+print("config problems: ok")
+
+// Only the shortcuts of Desktops that exist count, one without a key is as good as off, and a single Space needs none.
+let on = SymbolicHotkey(enabled: true, character: 49, keycode: 18, flags: 524288)
+var shortcuts = [79: on, 81: on, 118: on, 119: on, 120: on]
+func shortcut(_ id: Int) -> SymbolicHotkey { shortcuts[id] ?? SymbolicHotkey(enabled: false, character: 65535, keycode: 22, flags: 262144) }
+assert(shortcutsOff(desktops: 3, spaces: 3, hotkey: shortcut).isEmpty)
+assert(shortcutsOff(desktops: 5, spaces: 6, hotkey: shortcut) == [121, 122])
+shortcuts[81] = nil
+shortcuts[119]?.keycode = 65535
+assert(shortcutsOff(desktops: 3, spaces: 3, hotkey: shortcut) == [81, 119])
+assert(shortcutsOff(desktops: 1, spaces: 1, hotkey: shortcut).isEmpty)
+assert(shortcutsOff(desktops: 20, spaces: 20, hotkey: shortcut).last == 133)
+
+// Turning one on keeps its keys, the user's or macOS's default.
+let turnedOn = try! PropertyListSerialization.propertyList(from: Data(enabledPlist(shortcut(127)).utf8), format: nil) as! [String: Any]
+assert(turnedOn["enabled"] as? Bool == true)
+assert((turnedOn["value"] as? [String: Any])?["parameters"] as? [Int] == [65535, 22, 262144])
+
+print("shortcuts: ok")
+
 // The default config (Config.swift) parses without a warning, only sets known keys to valid values, and names every
 // setting and binding, commented out or not, so a new setting can't be left out of it.
 errors = []

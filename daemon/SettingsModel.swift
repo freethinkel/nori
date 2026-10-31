@@ -4,11 +4,13 @@ import SwiftUI
 // What the window shows, as the file says on the last reload.
 @Observable final class SettingsModel {
     var values: [String: String] = [:]     // as readConfig took them: what nori runs with
+    var problems: [String] = []            // what the last reload skipped, line by line
     var rules: [[String: TOMLValue]] = []  // every [[rule]] table in file order, valid or not
     var recording: String?                 // the binding whose recorder waits for a key press
 
     func refresh() {
         values = config
+        problems = configFile.problems
         let text = (try? String(contentsOfFile: configPath, encoding: .utf8)) ?? ""
         var count = 0
         var tables: [Int: [String: TOMLValue]] = [:]

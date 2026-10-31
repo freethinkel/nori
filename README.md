@@ -17,12 +17,12 @@ It's a prototype. WindowServer moves the windows, not Accessibility. A dylib loa
 - Drop a window you dragged with the mouse and it eases back into its column.
 - Every Space has its own strip. A fullscreen app's Space has none: nori leaves its window as macOS made it.
 - Fullscreen Spaces sit in the vertical stack where Mission Control has them, so Opt+J/K, the swipes and the overview reach them. nori switches to one with Dock's "Move left/right a space" shortcut, see [macOS settings](#3-macos-settings).
-- Spaces switch vertically, on the same curve as windows. nori catches every "Switch to Desktop N" press, from the keyboard, from Opt+J/K or from `nori focus space`. Dock still switches the Space and the payload draws the slide. If nori quits or crashes, Dock goes back to its usual horizontal animation.
+- Spaces switch vertically, on the same curve as windows. nori catches every "Switch to Desktop N" press, from the keyboard, from Opt+J/K or from `nori focus space`. Dock still switches the Space and the payload draws the slide. If nori quits or crashes, Dock goes back to its usual horizontal animation, and an open overview closes by itself.
 - An overview like niri's shows all Spaces of the display stacked and scaled down, with live windows. Four fingers drive it. It follows the swipe, stretches past fully open or closed, and on lift springs open or shut depending on how fast you threw it.
 
 ## Setup
 
-nori needs macOS 14 or newer on Apple Silicon. I run it on macOS 27. Dock only loads a third-party dylib with part of SIP off, and that weakens the security of the whole machine. Do it on your own Mac, and see [Undo](#undo) for the way back. The steps match [yabai's](https://github.com/koekeishiya/yabai/wiki/Disabling-System-Integrity-Protection).
+nori runs on Apple Silicon, and it is tested on macOS 27 only. The app says it needs macOS 14 or newer, but nothing older than 27 has been tried. On another macOS build parts of it may not go into Dock: nori then keeps running without them and tells you which, see [When something is wrong](#when-something-is-wrong). Dock only loads a third-party dylib with part of SIP off, and that weakens the security of the whole machine. Do it on your own Mac, and see [Undo](#undo) for the way back. The steps match [yabai's](https://github.com/koekeishiya/yabai/wiki/Disabling-System-Integrity-Protection).
 
 ### 1. Turn off part of SIP, once, from Recovery
 
@@ -57,10 +57,20 @@ After that nori lives in the menu bar.
 |---|---|
 | Check for Updates… | asks GitHub for a newer release, which nori also does at launch and each time the menu opens; becomes "Update to vX" once one is found. An app you built yourself opens the release page instead of updating |
 | Settings…, ⌘, | a window with every setting, key binding and app rule. Its toolbar menu opens `~/.config/nori/config.toml` in your text editor and reloads it. See [Config](#config) |
-| Restart Dock and Reload Payload | use it after a rebuild, so Dock runs the new payload. The line under it says whether the payload is running in Dock |
+| Restart Dock and Reload Payload | use it after a rebuild, so Dock runs the new payload. The line under it says whether the payload is running in Dock. If you cancel the password, nori keeps running |
 | Quit nori, ⌘Q | puts Spaces and windows back and quits. The payload stays in Dock and does nothing |
 
+#### When something is wrong
+
+A `!` beside the menu bar item means nori has a problem. The menu then lists each one at the top, with what you lose and what to do; choosing one fixes it where nori can. A problem leaves the list once it is fixed. "Copy Problem Report" puts the list, nori's version and the macOS build on the clipboard for a bug report, and `nori problems` prints the same.
+
+If Dock restarts (a crash, `killall Dock`), nori's payload goes with it, windows and Spaces stop moving, and the overview can't open. nori asks once whether to reload. Reloading restarts Dock again and may ask for your password; choose Later and the menu keeps the offer.
+
+The payload patches four SkyLight functions in Dock, and first checks their code byte for byte, as it can change between macOS builds. One that doesn't match stays unpatched, and nori lists it with what you lose. The strip and the overview keep working. Without `SLSTransactionSetSpaceTransform` Space switches mix in Dock's horizontal slide and windows on every Space, like a status bar, move with the Spaces; the others cost a black band in Space switches, or a jump or a blink in the overview. Choosing the item copies the report, with the macOS build, for an issue. If macOS lacks a function the payload calls, it doesn't load at all, and nori says so at launch and quits.
+
 ### 3. macOS settings
+
+At launch nori checks the Desktop shortcuts below for the Desktops you have, and if some are off it offers to turn them on, keeping the keys they have. Say Not Now and it won't ask again: a switch that needs one beeps and stays where it is, and nori's menu keeps the offer.
 
 - **Desktop shortcuts.** Turn on "Switch to Desktop 1…N" in System Settings → Keyboard → Keyboard Shortcuts → Mission Control. Opt+J/K, the overview and `nori focus space` press them to switch Spaces. A fullscreen app's Space has no such shortcut: to reach one nori presses "Move left a space" / "Move right a space" from the same list, so turn those on too (any keys, they don't have to stay Ctrl+←/→). Without them nori brings the app to the front, which finds its fullscreen Space only if that is the app's front window.
 - **Trackpad.** In System Settings → Trackpad → More Gestures, set "Swipe between full-screen applications" to four fingers or turn it off. Otherwise macOS flips Spaces along with the strip. **Mission Control** and **App Exposé** use the same 3- and 4-finger swipes, and macOS can act on them before nori's event tap sees the gesture. Unless `leave-system-gestures = true`, nori turns both off while it runs (`showMissionControlGestureEnabled` and `showAppExposeGestureEnabled` in `com.apple.dock`) and restores them when it quits, restarting Dock to apply each change, so the next launch loads the payload again (password); Mission Control stays on its keyboard shortcut. If nori crashes they stay off until the next launch or quit.
@@ -141,7 +151,7 @@ To have an assistant write it for you, give it [llms.txt](llms.txt) (raw: `https
 
 Or choose Settings… (⌘,) in the menu. The window edits the same file, and each change applies at once, like "Reload Config". It changes a value in its own line and adds a missing key under the last key of its table, so your comments, rules and their order stay as you wrote them. After an edit by hand, `nori reload` or "Reload Config" in the window's toolbar menu shows it there too. Hotkeys records a binding when you click it and press the keys: Esc cancels, Delete unbinds, and a binding needs Control, Option or Command. Two actions on the same keys, or an action on a "Switch to Desktop N" shortcut (that one wins), show in red. App Rules lists the `[[rule]]` tables in file order; + adds one for a running app, and the window button by a rule's Title fills it in from one of that app's open windows.
 
-nori reads `~/.config/nori/config.toml`, a [TOML](https://toml.io) file, at start and on "Reload Config". If the file doesn't exist, nori writes it first with every setting, its default and a comment on what it does; optional ones are commented out. The same text is always in `config.default.toml` next to it, rewritten on every start. If it meets a key it doesn't know or a value of the wrong kind, it prints a warning to stderr, skips that line and applies the rest.
+nori reads `~/.config/nori/config.toml`, a [TOML](https://toml.io) file, at start and on "Reload Config". If the file doesn't exist, nori writes it first with every setting, its default and a comment on what it does; optional ones are commented out. The same text is always in `config.default.toml` next to it, rewritten on every start. If it meets a key it doesn't know, a value of the wrong kind or a rule it can't use, it skips that and applies the rest, and lists what it skipped at the top of Settings → General, with a `!` on the menu bar item, after every launch and reload. Run from a terminal, it prints them to stderr too.
 
 ```toml
 gap = 16                  # between windows, in points
@@ -208,7 +218,7 @@ The width presets count the gap in, so two windows at 1/2, or one at 1/3 and one
 
 `launch-at-login` adds Nori.app to System Settings → General → Login Items, or removes it, at launch and on "Reload Config". It only works for the app, not for `build/nori` in a terminal. The login item remembers where the bundle is, so move the app to /Applications first.
 
-The TOML reader is nori's own and only knows what this file needs. That's comments, plain keys, `"strings"`, `'literal strings'`, numbers, `true`, `false`, `[tables]` and `[[arrays of tables]]`. It skips lines with dotted or quoted keys, arrays, inline tables, multi-line strings or dates, and says so.
+The TOML reader is nori's own and only knows what this file needs. That's comments, plain keys, `"strings"`, `'literal strings'`, numbers, `true`, `false`, `[tables]` and `[[arrays of tables]]`. It skips lines with dotted or quoted keys, arrays, inline tables, multi-line strings or dates, and lists them the same way.
 
 ### App rules
 
@@ -274,6 +284,7 @@ nori overview                           # open or close the overview
 nori show floating                      # windows outside the strip above it
 nori toggle floating                    # the focused window out of the strip and back
 nori reload                             # read the config again, like "Reload Config"
+nori problems                           # what is wrong right now, with the nori and macOS versions
 nori subscribe                          # one line of `query spaces` JSON now and on every change
 nori help
 

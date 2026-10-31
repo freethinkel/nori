@@ -48,6 +48,8 @@ The `SetSpaceShape` hook turns the slide's horizontal clip vertical: it takes th
 
 The hooks work only while the daemon is alive: the daemon sends `P <pid>` every 2 s, and the hook checks `kill(pid, 0)`. Once the daemon exits or crashes, Dock animates by itself again. The patch itself stays until Dock restarts.
 
+A layout (the overview, a slide) never ends by itself at goal 1, so a crash used to leave Spaces scaled until Dock restarted. `close_orphan_layout` checks the same `kill(pid, 0)` every frame of a layout: with the daemon gone it lets go of any swipe, sets goal 0 and aims at `SLSGetActiveSpace`, asked again each frame as a switch of Dock's may land after the crash, and `step_layout` ends the layout as usual. `instant` ("I 1") has no effect with the daemon gone, the hooks ask first, but it would come back with the next daemon, so a new pid in `P` clears it.
+
 Signatures (disassembler; the arguments are visible in lldb during a switch):
 - `SLSTransactionShowSpace(transaction, sid)`, `SLSTransactionHideSpace(transaction, sid)` — 2 arguments each.
 - `SLSTransactionSetSpaceShape(transaction, sid, CGRegionRef)`. Dock gives a hidden Space `kCGRegionEmptyRegion`.
@@ -59,7 +61,9 @@ Signatures (disassembler; the arguments are visible in lldb during a switch):
 ## System Space shortcuts
 
 "Switch to Desktop 1…N" — `com.apple.symbolichotkeys`, keys 118, 119, 120, 121, 122 (desktops 1–5). Parameters `(character, keycode, modifiers)`, Option = 524288, Ctrl = 262144. Keycodes of digits 1–5 on the US layout: 18, 19, 20, 21, 23.
-Turning them on without the UI: `defaults write com.apple.symbolichotkeys AppleSymbolicHotKeys -dict-add 118 '<dict>…</dict>'`, then `/System/Library/PrivateFrameworks/SystemAdministration.framework/Resources/activateSettings -u`. Right now 118–122 are on, bound to Option+1…5.
+Turning them on without the UI: `defaults write com.apple.symbolichotkeys AppleSymbolicHotKeys -dict-add 118 '<dict>…</dict>'`, then `/System/Library/PrivateFrameworks/SystemAdministration.framework/Resources/activateSettings -u`.
+Verified on macOS 27 (Darwin 27.0.0), on keys of a Desktop that doesn't exist: the preferences change at once, and a running process sees that within 50 ms; `CGSIsSymbolicHotKeyEnabled` stays false until `activateSettings -u`, which takes about 0.5 s and has applied it when it returns. Several pairs in one `-dict-add` work, and going back to the old value left `defaults export` identical. Not tried: a real press of a shortcut turned on this way.
+What WindowServer has is what counts, and it differs from the preferences in two ways. A preference alone does nothing until applied. And a key missing from the preferences still has keys: `CGSGetSymbolicHotKeyValue(id, &character, &keycode, &flags)` gives macOS's default, disabled, for one never set (127 Ctrl+0; 128–133 Ctrl+Option+1…6, flags 786432). That is the normal case: the new-account template (`/System/Library/Templates/Data/Library/User Template/English.lproj/Library/Preferences/com.apple.symbolichotkeys.plist`) has none of 79–82 or 118–133. So nori reads both calls, from CoreGraphics, and writes the keys it read when it turns one on. "Move left/right a space" (79, 81) defaults to on in macOS (from memory, a new account wasn't tried), so going by the preferences would have called them off. 80 and 82 are the same two with Shift, and nori doesn't use them.
 
 ## Windows
 
@@ -199,3 +203,16 @@ Between and around the scaled Spaces the screen is black: nothing is below them.
 ## Payload → daemon
 
 The payload reports back on the daemon's control socket (`/tmp/nori-ctl_$USER.socket`, the one `nori query/focus` uses), one request per connection, tab-separated: `payload<TAB>layout-done<TAB><seq>` when a Space layout ends (seq from the `Q` line sent before its `Y`, so an older layout's end doesn't unpause a newer one) and `payload<TAB>resize-settled<TAB><wid><TAB><width>` when a width stretch reaches its goal. The daemon unpauses the strip and runs the app's AX resize on these instead of fixed delays; the delays (3 s, 0.8 s) stay only as fallbacks. The payload reads the (empty) reply to EOF before closing, so the daemon never writes to a closed socket. Not yet verified live.
+
+After every `P` the payload also sends `payload<TAB>hooks<TAB><names>`, the hooks that didn't go in, comma-separated, empty when all did. On every `P` and not once: the first `P` of a daemon can reach the payload before that daemon listens on its control socket, and a dropped report would never come again.
+
+### What a missing hook costs
+
+From reading `payload/payload.m`, not from running without one. `step_layout` itself calls all these functions, so with the hooks gone the overview still opens, scales and closes; what goes is the part that needs to see Dock's calls.
+
+- `SLSTransactionSetSpaceTransform` (`nori_space_transform`): the most costly. `hold_sticky` is called only from here, so windows on every Space aren't held: they move and scale with one Space, also in `step_layout`'s own frames. Dock's frames keep their values, so a switch has Dock's horizontal transforms landing between `step_layout`'s. A switch outside a layout stays horizontal, and `I 1` does nothing here.
+- `SLSTransactionSetSpaceShape` (`nori_space_shape`): Dock's clip stays. That is the black band of a slide made vertical with a horizontal clip (see "Space switching in Dock"). `step_layout` sets a full clip again each frame, so inside a layout it should only show on frames where Dock's transaction lands after ours (inferred).
+- `SLSTransactionSetManagedDisplayCurrentSpace` (`nori_current_space`): `dock_current` stays 0, so `dock_switching` doesn't end until the next layout. A plain switch loses nothing, as the layout ends there. The overview is one layout through many switches: from the second on, sticky windows are undone for the old Space until Dock's first frame, a Space step off, the fault described under "The overview is one layout through many switches".
+- `SLSTransactionHideSpace` (`nori_hide_space`): Dock's hides of the layout's Spaces pass, so in the overview the Space a switch leaves, or every Desktop when entering a fullscreen Space, blinks for a frame until the next `step_layout`.
+
+`SLSTransactionSetManagedDisplayCurrentSpace` is the only one looked up with `dlsym`. The payload links the other three by name, along with the rest of its SkyLight calls (`nm -u build/payload.dylib`), so a SkyLight without one of those should fail the whole `dlopen` in Dock (inferred): then the loader finishes, Dock doesn't answer, and nori says so at launch.

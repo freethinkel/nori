@@ -28,6 +28,7 @@ let usage = """
       nori show floating
       nori toggle floating
       nori reload             read the config again
+      nori problems           what is wrong right now, for a bug report
 
     """
 
@@ -73,7 +74,7 @@ func startControl() {
     let bound = fd >= 0 && withAddress(controlPath, { bind(fd, $0, $1) }) == 0 && listen(fd, 8) == 0
     umask(mask)
     guard bound else {
-        fputs("control socket \(controlPath) failed\n", stderr)
+        report(Problem(key: "control", title: "`nori` commands can't reach nori", help: "nori could not open \(controlPath), so the command line and status bars won't work."))
         return
     }
     let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: .main)
@@ -163,6 +164,8 @@ func handle(_ args: [String]) -> String {
     case ("reload", "") where args.count == 1:
         reloadSettings()
         return ""
+    case ("problems", "") where args.count == 1:
+        return problemReport()
     case ("query", "spaces"):
         guard let opts = options(args.dropFirst(2), values: [], flags: ["--current"]) else { break }
         return json(querySpaces(opts))
@@ -188,6 +191,9 @@ func handle(_ args: [String]) -> String {
         return ""
     case ("payload", "resize-settled") where args.count == 4:
         if let window = UInt32(args[2]), let width = Double(args[3]) { resizeSettled(window, CGFloat(width)) }
+        return ""
+    case ("payload", "hooks") where args.count == 3:
+        hooksReported(args[2])
         return ""
     case ("focus", "window"):
         guard let n = number else { break }
@@ -347,14 +353,12 @@ func switchToSpace(_ number: Int) -> Bool {
 // Posts a system shortcut by its com.apple.symbolichotkeys id, whatever keys it is bound to; false if it is off.
 // Read each time, so turning one on in System Settings works without a restart.
 func postSymbolicHotkey(_ id: Int, times: Int = 1) -> Bool {
-    let hotkeys = UserDefaults(suiteName: "com.apple.symbolichotkeys")?.dictionary(forKey: "AppleSymbolicHotKeys")
-    guard let entry = hotkeys?[String(id)] as? [String: Any], entry["enabled"] as? Bool == true,
-          let keys = (entry["value"] as? [String: Any])?["parameters"] as? [Int], keys.count == 3
-    else { return false }
+    let hotkey = symbolicHotkey(id)
+    guard hotkey.pressable else { return false }
     for _ in 0..<times {
         for down in [true, false] {
-            let event = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(keys[1]), keyDown: down)
-            event?.flags = CGEventFlags(rawValue: UInt64(keys[2]))  // NSEvent modifier bits, same as CGEventFlags
+            let event = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(hotkey.keycode), keyDown: down)
+            event?.flags = CGEventFlags(rawValue: UInt64(hotkey.flags))  // NSEvent modifier bits, same as CGEventFlags
             event?.post(tap: .cghidEventTap)
         }
     }

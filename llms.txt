@@ -6,7 +6,7 @@
 
 1. Ask what the person wants to change, or read their current `~/.config/nori/config.toml` if they paste it.
 2. Give back the whole edited file, or only the lines to add, with a comment on each changed line.
-3. Tell them to save it and run `nori reload`, or choose "Reload Config" in the toolbar of the Settings window. Mistakes don't crash nori: it prints a warning to stderr, skips that line and applies the rest.
+3. Tell them to save it and run `nori reload`, or choose "Reload Config" in the toolbar of the Settings window. Mistakes don't crash nori: it skips that line, applies the rest and lists what it skipped at the top of Settings → General, with a `!` on its menu bar item.
 
 "Open in Editor" in the toolbar of the Settings window opens the file, and creates it with every setting and its default if it's missing. `~/.config/nori/config.default.toml` always holds every setting of the installed version with its default and a comment; nori rewrites it on every start and never reads it. "Settings…" (⌘,) in nori's menu bar item edits the same settings, bindings and rules in a window, applies each change at once and writes it into config.toml without touching the rest, so the person can also do it there instead.
 
@@ -67,7 +67,7 @@ A binding is modifiers and one key joined by `+`, like `"ctrl+shift+1"`. Modifie
 
 These keys are fixed and can't be rebound in the config:
 
-- Opt+1…5 are macOS's own "Switch to Desktop N" shortcuts. Change them in System Settings → Keyboard → Keyboard Shortcuts → Mission Control. nori needs those shortcuts on.
+- Opt+1…5 are macOS's own "Switch to Desktop N" shortcuts. Change them in System Settings → Keyboard → Keyboard Shortcuts → Mission Control. nori needs those shortcuts on, and offers to turn them on at launch.
 - Left drag with `mouse-modifier` held moves a window, right drag resizes it. Only the modifier is configurable, not the buttons.
 - Trackpad: three fingers sideways scroll the strip, three fingers up/down switch Spaces, four fingers open the overview.
 
