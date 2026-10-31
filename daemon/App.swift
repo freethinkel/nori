@@ -200,13 +200,26 @@ func alive(_ path: String) -> Bool {
     return withAddress(path) { connect(fd, $0, $1) } == 0
 }
 
+// Whether this user has the rule and root's copies are this build's. `sudo -n -l` can't tell: it says yes for whatever an
+// admin may run with a password too, see docs/WINDOWSERVER.md.
+func loaderInstalled(loader: String, payload: String) -> Bool {
+    let files = FileManager.default
+    return files.fileExists(atPath: sudoersFile)
+        && files.contentsEqual(atPath: loader, andPath: installedLoader) && files.contentsEqual(atPath: payload, andPath: installedPayload)
+}
+
 // Restarts Dock first: a payload from an older build may still be inside, and its hooks would block the new one's.
-// task_for_pid on Dock needs root, hence the password. The loader retries until the new Dock has finished launching.
+// task_for_pid on Dock needs root: sudo without a password once the loader is installed, else the password dialog,
+// which installs it (Loader.swift). The loader retries until the new Dock has finished launching.
 func loadPayload() {
-    let loader = shellQuoted(helpers.appendingPathComponent("loader").path)
-    let payload = shellQuoted(helpers.appendingPathComponent("payload.dylib").path)
-    let script = "killall Dock; for i in 1 2 3 4 5 6 7 8 9 10; do sleep 0.5; \(loader) \(payload) && exit 0; done; exit 1"
-    switch runAsAdmin(script, prompt: "nori is loading its helper into Dock.") {
+    let loader = helpers.appendingPathComponent("loader").path, payload = helpers.appendingPathComponent("payload.dylib").path
+    let installed = loaderInstalled(loader: loader, payload: payload)
+    let load = (installed ? "/usr/bin/sudo -n " : "") + installedLoader + " " + installedPayload
+    let restart = "killall Dock; for i in 1 2 3 4 5 6 7 8 9 10; do sleep 0.5; \(load) && exit 0; done; exit 1"
+    let install = "{ " + installLoaderScript(loader: shellQuoted(loader), payload: shellQuoted(payload)) + "; } || exit 1; "
+    let result = installed ? run("/bin/sh", ["-c", restart]).map(AdminResult.failed) ?? .done
+        : runAsAdmin(install + restart, prompt: "nori is installing its loader, so that it can load into Dock without your password from now on.")
+    switch result {
     case .done: break
     case .canceled:
         restoreSystemGestures()

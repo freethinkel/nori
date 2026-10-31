@@ -49,7 +49,7 @@ On launch the app checks the rest and fixes what it can. It asks for your passwo
 
 1. **Boot argument.** Dock is an arm64e process and loads a third-party arm64e dylib only with `-arm64e_preview_abi` in `boot-args`. If the argument is missing, the app adds it and asks you to restart the Mac.
 2. **Accessibility.** The event tap and window resizing need it. The app asks for your password and adds itself to the system's permission database. An app you built yourself has an ad hoc signature, so it does this again after each rebuild, and the new entry replaces the old one. If you cancel, or Filesystem Protections are on, macOS shows its own prompt: allow nori in System Settings → Privacy & Security → Accessibility and the app carries on by itself.
-3. **Payload.** If Dock doesn't have it, which happens on first launch and after a reboot or a Dock restart, the app restarts Dock and loads it.
+3. **Payload.** If Dock doesn't have it, which happens on first launch and after a reboot or a Dock restart, the app restarts Dock and loads it. That takes root. The first time you enter your password, and the app copies its loader and payload to `/usr/local/libexec/nori`, where only root can change them, and adds a sudoers rule for that one command, `/etc/sudoers.d/nori-<your uid>`. After that it loads without a password, until a new version changes those files.
 
 After that nori lives in the menu bar.
 
@@ -63,7 +63,7 @@ After that nori lives in the menu bar.
 ### 3. macOS settings
 
 - **Desktop shortcuts.** Turn on "Switch to Desktop 1…N" in System Settings → Keyboard → Keyboard Shortcuts → Mission Control. Opt+J/K, the overview and `nori focus space` press them to switch Spaces. A fullscreen app's Space has no such shortcut: to reach one nori presses "Move left a space" / "Move right a space" from the same list, so turn those on too (any keys, they don't have to stay Ctrl+←/→). Without them nori brings the app to the front, which finds its fullscreen Space only if that is the app's front window.
-- **Trackpad.** In System Settings → Trackpad → More Gestures, set "Swipe between full-screen applications" to four fingers or turn it off. Otherwise macOS flips Spaces along with the strip. **Mission Control** and **App Exposé** use the same 3- and 4-finger swipes, and macOS can act on them before nori's event tap sees the gesture. Unless `leave-system-gestures = true`, nori turns both off while it runs (`showMissionControlGestureEnabled` and `showAppExposeGestureEnabled` in `com.apple.dock`) and restores them when it quits, restarting Dock to apply each change, so the next launch loads the payload again (password); Mission Control stays on its keyboard shortcut. If nori crashes they stay off until the next launch or quit.
+- **Trackpad.** In System Settings → Trackpad → More Gestures, set "Swipe between full-screen applications" to four fingers or turn it off. Otherwise macOS flips Spaces along with the strip. **Mission Control** and **App Exposé** use the same 3- and 4-finger swipes, and macOS can act on them before nori's event tap sees the gesture. Unless `leave-system-gestures = true`, nori turns both off while it runs (`showMissionControlGestureEnabled` and `showAppExposeGestureEnabled` in `com.apple.dock`) and restores them when it quits, restarting Dock to apply each change, so the next launch loads the payload again; Mission Control stays on its keyboard shortcut. If nori crashes they stay off until the next launch or quit.
 - **yabai.** If you have it, stop it while nori runs with `yabai --stop-service`, or at least run `yabai -m config layout float`.
 
 ### Check by hand
@@ -105,8 +105,9 @@ A released app checks GitHub for a newer release at launch and every 6 hours, an
 
 ### Undo
 
-1. In a normal Terminal, while NVRAM Protections are still off, run `sudo nvram -d boot-args`.
-2. Boot into Recovery as in step 1, run `csrutil enable` and restart.
+1. In a normal Terminal, run `sudo rm -rf /usr/local/libexec/nori "/etc/sudoers.d/nori-$(id -u)"`.
+2. While NVRAM Protections are still off, run `sudo nvram -d boot-args`.
+3. Boot into Recovery as in step 1, run `csrutil enable` and restart.
 
 A repair at Apple or an authorized service provider may turn SIP back on too. Then repeat step 1.
 

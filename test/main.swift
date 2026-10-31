@@ -187,3 +187,19 @@ assert(swipeFingers() == [3, 5])
 configFile = filed
 
 print("tap: ok")
+
+// The sudoers rule parses (Loader.swift): the install checks it too, but a bad one would leave nori asking for a password.
+let ruleFile = FileManager.default.temporaryDirectory.appendingPathComponent("nori-sudoers-\(getpid())")
+try! (sudoersRule(uid: 501) + "\n").write(to: ruleFile, atomically: true, encoding: .utf8)
+let visudo = Process()
+visudo.executableURL = URL(fileURLWithPath: "/usr/sbin/visudo")
+visudo.arguments = ["-cqf", ruleFile.path]
+try! visudo.run()
+visudo.waitUntilExit()
+try? FileManager.default.removeItem(at: ruleFile)
+assert(visudo.terminationStatus == 0)
+let script = installLoaderScript(loader: "'/a b/loader'", payload: "'/a b/payload.dylib'")
+assert(script.contains("'/a b/loader' '/a b/payload.dylib' \(installFolder)/"))
+assert(script.range(of: "visudo")!.lowerBound < script.range(of: "mv -f")!.lowerBound)
+
+print("loader: ok")
