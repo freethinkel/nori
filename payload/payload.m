@@ -80,6 +80,7 @@ extern uint64_t SLSGetActiveSpace(int cid);
 extern uint64_t SLSManagedDisplayGetCurrentSpace(int cid, CFStringRef display);
 extern int SLSSpaceGetType(int cid, uint64_t sid);  // 0 desktop, 4 fullscreen (an app's own Space)
 extern CFArrayRef SLSCopySpacesForWindows(int cid, int mask, CFArrayRef wids);
+extern CGError SLSGetWindowTags(int cid, uint32_t wid, uint64_t *tags, int bits);
 
 #define MAX_ANIMS 128
 
@@ -589,7 +590,13 @@ static void find_sticky(int cid)
             || !CGRectContainsPoint(screen, CGPointMake(CGRectGetMidX(frame), CGRectGetMidY(frame)))) continue;
         CFArrayRef list = CFArrayCreate(NULL, (const void **) &number, 1, &kCFTypeArrayCallBacks);
         CFArrayRef spaces = SLSCopySpacesForWindows(cid, 7, list);  // 7: all Spaces
-        if (spaces && CFArrayGetCount(spaces) > 1) sticky[sticky_count++] = (typeof(sticky[0])){ wid, frame.origin };
+        CFIndex count = spaces ? CFArrayGetCount(spaces) : 0;
+        uint64_t tags = 0;
+        // A sticky window is listed on its own display's Spaces only, so with one Desktop there on one, like any other
+        // window. The tag tells them apart then. Alone it won't do: WindowServer's overlay has it too, and no Space.
+        if (count > 1 || (count == 1 && SLSGetWindowTags(cid, wid, &tags, 64) == kCGErrorSuccess && (tags & (1ULL << 11)))) {
+            sticky[sticky_count++] = (typeof(sticky[0])){ wid, frame.origin };
+        }
         if (spaces) CFRelease(spaces);
         CFRelease(list);
     }
