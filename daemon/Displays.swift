@@ -41,3 +41,11 @@ func neighbour(of i: Int, in frames: [CGRect], _ way: String) -> Int? {
 func keptOn(_ display: CGRect, width: CGFloat) -> ClosedRange<CGFloat> {
     (display.minX - width / 2).rounded(.up) + 1...(display.maxX - width / 2).rounded(.down) - 1
 }
+
+// A frame moved as little as it takes to have its center on `display`.
+func keptFrame(_ frame: CGRect, on display: CGRect) -> CGRect {
+    let across = keptOn(display, width: frame.width)
+    let down = keptOn(CGRect(x: display.minY, y: 0, width: display.height, height: 0), width: frame.height)
+    return CGRect(x: min(max(frame.minX, across.lowerBound), across.upperBound),
+                  y: min(max(frame.minY, down.lowerBound), down.upperBound), width: frame.width, height: frame.height)
+}

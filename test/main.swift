@@ -160,6 +160,14 @@ assert(neighbour(of: 1, in: frames, "next") == 0 && neighbour(of: 0, in: frames,
 assert(neighbour(of: 2, in: frames, "next") == 1 && neighbour(of: 1, in: frames, "previous") == 2)
 assert(neighbour(of: 0, in: [main], "next") == nil && neighbour(of: 0, in: [main], "previous") == nil)
 
+// A frame saved past the edge of a display above the main one comes back with its center on it; one on it stays.
+let upper = CGRect(x: -446, y: -1692, width: 3008, height: 1692)
+let past = keptFrame(CGRect(x: 2522, y: -1642, width: 1327, height: 1541), on: upper)
+assert(upper.contains(CGPoint(x: past.midX, y: past.midY)) && past.minY == -1642 && past.width == 1327, "\(past)")
+assert(keptFrame(CGRect(x: 629, y: -1590, width: 1327, height: 1541), on: upper).origin == CGPoint(x: 629, y: -1590))
+let below = keptFrame(CGRect(x: 100, y: 200, width: 800, height: 600), on: upper)  // from the display below it
+assert(upper.contains(CGPoint(x: below.midX, y: below.midY)) && below.minX == 100, "\(below)")
+
 print("displays: ok")
 
 // padding-per-monitor: a display takes its [[monitor]] table's padding, zero included, and the shared one for what its

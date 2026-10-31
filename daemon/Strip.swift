@@ -303,8 +303,13 @@ func toggleFloating() {
 // Quit: strip windows go back to the frames they had before nori. The payload puts every one back in place (and drops
 // its ease); Accessibility reaches only the current Space, so windows on other Spaces keep the size nori gave them.
 func restoreWindows() {
-    let open = Set(listWindows([]).map(\.win.id))
-    let back = originalFrames.filter { open.contains($0.key) }
+    refreshDisplays()
+    let open = Dictionary(listWindows([]).map { ($0.win.id, $0.spaces[0]) }, uniquingKeysWith: { a, _ in a })
+    var back: [UInt32: CGRect] = [:]
+    for (id, frame) in originalFrames {
+        // A frame saved mid-scroll can lie past every display, and macOS would hand the window to the main one.
+        if let space = open[id] { back[id] = displays.count > 1 ? keptFrame(frame, on: display(of: space).frame) : frame }
+    }
     send(back.map { "M \($0.key) \($0.value.minX) \($0.value.minY)" } + alphaSet.filter { $0.value != 1 }.map { "A \($0.key) 1" })
     for (id, frame) in back {
         if let win = lastSeen[id] { setFrame(win, frame) }
