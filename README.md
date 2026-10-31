@@ -38,7 +38,9 @@ The app can't do this step for you. If SIP is still on, the app shows these step
 
 This turns off three protections. Without Debugging Restrictions the loader may call `task_for_pid` on Dock. Without NVRAM Protections the app can set the boot argument below. Without Filesystem Protections the app can grant itself Accessibility. The rest of SIP stays on.
 
-### 2. Build and open the app
+### 2. Install and open the app
+
+Download `Nori.dmg` from the [latest release](https://github.com/freethinkel/nori/releases/latest), drag Nori to Applications and open it. Or build it yourself:
 
 ```sh
 make app
@@ -106,7 +108,7 @@ A released app checks GitHub for a newer release at launch and every 6 hours, an
 ### Undo
 
 1. In a normal Terminal, run `sudo rm -rf /usr/local/libexec/nori "/etc/sudoers.d/nori-$(id -u)"`.
-2. While NVRAM Protections are still off, run `sudo nvram -d boot-args`.
+2. While NVRAM Protections are still off, take the boot argument out. Check `nvram boot-args` first: if `-arm64e_preview_abi` is all it shows, run `sudo nvram -d boot-args`; if there are others, set them alone with `sudo nvram boot-args="the others"`.
 3. Boot into Recovery as in step 1, run `csrutil enable` and restart.
 
 A repair at Apple or an authorized service provider may turn SIP back on too. Then repeat step 1.
