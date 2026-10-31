@@ -49,6 +49,14 @@ func showProblems() {
     }
 }
 
+// After a launch and after every reload. The lines themselves are in Settings → General (SettingsPages.swift).
+func showConfigProblems() {
+    let count = configFile.problems.count
+    guard count > 0 else { return clearProblem("config") }
+    report(Problem(key: "config", title: count == 1 ? "config.toml has a problem" : "config.toml has \(count) problems",
+                   help: "nori skipped what it couldn't read. Choose this, then look in Settings → General.", fix: #selector(MenuActions.openSettings)))
+}
+
 // `nori problems` and "Copy Problem Report": what a bug report needs.
 func problemReport() -> String {
     let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "development build"

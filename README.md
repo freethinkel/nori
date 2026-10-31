@@ -68,6 +68,8 @@ If Dock restarts (a crash, `killall Dock`), nori's payload goes with it, windows
 
 ### 3. macOS settings
 
+At launch nori checks the Desktop shortcuts below for the Desktops you have, and if some are off it offers to turn them on, keeping the keys they have. Say Not Now and it won't ask again: a switch that needs one beeps and stays where it is, and nori's menu keeps the offer.
+
 - **Desktop shortcuts.** Turn on "Switch to Desktop 1…N" in System Settings → Keyboard → Keyboard Shortcuts → Mission Control. Opt+J/K, the overview and `nori focus space` press them to switch Spaces. A fullscreen app's Space has no such shortcut: to reach one nori presses "Move left a space" / "Move right a space" from the same list, so turn those on too (any keys, they don't have to stay Ctrl+←/→). Without them nori brings the app to the front, which finds its fullscreen Space only if that is the app's front window.
 - **Trackpad.** In System Settings → Trackpad → More Gestures, set "Swipe between full-screen applications" to four fingers or turn it off. Otherwise macOS flips Spaces along with the strip. **Mission Control** and **App Exposé** use the same 3- and 4-finger swipes, and macOS can act on them before nori's event tap sees the gesture. Unless `leave-system-gestures = true`, nori turns both off while it runs (`showMissionControlGestureEnabled` and `showAppExposeGestureEnabled` in `com.apple.dock`) and restores them when it quits, restarting Dock to apply each change, so the next launch loads the payload again (password); Mission Control stays on its keyboard shortcut. If nori crashes they stay off until the next launch or quit.
 - **yabai.** If you have it, stop it while nori runs with `yabai --stop-service`, or at least run `yabai -m config layout float`.
@@ -147,7 +149,7 @@ To have an assistant write it for you, give it [llms.txt](llms.txt) (raw: `https
 
 Or choose Settings… (⌘,) in the menu. The window edits the same file, and each change applies at once, like "Reload Config". It changes a value in its own line and adds a missing key under the last key of its table, so your comments, rules and their order stay as you wrote them. After an edit by hand, `nori reload` or "Reload Config" in the window's toolbar menu shows it there too. Hotkeys records a binding when you click it and press the keys: Esc cancels, Delete unbinds, and a binding needs Control, Option or Command. Two actions on the same keys, or an action on a "Switch to Desktop N" shortcut (that one wins), show in red. App Rules lists the `[[rule]]` tables in file order; + adds one for a running app, and the window button by a rule's Title fills it in from one of that app's open windows.
 
-nori reads `~/.config/nori/config.toml`, a [TOML](https://toml.io) file, at start and on "Reload Config". If the file doesn't exist, nori writes it first with every setting, its default and a comment on what it does; optional ones are commented out. The same text is always in `config.default.toml` next to it, rewritten on every start. If it meets a key it doesn't know or a value of the wrong kind, it prints a warning to stderr, skips that line and applies the rest.
+nori reads `~/.config/nori/config.toml`, a [TOML](https://toml.io) file, at start and on "Reload Config". If the file doesn't exist, nori writes it first with every setting, its default and a comment on what it does; optional ones are commented out. The same text is always in `config.default.toml` next to it, rewritten on every start. If it meets a key it doesn't know, a value of the wrong kind or a rule it can't use, it skips that and applies the rest, and lists what it skipped at the top of Settings → General, with a `!` on the menu bar item, after every launch and reload. Run from a terminal, it prints them to stderr too.
 
 ```toml
 gap = 16                  # between windows, in points
@@ -214,7 +216,7 @@ The width presets count the gap in, so two windows at 1/2, or one at 1/3 and one
 
 `launch-at-login` adds Nori.app to System Settings → General → Login Items, or removes it, at launch and on "Reload Config". It only works for the app, not for `build/nori` in a terminal. The login item remembers where the bundle is, so move the app to /Applications first.
 
-The TOML reader is nori's own and only knows what this file needs. That's comments, plain keys, `"strings"`, `'literal strings'`, numbers, `true`, `false`, `[tables]` and `[[arrays of tables]]`. It skips lines with dotted or quoted keys, arrays, inline tables, multi-line strings or dates, and says so.
+The TOML reader is nori's own and only knows what this file needs. That's comments, plain keys, `"strings"`, `'literal strings'`, numbers, `true`, `false`, `[tables]` and `[[arrays of tables]]`. It skips lines with dotted or quoted keys, arrays, inline tables, multi-line strings or dates, and lists them the same way.
 
 ### App rules
 

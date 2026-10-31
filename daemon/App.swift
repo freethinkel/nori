@@ -19,6 +19,7 @@ func startApp() {
     statusItem.button?.image = statusIcon()
     statusItem.button?.imagePosition = .imageLeading  // the "!" of Problems.swift beside it
     statusItem.menu = menu()
+    showConfigProblems()
     guard bootSetupDone() else { exit(1) }
     waitForAccessibility()
     let gesturesChanged = leaveSystemGestures ? putBackSystemGestures() : disableSystemGestures()
@@ -27,7 +28,11 @@ func startApp() {
     quitIfLoadFails = false
     applyLaunchAtLogin()
     startUpdates()
-    Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in watchPayload() }
+    Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in
+        watchPayload()
+        checkShortcuts()
+    }
+    RunLoop.main.perform(offerShortcuts)  // not the main queue: nori's own work there would wait for the alert
 }
 
 // The two nori sheets of the app icon as a silhouette: status.png (36px, 18pt @2x) in the bundle's
@@ -44,6 +49,7 @@ func statusIcon() -> NSImage? {
 func reloadSettings() {
     configFile = readConfig()
     settingsModel.refresh()
+    showConfigProblems()
     applyLaunchAtLogin()
     layout(immediate: false)
 }
@@ -184,13 +190,14 @@ func designatedRequirement() -> Data? {
 // under the user's control too. Nothing to do for build/nori run from a terminal.
 func applyLaunchAtLogin() {
     guard Bundle.main.bundleURL.pathExtension == "app" else { return }
+    clearProblem("launch-at-login")
     let service = SMAppService.mainApp
     let registered = service.status == .enabled || service.status == .requiresApproval
     guard launchAtLogin != registered else { return }
     do {
         if launchAtLogin { try service.register() } else { try service.unregister() }
     } catch {
-        fputs("launch-at-login: \(error.localizedDescription)\n", stderr)
+        report(Problem(key: "launch-at-login", title: "launch-at-login did not apply", help: error.localizedDescription))
     }
 }
 

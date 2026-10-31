@@ -74,7 +74,7 @@ func startControl() {
     let bound = fd >= 0 && withAddress(controlPath, { bind(fd, $0, $1) }) == 0 && listen(fd, 8) == 0
     umask(mask)
     guard bound else {
-        fputs("control socket \(controlPath) failed\n", stderr)
+        report(Problem(key: "control", title: "`nori` commands can't reach nori", help: "nori could not open \(controlPath), so the command line and status bars won't work."))
         return
     }
     let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: .main)
@@ -350,14 +350,12 @@ func switchToSpace(_ number: Int) -> Bool {
 // Posts a system shortcut by its com.apple.symbolichotkeys id, whatever keys it is bound to; false if it is off.
 // Read each time, so turning one on in System Settings works without a restart.
 func postSymbolicHotkey(_ id: Int, times: Int = 1) -> Bool {
-    let hotkeys = UserDefaults(suiteName: "com.apple.symbolichotkeys")?.dictionary(forKey: "AppleSymbolicHotKeys")
-    guard let entry = hotkeys?[String(id)] as? [String: Any], entry["enabled"] as? Bool == true,
-          let keys = (entry["value"] as? [String: Any])?["parameters"] as? [Int], keys.count == 3
-    else { return false }
+    let hotkey = symbolicHotkey(id)
+    guard hotkey.pressable else { return false }
     for _ in 0..<times {
         for down in [true, false] {
-            let event = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(keys[1]), keyDown: down)
-            event?.flags = CGEventFlags(rawValue: UInt64(keys[2]))  // NSEvent modifier bits, same as CGEventFlags
+            let event = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(hotkey.keycode), keyDown: down)
+            event?.flags = CGEventFlags(rawValue: UInt64(hotkey.flags))  // NSEvent modifier bits, same as CGEventFlags
             event?.post(tap: .cghidEventTap)
         }
     }

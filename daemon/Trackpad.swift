@@ -199,7 +199,7 @@ func startMultitouch() {
           let register = dlsym(lib, "MTRegisterContactFrameCallbackWithRefcon"),
           let unregister = dlsym(lib, "MTUnregisterContactFrameCallback")
     else {
-        fputs("MultitouchSupport unavailable: trackpad swipe disabled\n", stderr)
+        report(Problem(key: "trackpad", title: "Trackpad swipes are off", help: "nori could not load MultitouchSupport, so the strip, Spaces and overview don't follow swipes."))
         return
     }
     typealias CreateList = @convention(c) () -> Unmanaged<CFArray>?

@@ -15,17 +15,6 @@ var overviewSpaces: [UInt64] = []  // Spaces of the display, fullscreen ones inc
 var overviewTarget = 0             // index of the Space at the center once the animation settles
 var passDesktopHotkeys = 0  // our own presses of "Switch to Desktop N", let through to Dock
 
-// The "Switch to Desktop N" shortcuts (symbolic hotkeys 118…133), read once at start.
-let desktopHotkeys: [(chord: Chord, number: Int)] = {
-    let hotkeys = UserDefaults(suiteName: "com.apple.symbolichotkeys")?.dictionary(forKey: "AppleSymbolicHotKeys") ?? [:]
-    return (1...16).compactMap { number in
-        guard let entry = hotkeys[String(117 + number)] as? [String: Any], entry["enabled"] as? Bool == true,
-              let keys = (entry["value"] as? [String: Any])?["parameters"] as? [Int], keys.count == 3
-        else { return nil }
-        return ((Int64(keys[1]), CGEventFlags(rawValue: UInt64(keys[2])).intersection(chordModifiers)), number)
-    }
-}()
-
 func desktopNumber(for event: CGEvent) -> Int? {
     desktopHotkeys.first { matches(event, $0.chord) }?.number
 }
@@ -36,12 +25,21 @@ func pressDesktop(_ number: Int) {
     if !switchToSpace(number) {
         passDesktopHotkeys -= 1
         fputs("\"Switch to Desktop \(number)\" shortcut is off; enable it in System Settings → Keyboard → Shortcuts → Mission Control\n", stderr)
+        switchFailed()
         return
     }
     if let sid = spaces().first(where: { $0.number == number })?.id {
         pendingSpace = (sid, CACurrentMediaTime() + spaceLayoutFallback)
         publishSoon()
     }
+}
+
+// No press, so no switch. A layout sent for it comes back: it would end on a Space Dock isn't on, with the current one hidden.
+func switchFailed() {
+    NSSound.beep()
+    checkShortcuts()
+    overviewTarget = overviewSpaces.firstIndex(of: CGSGetActiveSpace(cid)) ?? overviewTarget
+    if spaceLayoutBusy { sendLayout(open: overviewOpen, spring: overviewOpen) }
 }
 
 // Every switch to a Space nori starts. A Desktop: its "Switch to Desktop N" shortcut. A fullscreen Space has none:
@@ -57,7 +55,8 @@ func pressSpace(_ sid: UInt64) {
     let steps = index - stack.current
     if !postSymbolicHotkey(steps > 0 ? 81 : 79, times: abs(steps)) {
         fputs("fullscreen Space: turn on \"Move left a space\" and \"Move right a space\" in System Settings → Keyboard → Shortcuts → Mission Control (any keys)\n", stderr)
-        guard let win = listWindows([]).first(where: { $0.spaces == [sid] })?.win else { return }  // not a sticky one
+        checkShortcuts()
+        guard let win = listWindows([]).first(where: { $0.spaces == [sid] })?.win else { return switchFailed() }  // not a sticky one
         bringAppFront(win)
     }
     pendingSpace = (sid, CACurrentMediaTime() + spaceLayoutFallback)
