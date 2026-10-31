@@ -89,6 +89,7 @@ func useStack(on display: Display) {
 
 // The strip must not look at windows while a Space layout is on (see syncColumns). The payload says when one
 // ends ("layout-done", Control.swift); the deadline is only for a payload that doesn't (an old one, or Dock gone).
+// ponytail: one flag for all displays, so a slide on one pauses the strips of the others too; per display if that shows.
 var spaceLayoutUntil: CFTimeInterval = 0
 var spaceLayoutBusy: Bool { overviewOpen || CACurrentMediaTime() < spaceLayoutUntil }
 var layoutSeq = 0
