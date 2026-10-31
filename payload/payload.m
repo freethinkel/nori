@@ -16,6 +16,7 @@
 // Back to the daemon, on its control socket (daemon/Control.swift), see notify_daemon:
 //        "payload\tlayout-done\t<seq>"             a Space layout ended; the strip may look at windows again
 //        "payload\tresize-settled\t<wid>\t<width>"  a width stretch reached its goal; the app can be resized now
+//        "payload\tdesktops\t<0|1>"                  whether "N" and "C" work on this macOS
 //        "R wid width"         width animation, see resize_t. S and M for that window move its center meanwhile.
 //        "W wid width"         the app has resized that window to `width` (the end of a width animation)
 //        "X wid sid"           move the window to Space sid
@@ -24,6 +25,8 @@
 //        "B"                   empties the table of displays, see displays[]
 //        "B x y w h uuid sid0 sid1 …"  adds a display to it: its frame, its id for macOS and its Spaces
 //        "L display"           the display animations are timed to
+//        "N display"           a new Desktop on that display, see find_desktop_code
+//        "C sid"               removes that Desktop; its windows go to the display's first one
 // Also turns the native Spaces slide vertical, see hook_space_transform.
 // Animation runs here on a user-interactive queue, so the daemon sends one line per window, not one per frame.
 // Frames come from CVDisplayLink (vsync), and each frame moves all windows in one SLS transaction.
@@ -38,6 +41,8 @@
 #include <libkern/OSCacheControl.h>
 #include <mach/mach.h>
 #include <ptrauth.h>
+#include <crt_externs.h>
+#include <mach-o/getsect.h>
 #include <math.h>
 #include <pthread.h>
 #include <stdarg.h>
@@ -589,6 +594,74 @@ static void find_sticky(int cid)
     if (windows) CFRelease(windows);
 }
 
+// Desktops are added and removed by Dock's own code, what + and × in Mission Control run, so that its list, its saved
+// Spaces and the windows of a removed Desktop stay in step. That code is Swift, with no symbol and no Objective-C entry
+// point, and Accessibility no longer shows Mission Control (docs/WINDOWSERVER.md). So it is found by its instructions,
+// addresses masked out. On a macOS where they differ nothing is found, and the daemon offers neither.
+// ponytail: instruction patterns of macOS 27, a new macOS may want new ones.
+typedef struct { uint32_t value, mask; } op_t;
+#define OP(word) { word, 0xffffffff }
+#define BL { 0x94000000, 0xfc000000 }
+#define B { 0x14000000, 0xfc000000 }
+#define ADRP_X8 { 0x90000008, 0x9f00001f }
+#define CBZ(reg) { 0xb4000000 | reg, 0xff00001f }
+
+// Spaces.addDesktop(display id) -> ManagedSpace, self in x20: makes the Space and adds it after the display's last Desktop.
+static const op_t add_desktop_ops[] = {
+    OP(0xd503237f), OP(0xa9bd57f6), OP(0xa9014ff4), OP(0xa9027bfd), OP(0x910083fd), OP(0xaa0003f3),
+    ADRP_X8, { 0x91000100, 0xffc003ff }, BL, BL, OP(0xaa0003f5), OP(0xaa1303e0), BL, OP(0xaa0103f3),
+    OP(0xaa1403e2), OP(0xaa1503e3), BL, OP(0xaa1303e0), BL, BL, BL, OP(0xaa1503e0),
+};
+// The middle of × in Mission Control: loads the Spaces object, then either closes a fullscreen Space, or calls
+// removeDesktop(sid, spaces, spaces, sid). That one does nothing to a display's last Desktop.
+static const op_t close_desktop_ops[] = {
+    ADRP_X8, { 0x91000108, 0xffc003ff }, OP(0xf9400100), CBZ(22), CBZ(0), BL, OP(0xaa0003f5), OP(0xaa1603e0),
+    OP(0xaa1503e1), BL, B, CBZ(0), ADRP_X8, { 0xf9400108, 0xffc003ff }, OP(0xf8686ab6), BL, OP(0xaa0003f5),
+    OP(0xaa1603e0), OP(0xaa1503e1), OP(0xaa1503e2), OP(0xaa1603e3), BL,
+};
+#define COUNT(ops) (sizeof(ops) / sizeof(ops[0]))
+
+typedef void *(*add_desktop_t)(uint64_t display, __attribute__((swift_context)) void *spaces) __attribute__((swiftcall));
+typedef uint64_t (*remove_desktop_t)(uint64_t sid, void *spaces, void *same, uint64_t also);
+static add_desktop_t add_desktop;
+static remove_desktop_t remove_desktop;
+static void **dock_spaces;
+
+// The one place in Dock's code that matches. Two would mean it isn't what we are after.
+static uint32_t *find_code(const op_t *ops, size_t count)
+{
+    unsigned long size;
+    uint32_t *text = (uint32_t *) getsectiondata((const struct mach_header_64 *) _NSGetMachExecuteHeader(), "__TEXT", "__text", &size);
+    uint32_t *found = NULL;
+    for (size_t i = 0; text && i + count <= size / 4; i++) {
+        size_t k = 0;
+        while (k < count && (text[i + k] & ops[k].mask) == ops[k].value) k++;
+        if (k < count) continue;
+        if (found) return NULL;
+        found = text + i;
+    }
+    return found;
+}
+
+static void *bl_target(uint32_t *at) { return at + ((int32_t) (*at << 6) >> 6); }
+
+// What an adrp and the add after it point at.
+static void *adrp_add_target(uint32_t *at)
+{
+    int64_t pages = (int64_t) ((uint64_t) (((at[0] >> 29) & 3) | (((at[0] >> 5) & 0x7ffff) << 2)) << 43) >> 43;
+    return (void *) (((uintptr_t) at & ~(uintptr_t) 0xfff) + (pages << 12) + ((at[1] >> 10) & 0xfff));
+}
+
+static void find_desktop_code(void)
+{
+    uint32_t *add = find_code(add_desktop_ops, COUNT(add_desktop_ops));
+    uint32_t *close = find_code(close_desktop_ops, COUNT(close_desktop_ops));
+    if (!add || !close) return;
+    add_desktop = ptrauth_sign_unauthenticated((add_desktop_t) add, ptrauth_key_function_pointer, 0);
+    remove_desktop = ptrauth_sign_unauthenticated((remove_desktop_t) bl_target(close + COUNT(close_desktop_ops) - 1), ptrauth_key_function_pointer, 0);
+    dock_spaces = adrp_add_target(close);
+}
+
 static void handle_line(char *line)
 {
     int cid = SLSMainConnectionID();
@@ -761,9 +834,28 @@ static void handle_line(char *line)
         if (display && display != link_display && CVDisplayLinkSetCurrentCGDisplay(display_link, display) == kCVReturnSuccess) link_display = display;
         break;
     }
-    case 'P':
-        daemon_pid = atoi(line + 1);
+    case 'P': {
+        // Twice: the daemon's control socket isn't up yet at the first one.
+        static int told;
+        pid_t pid = atoi(line + 1);
+        told = pid == daemon_pid ? told + 1 : 0;
+        daemon_pid = pid;
+        if (told < 2) notify_daemon("payload\tdesktops\t%d", add_desktop != NULL);
         break;
+    }
+    case 'N': {
+        uint64_t display = strtoull(line + 1, NULL, 10);
+        if (add_desktop) dispatch_async(dispatch_get_main_queue(), ^{
+            void *space = add_desktop(display, *dock_spaces);
+            if (space) CFRelease(space);
+        });
+        break;
+    }
+    case 'C': {
+        uint64_t sid = strtoull(line + 1, NULL, 10);
+        if (remove_desktop) dispatch_async(dispatch_get_main_queue(), ^{ remove_desktop(sid, *dock_spaces, *dock_spaces, sid); });
+        break;
+    }
     case 'I':
         instant = atoi(line + 1);
         break;
@@ -1123,6 +1215,8 @@ static void nori_payload_init(void)
     CVDisplayLinkCreateWithActiveCGDisplays(&display_link);
     CVDisplayLinkSetOutputCallback(display_link, on_frame, NULL);
     CVDisplayLinkStart(display_link);
+    find_desktop_code();
+    NSLog(@"nori: Dock's Desktop code %s", add_desktop ? "found" : "not found");
     pthread_t thread;
     pthread_create(&thread, NULL, serve, path);
     pthread_detach(thread);

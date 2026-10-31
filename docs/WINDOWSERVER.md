@@ -137,13 +137,17 @@ The first part was seen on a virtual display beside one real display, with test 
 
 ### Creating and removing Desktops (macOS 27)
 
-Looked for a way to add or remove a real Desktop from nori. None found that is clean; nothing here was called.
+nori adds and removes real Desktops through Dock's own code, `find_desktop_code` in the payload. How it got there:
 
 - **Accessibility is closed.** Dock has a group with `AXIdentifier` `mc` (title "Mission Control"), the root of Hammerspoon's way (`mc.spaces.add`, `AXRemoveDesktop`), but with Mission Control open on screen it still has no children. `AXUIElementCopyElementAtPosition` over the row of Desktops gets the windows below it, not Dock. Verified. `CoreDockSendNotification("com.apple.expose.awake")` was sent too; whether it still opens Mission Control wasn't told apart. Ctrl+↑ posted as a key does.
-- **No Objective-C method for it.** `-addSpace:forDisplayUUID:` and `-removeSpace:` in Dock belong to the wallpaper manager, which is told of Spaces. `Spaces` and `ManagedSpace` have no add or remove. The buttons are Swift: `SpacesBarAddLayerController`, `SpacesBarCloseLayerController`, without `@objc` methods. Read from `dyld_info -objc`.
-- **A service is there, behind a private entitlement.** Dock's strings have `com.apple.dock.spaces`, `Connection denied. Expected com.apple.private.dock.spaces`, and near the performance tests (`com.apple.dock.ppt`) the messages `createSpaces`, `destroySpaces`, `switchSpace`, with `Invalid createSpaces message. No spacesCount.`. From strings only: protocols and what `destroySpaces` destroys weren't looked into.
+- **No Objective-C method for it.** `-addSpace:forDisplayUUID:` and `-removeSpace:` in Dock belong to the wallpaper manager, which is told of Spaces. `Spaces` and `ManagedSpace` have no add or remove. The buttons are Swift: `SpacesBarAddLayerController`, `SpacesBarCloseLayerController`, without `@objc` methods.
+- A service is there, behind a private entitlement: `com.apple.dock.spaces`, `Connection denied. Expected com.apple.private.dock.spaces`, and near the performance tests (`com.apple.dock.ppt`) the messages `createSpaces`, `destroySpaces`, `switchSpace`. From strings only, not used.
 - `SLSSpaceCreate`, `SLSSpaceDestroy` and `SLSTransactionDestroySpace` make Spaces of WindowServer, which Dock's own list wouldn't have: not a Desktop in Mission Control. Not tried.
-- Left: calling Dock's Swift code from the payload, as yabai does by searching for its byte patterns per macOS version, or clicking + in Mission Control, at a place no API gives, with Mission Control showing for a moment.
+- **Found from the wallpaper manager's selectors.** Dock calls them where it adds and removes Spaces, so `otool -tV` plus the selector stubs of `__objc_stubs` lead to the code. In build 26A5416b:
+  - `0x10018b888`, `Spaces.addDesktop(display id) -> ManagedSpace`, `self` in x20. Takes a `CGDirectDisplayID`, not a UUID; its two callers pass `CGSMainDisplayID()` and a display's id. Allocates the Space, calls `0x100182978` (finds the `DisplaySpaces` by UUID, `self` in x20 for `0x100228b88`, which inserts after the last Desktop, `CGSMoveManagedSpaceToDisplayIndex`, tells the wallpaper manager), then updates Dock. Returns the Space at +1.
+  - `0x10018531c`, `removeDesktop(sid, spaces, spaces, sid)`, plain registers, both its callers alike. Finds the Space and calls `0x10018b8f0`: nothing if the display has under 2 Desktops; else the Space's windows go to the display's first Desktop, or the second if the first is the one going; `SLSTransactionDestroySpace`; `spaceBecameFirst:onDisplay:` if needed.
+  - The global at `0x100409bb0` holds the `Spaces` object.
+- **Called from Dock's main queue outside Mission Control it works.** Verified on the built-in display: a new Desktop shows in `CGSCopyManagedDisplaySpaces`, in Mission Control's row and in `com.apple.spaces` (`Management Data`, 2 Spaces to 3 and back); a window on a removed Desktop went to the first one; the Desktop on screen was removed after switching away. Dock stayed the same process, no crash report. Removing the Desktop on screen without switching first wasn't tried.
 
 ## Granting Accessibility (macOS 27)
 

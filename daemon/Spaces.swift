@@ -106,6 +106,21 @@ func stack(on display: Display) -> (ids: [UInt64], current: Int) {
     display.spaces.isEmpty ? ([display.current], 0) : (display.spaces, display.spaces.firstIndex(of: display.current) ?? 0)
 }
 
+// Whether the payload found Dock's code for adding and removing Desktops. It tells at the start.
+var desktopsEditable = false
+
+func addDesktop(on display: Display) { send(["N \(display.id)"]) }
+
+// Dock sends its windows to the display's first Desktop. It isn't removed while on screen: first the display leaves it.
+func removeDesktop(_ sid: UInt64) {
+    refreshDisplays()
+    let shown = display(of: sid), desktops = shown.spaces.filter { !isFullscreen($0) }
+    guard desktops.count > 1, desktops.contains(sid) else { return }
+    guard sid == shown.current else { return send(["C \(sid)"]) }
+    switchSpaceAnimated(to: desktops[0] == sid ? desktops[1] : desktops[0])
+    whenSpaceChanges(from: sid) { send(["C \(sid)"]) }
+}
+
 // The Desktops of the display that has focus, fullscreen Spaces left out.
 func desktopsHere() -> [(id: UInt64, number: Int?, displayNumber: Int?, display: String, fullscreen: Bool, visible: Bool)] {
     let all = spaces(), active = CGSGetActiveSpace(cid)

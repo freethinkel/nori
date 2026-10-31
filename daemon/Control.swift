@@ -27,6 +27,8 @@ let usage = """
       nori width grow|shrink|next|previous|toggle-full
       nori center
       nori overview
+      nori space add          a new Desktop on the display that has focus
+      nori space remove N     removes its Desktop N, its windows go to the first one
       nori show floating
       nori toggle floating
       nori reload             read the config again
@@ -185,7 +187,22 @@ func handle(_ args: [String]) -> String {
         guard let n = number else { break }
         guard let desktop = desktopHere(n) else { return "error: no Desktop \(n) on this display\n" }
         return (instant ? switchSpaceInstant(to: desktop) : switchToSpace(desktop)) ? "" : "error: the shortcut of Desktop \(desktop) is off in Keyboard Shortcuts → Mission Control\n"
+    case ("space", "add"):
+        guard desktopsEditable else { return "error: nori can't add Desktops on this macOS, use Mission Control\n" }
+        addDesktop(on: focusedDisplay())
+        return ""
+    case ("space", "remove"):
+        guard let n = number else { break }
+        guard desktopsEditable else { return "error: nori can't remove Desktops on this macOS, use Mission Control\n" }
+        let desktops = desktopsHere()
+        guard desktops.indices.contains(n - 1) else { return "error: no Desktop \(n) on this display\n" }
+        guard desktops.count > 1 else { return "error: the last Desktop of a display stays\n" }
+        removeDesktop(desktops[n - 1].id)
+        return ""
     // From the payload in Dock, see its header.
+    case ("payload", "desktops") where args.count == 3:
+        desktopsEditable = args[2] == "1"
+        return ""
     case ("payload", "layout-done"):
         if let n = number { spaceLayoutDone(n) }
         return ""
