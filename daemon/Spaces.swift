@@ -75,21 +75,9 @@ func nsScreen(of display: Display) -> NSScreen? {
 func focusDisplay(_ target: Display) {
     let space = target.current
     if isFullscreen(space), let win = listWindows(.optionOnScreenOnly).first(where: { $0.spaces.contains(space) })?.win { return focus(win) }
-    onStrip(space) {
-        if syncColumns().wins.isEmpty { focusEmpty(target) } else { focusColumn(at: focusedIndex()) }
-    }
-}
-
-// An empty Space has nothing to take focus, and neither "Switch to Desktop N" nor a click on its wallpaper moves it
-// there (docs/WINDOWSERVER.md). A key window of ours does, and the display keeps focus once that window is gone.
-func focusEmpty(_ display: Display) {
-    guard let screen = nsScreen(of: display) else { return }
-    let window = NSWindow(contentRect: NSRect(x: screen.frame.midX, y: screen.frame.midY, width: 1, height: 1), styleMask: .titled, backing: .buffered, defer: false)
-    window.isReleasedWhenClosed = false
-    window.alphaValue = 0
-    window.makeKeyAndOrderFront(nil)
-    NSApp.activate(ignoringOtherApps: true)  // not activate(): macOS may turn that down, and nori isn't frontmost here
-    whenSpaceChanges(from: CGSGetActiveSpace(cid)) { window.orderOut(nil) }
+    // ponytail: an empty Desktop can't take focus, nothing there can be key (docs/WINDOWSERVER.md). The display gets it
+    // with the first window there, moved or opened.
+    onStrip(space) { if !syncColumns().wins.isEmpty { focusColumn(at: focusedIndex()) } }
 }
 
 // The payload's table of displays ("B"), which it doesn't need with one.
