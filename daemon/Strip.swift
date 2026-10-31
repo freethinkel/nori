@@ -75,8 +75,14 @@ func timeAnimations(to display: CGDirectDisplayID) {
     send(["L \(display)"])
 }
 
+// With separate Spaces off the payload hears nothing, and Dock keeps its own slide: its hooks only know one display
+// at a time.
+func tellPayload() { if separateSpaces { send(["P \(getpid())", "L \(timedTo)"] + displayLines()) } }
+
 // Windows that came or went on the displays without focus. Nothing takes focus there: a new window is just shown.
-func pollOtherDisplays() {
+func pollDisplays() {
+    refreshDisplays()
+    timeAnimations(to: display(of: CGSGetActiveSpace(cid)).id)
     for space in otherStrips() {
         onStrip(space) {
             let before = columns

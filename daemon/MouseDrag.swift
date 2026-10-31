@@ -18,6 +18,17 @@ func stripWindow(at point: CGPoint) -> (win: Win, space: UInt64)? {
     return onStrip(space) { windows(on: space).first { $0.frame.contains(point) && columns.contains($0.id) } }.map { ($0, space) }
 }
 
+// A press with the modifier. False, and it goes on to the app, when no strip window is under it.
+func grab(_ type: CGEventType, at p: CGPoint) -> Bool {
+    guard let hit = stripWindow(at: p) else { return false }
+    let win = hit.win
+    onStrip(hit.space) {
+        if type == .rightMouseDown, let i = columns.firstIndex(of: win.id) { focusColumn(at: i) } else { focus(win) }
+    }
+    drag = (win.id, hit.space, p, win.frame.origin, win.frame.width)
+    return true
+}
+
 func startMouseDrag() {
     let events: [CGEventType] = [.leftMouseDown, .leftMouseDragged, .leftMouseUp, .rightMouseDown, .rightMouseDragged, .rightMouseUp]
     guard let tap = CGEvent.tapCreate(
@@ -34,12 +45,7 @@ func startMouseDrag() {
             switch type {
             case .leftMouseDown, .rightMouseDown:
                 guard !overviewOpen, event.flags.intersection(chordModifiers) == mouseModifier,
-                      let hit = stripWindow(at: p) else { return Unmanaged.passUnretained(event) }
-                let win = hit.win
-                onStrip(hit.space) {
-                    if type == .rightMouseDown, let i = columns.firstIndex(of: win.id) { focusColumn(at: i) } else { focus(win) }
-                }
-                drag = (win.id, hit.space, p, win.frame.origin, win.frame.width)
+                      grab(type, at: p) else { return Unmanaged.passUnretained(event) }
                 return nil
             case .leftMouseDragged:
                 guard let d = drag else { return Unmanaged.passUnretained(event) }
@@ -47,19 +53,12 @@ func startMouseDrag() {
                 return nil
             case .rightMouseDragged:
                 guard let d = drag else { return Unmanaged.passUnretained(event) }
-                onStrip(d.space) {
-                    let wins = syncColumns().wins
-                    if let i = wins.firstIndex(where: { $0.id == d.id }) {
-                        resizeFocused(wins[i], at: i, to: d.width + (scroll(wins).centering ? 2 : 1) * (p.x - d.grab.x))
-                    }
-                }
+                resizeDragged(d, to: p)
                 return nil
             case .leftMouseUp, .rightMouseUp:
                 guard let d = drag else { return Unmanaged.passUnretained(event) }
                 drag = nil
-                guard type == .leftMouseUp else { return nil }
-                onStrip(d.space) { if let i = columns.firstIndex(of: d.id) { focusColumn(at: i) } }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { layoutAll() }  // it may have landed on another display
+                if type == .leftMouseUp { dropDragged(d) }
                 return nil
             default:
                 return Unmanaged.passUnretained(event)
@@ -95,4 +94,18 @@ func moveDragged(_ d: Drag, to p: CGPoint) {
     // After the layout: M drops the ease its S just started for this window. No limits: past the edge of its display
     // the window goes over to the next one, and joins that strip on the drop.
     send(["M \(d.id) \(x) \(y)"])
+}
+
+func resizeDragged(_ d: Drag, to p: CGPoint) {
+    onStrip(d.space) {
+        let wins = syncColumns().wins
+        if let i = wins.firstIndex(where: { $0.id == d.id }) {
+            resizeFocused(wins[i], at: i, to: d.width + (scroll(wins).centering ? 2 : 1) * (p.x - d.grab.x))
+        }
+    }
+}
+
+func dropDragged(_ d: Drag) {
+    onStrip(d.space) { if let i = columns.firstIndex(of: d.id) { focusColumn(at: i) } }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { layoutAll() }  // it may have landed on another display
 }
