@@ -1,6 +1,7 @@
 // make test: checks of the TOML reader (daemon/TOML.swift) and the strip's rest points (daemon/Scroll.swift).
 // Fails with an assertion.
 
+import CoreGraphics
 import Foundation
 
 setenv("NORI_CONFIG", NSTemporaryDirectory() + "nori-test/config.toml", 1)  // never your own config
@@ -267,3 +268,37 @@ assert(monitorWays.allSatisfy { bindingDefaults["focus-monitor-\($0)"] == "none"
 assert((1...9).allSatisfy { bindingDefaults["focus-space-slot-\($0)"] == "none" && bindingDefaults["move-to-space-slot-\($0)"] == "none" })
 
 print("default config: ok")
+
+// What the event taps go by (Tap.swift): the action of a press, with its exact modifiers, and the fingers that are ours.
+configFile.values = [:]
+let press = CGEvent(keyboardEventSource: nil, virtualKey: 4, keyDown: true)!  // h
+press.flags = .maskAlternate
+assert(boundAction(press, in: boundChords()) == "focus-left")
+press.flags = [.maskAlternate, .maskShift]
+assert(boundAction(press, in: boundChords()) == "move-left")
+press.flags = []
+assert(boundAction(press, in: boundChords()) == nil)
+assert(swipeFingers() == [3, 4])
+configFile.values = ["focus-left": "none", "gesture-overview": "5 pinch"]
+press.flags = .maskAlternate
+assert(boundAction(press, in: boundChords()) == nil)
+assert(swipeFingers() == [3, 5])
+configFile = filed
+
+print("tap: ok")
+
+// The sudoers rule parses (Loader.swift): the install checks it too, but a bad one would leave nori asking for a password.
+let ruleFile = FileManager.default.temporaryDirectory.appendingPathComponent("nori-sudoers-\(getpid())")
+try! (sudoersRule(uid: 501) + "\n").write(to: ruleFile, atomically: true, encoding: .utf8)
+let visudo = Process()
+visudo.executableURL = URL(fileURLWithPath: "/usr/sbin/visudo")
+visudo.arguments = ["-cqf", ruleFile.path]
+try! visudo.run()
+visudo.waitUntilExit()
+try? FileManager.default.removeItem(at: ruleFile)
+assert(visudo.terminationStatus == 0)
+let script = installLoaderScript(loader: "'/a b/loader'", payload: "'/a b/payload.dylib'")
+assert(script.contains("'/a b/loader' '/a b/payload.dylib' \(installFolder)/"))
+assert(script.range(of: "visudo")!.lowerBound < script.range(of: "mv -f")!.lowerBound)
+
+print("loader: ok")

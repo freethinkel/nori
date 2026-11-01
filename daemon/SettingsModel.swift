@@ -8,7 +8,9 @@ import SwiftUI
     var screens: [String] = []             // names of the displays connected now
     var problems: [String] = []            // what the last reload skipped, line by line
     var rules: [[String: TOMLValue]] = []  // every [[rule]] table in file order, valid or not
-    var recording: String?                 // the binding whose recorder waits for a key press
+    var recording: String? {               // the binding whose recorder waits for a key press
+        didSet { updateTapState { [recording] in $0.recording = recording != nil } }
+    }
 
     func refresh() {
         values = config

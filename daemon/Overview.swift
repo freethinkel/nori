@@ -12,11 +12,10 @@ import Cocoa
 
 let overviewGap: CGFloat = 48  // same as OVERVIEW_GAP in payload.m, for hit testing
 
-var overviewOpen = false
+var overviewOpen = false { didSet { updateTapState { $0.overviewOpen = overviewOpen } } }
 var overviewDisplay = displays[0]  // the display the Space layout is on
 var overviewSpaces: [UInt64] = []  // Spaces of that display, fullscreen ones included, top to bottom
 var overviewTarget = 0             // index of the Space at the center once the animation settles
-var passDesktopHotkeys = 0  // our own presses of "Switch to Desktop N", let through to Dock
 
 func desktopNumber(for event: CGEvent) -> Int? {
     desktopHotkeys.first { matches(event, $0.chord) }?.number
@@ -24,9 +23,9 @@ func desktopNumber(for event: CGEvent) -> Int? {
 
 // Every Space switch nori starts goes through here, so subscribers hear of the target before Dock's slide.
 func pressDesktop(_ number: Int) {
-    passDesktopHotkeys += 1
+    updateTapState { $0.passDesktopHotkeys += 1 }
     if !postDesktopHotkey(number) {
-        passDesktopHotkeys -= 1
+        updateTapState { $0.passDesktopHotkeys -= 1 }
         guard desktopsEditable else {
             fputs("\"Switch to Desktop \(number)\" shortcut is off; enable it in System Settings → Keyboard → Shortcuts → Mission Control\n", stderr)
             switchFailed()

@@ -10,6 +10,7 @@ import Cocoa
 
 typealias Drag = (id: UInt32, space: UInt64, grab: CGPoint, origin: CGPoint, width: CGFloat)
 var drag: Drag?
+var dragging = false  // the tap's own: this press was a grab, so its drag and release are ours too
 
 // Topmost strip window under the point, on the Space its display shows. On-screen windows come front to back.
 func stripWindow(at point: CGPoint) -> (win: Win, space: UInt64)? {
@@ -44,21 +45,27 @@ func startMouseDrag() {
             let p = event.location
             switch type {
             case .leftMouseDown, .rightMouseDown:
-                guard !overviewOpen, event.flags.intersection(chordModifiers) == mouseModifier,
-                      grab(type, at: p) else { return Unmanaged.passUnretained(event) }
+                let state = tapState
+                guard !state.overviewOpen, event.flags.intersection(chordModifiers) == state.mouseModifier,
+                      DispatchQueue.main.sync(execute: { grab(type, at: p) }) else { return Unmanaged.passUnretained(event) }
+                dragging = true
                 return nil
             case .leftMouseDragged:
-                guard let d = drag else { return Unmanaged.passUnretained(event) }
-                moveDragged(d, to: p)
+                guard dragging else { return Unmanaged.passUnretained(event) }
+                onMainLatest(p) { p in if let d = drag { moveDragged(d, to: p) } }
                 return nil
             case .rightMouseDragged:
-                guard let d = drag else { return Unmanaged.passUnretained(event) }
-                resizeDragged(d, to: p)
+                guard dragging else { return Unmanaged.passUnretained(event) }
+                onMainLatest(p) { p in if let d = drag { resizeDragged(d, to: p) } }
                 return nil
             case .leftMouseUp, .rightMouseUp:
-                guard let d = drag else { return Unmanaged.passUnretained(event) }
-                drag = nil
-                if type == .leftMouseUp { dropDragged(d) }
+                guard dragging else { return Unmanaged.passUnretained(event) }
+                dragging = false
+                onMain {
+                    guard let d = drag else { return }
+                    drag = nil
+                    if type == .leftMouseUp { dropDragged(d) }
+                }
                 return nil
             default:
                 return Unmanaged.passUnretained(event)
@@ -70,8 +77,8 @@ func startMouseDrag() {
         return
     }
     mouseTap = tap
-    CFRunLoopAddSource(CFRunLoopGetCurrent(), CFMachPortCreateRunLoopSource(nil, tap, 0), .commonModes)
     CGEvent.tapEnable(tap: tap, enable: true)
+    runTap(tap)
 }
 var mouseTap: CFMachPort?
 
