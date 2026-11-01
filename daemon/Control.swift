@@ -392,10 +392,10 @@ func postDesktopHotkey(_ number: Int) -> Bool {
 }
 
 // Numbers run across displays, so a Desktop added on one display moves the next one's past the shortcuts that are on.
-// Without its shortcut a Desktop is reached through Dock, which runs the same code ("V"), with our slide on top.
+// So a Desktop is reached through Dock, which runs the same code ("V"), with our slide on top. Where the payload didn't
+// find that code the shortcut is posted, and the event tap starts the slide when it sees the press.
 func switchToSpace(_ number: Int) -> Bool {
-    if postDesktopHotkey(number) { return true }
-    guard desktopsEditable, let sid = spaces().first(where: { $0.number == number })?.id else { return false }
+    guard desktopsEditable, let sid = spaces().first(where: { $0.number == number })?.id else { return postDesktopHotkey(number) }
     switchSpaceAnimated(to: sid)
     return true
 }

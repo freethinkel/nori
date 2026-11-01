@@ -2,9 +2,8 @@
 // focused display for the key, the one under the pointer for a swipe; the other displays stay as they are.
 // A plain Space switch is the same layout at scale 1: the Space at the center slides to the new one.
 // The payload animates both on vsync (step_layout in payload.m); the daemon only says where to go with "Y".
-// Dock still owns which Space is current: picking another Space presses its "Switch to Desktop N" shortcut
-// (switchToSpace in Control.swift), or activates the app of a fullscreen Space (pressSpace), and Dock's switch runs
-// hidden under ours.
+// Dock still owns which Space is current: picking another Desktop runs its "Switch to Desktop N" code (pressDesktop),
+// a fullscreen Space goes through pressSpace, and Dock's switch runs hidden under ours.
 // ponytail: a click picks a Space, not a window. The gap lives in payload.m, the scale goes along with each layout.
 // ponytail: niri opens it on all displays. One layout at a time keeps payload.m simple; a click elsewhere just closes it.
 
@@ -22,16 +21,17 @@ func desktopNumber(for event: CGEvent) -> Int? {
 }
 
 // Every Space switch nori starts goes through here, so subscribers hear of the target before Dock's slide.
+// Dock's own code ("V") when the payload found it, about 25 ms sooner than a posted shortcut (docs/WINDOWSERVER.md).
+// The shortcut stays for a macOS where it didn't, and for a Dock that lost the payload.
 func pressDesktop(_ number: Int) {
-    updateTapState { $0.passDesktopHotkeys += 1 }
-    if !postDesktopHotkey(number) {
-        updateTapState { $0.passDesktopHotkeys -= 1 }
-        guard desktopsEditable else {
+    if !desktopsEditable || !send(["V \(number)"]) {
+        updateTapState { $0.passDesktopHotkeys += 1 }
+        if !postDesktopHotkey(number) {
+            updateTapState { $0.passDesktopHotkeys -= 1 }
             fputs("\"Switch to Desktop \(number)\" shortcut is off; enable it in System Settings → Keyboard → Shortcuts → Mission Control\n", stderr)
             switchFailed()
             return
         }
-        send(["V \(number)"])
     }
     if let sid = spaces().first(where: { $0.number == number })?.id {
         pendingSpace = (sid, CACurrentMediaTime() + spaceLayoutFallback)
@@ -47,7 +47,7 @@ func switchFailed() {
     if spaceLayoutBusy { sendLayout(open: overviewOpen, spring: overviewOpen) }
 }
 
-// Every switch to a Space nori starts. A Desktop: its "Switch to Desktop N" shortcut. A fullscreen Space has none:
+// Every switch to a Space nori starts. A Desktop: pressDesktop. A fullscreen Space has no number:
 // "Move right a space" / "Move left a space" (symbolic hotkeys 81 / 79, Ctrl+→/← by default) as many times as it
 // is away in Mission Control order, the same order as displaySpaces. Dock merges quick presses into one switch
 // (Desktop 1 to a fullscreen Space four steps away: one switch, 0.77 s). With those shortcuts off, the app is
@@ -119,7 +119,7 @@ func sendLayout(open: Bool, spring: Bool) {
     if open { showSpaceButtonsSoon() }
 }
 
-// Every "Switch to Desktop N" press lands here (keys, nori focus space), and Dock switches under our slide.
+// Keys and "Switch to Desktop N" presses land here, and Dock switches under our slide.
 func switchSpaceAnimated(toDesktop number: Int) {
     if let sid = spaces().first(where: { $0.number == number })?.id { switchSpaceAnimated(to: sid) }
 }
@@ -363,7 +363,7 @@ func showSpaceButtonsSoon() {
     spaceButtonsSoon?.cancel()
     let work = DispatchWorkItem { if overviewOpen { showSpaceButtons() } }
     spaceButtonsSoon = work
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.55, execute: work)
 }
 
 func hideSpaceButtons() {
