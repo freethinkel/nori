@@ -15,13 +15,15 @@ func withAddress<T>(_ path: String, _ body: (UnsafePointer<sockaddr>, socklen_t)
     }
 }
 
-// One connection per call: pass all lines of a layout at once.
-func send(_ lines: [String]) {
+// One connection per call: pass all lines of a layout at once. False if no payload is listening.
+@discardableResult
+func send(_ lines: [String]) -> Bool {
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-    guard fd >= 0 else { return }
+    guard fd >= 0 else { return false }
     defer { close(fd) }
-    guard withAddress(socketPath, { connect(fd, $0, $1) }) == 0 else { return }
+    guard withAddress(socketPath, { connect(fd, $0, $1) }) == 0 else { return false }
     _ = (lines.joined(separator: "\n") + "\n").withCString { write(fd, $0, strlen($0)) }
+    return true
 }
 
 // Dock restarting (a crash, `killall Dock`) takes the payload with it, and from then on `send` drops every command.

@@ -165,7 +165,8 @@ static CFStringRef display_uuid(const char *text)
     return uuid;
 }
 
-#define SPRING_RESPONSE 0.28  // seconds per oscillation, like SwiftUI's .spring(response:dampingFraction:)
+// A late frame shows most on the spring's largest step: at most 11% of the way here, 16% at 0.28 (docs/WINDOWSERVER.md).
+#define SPRING_RESPONSE 0.4  // seconds per oscillation, like SwiftUI's .spring(response:dampingFraction:)
 #define SPRING_DAMPING 0.78
 static uint64_t layout_spaces[MAX_SPACES];
 static int layout_count;  // 0: no layout running
