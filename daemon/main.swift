@@ -137,6 +137,7 @@ layoutAll()
 var lastFront: UInt32?
 func poll() {
     defer { publishSoon() }  // subscribers, Control.swift: a Space switch or a window on another Space counts too
+    dropClosedBorders()
     guard !gestureActive, !spaceLayoutBusy else { return }
     pollDisplays()
     let before = columns

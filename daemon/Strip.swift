@@ -35,7 +35,7 @@ var stripSpace: UInt64?  // set by onStrip
 func swapStrip(to space: UInt64) {
     guard space != currentSpace else { return }
     savedStrips[currentSpace] = (columns, columnCenters, stripOffset)
-    (columns, columnCenters, stripOffset) = savedStrips[space] ?? ([], [], 0)
+    (columns, columnCenters, stripOffset) = savedStrips.removeValue(forKey: space) ?? ([], [], 0)  // left behind, a copy would pass for another strip
     currentSpace = space
 }
 
@@ -309,6 +309,16 @@ func drawBorders(_ wins: [Win]) {
         bordersSent[id] = nil
     }
     if !lines.isEmpty { send(lines) }
+}
+
+// A window closed on a Space that isn't shown has no layout to lose its border in, and the payload can't tell: in Dock
+// SLSGetWindowBounds can go on answering for a closed window (docs/WINDOWSERVER.md). Here it doesn't.
+func dropClosedBorders() {
+    var frame = CGRect.zero
+    let closed = bordersSent.keys.filter { CGSGetWindowBounds(cid, $0, &frame) != 0 }
+    guard !closed.isEmpty else { return }
+    closed.forEach { bordersSent[$0] = nil }
+    send(closed.map { "H \($0) 0" })
 }
 
 // offset: where the strip comes to rest, if not where center-focused-column puts column `index` (a gesture's snap).

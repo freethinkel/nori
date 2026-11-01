@@ -506,7 +506,7 @@ static void border_poll(CFTypeRef *transaction)
         b->moved = false;
         if (!b->wid || moved || anim_for(b->target, false) || resize_for(b->target)) continue;
         CGRect frame;
-        if (SLSGetWindowBounds(cid, b->target, &frame) != kCGErrorSuccess) { border_drop(i); continue; }  // closed
+        if (SLSGetWindowBounds(cid, b->target, &frame) != kCGErrorSuccess) { border_drop(i); continue; }  // closed, though it can go on answering: the daemon checks too
         frame.origin.x += shift_of(b->target);
         if (!CGRectEqualToRect(frame, b->frame)) {
             if (!*transaction) *transaction = SLSTransactionCreate(cid);
