@@ -6,7 +6,7 @@
 
 import Cocoa
 
-if CommandLine.arguments.count > 1 { runClient(Array(CommandLine.arguments.dropFirst())) }  // nori query …, see Control.swift
+if let args = clientArgs(CommandLine.arguments) { runClient(args) }  // nori query …, see Control.swift
 atexit(restoreSystemGesturesOnExit)
 startApp()  // menu bar item, SIP check, Accessibility, payload: see App.swift
 

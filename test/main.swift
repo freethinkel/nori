@@ -311,6 +311,11 @@ check.waitUntilExit()
 assert(check.terminationStatus == 0)
 assert(removal.range(of: "rm -f \(sudoersFile)")!.lowerBound < removal.range(of: "rm -rf \(installFolder)")!.lowerBound)
 
+// Arguments ask the running nori, but the relaunch after an update is nori itself: as a client it would exit at once.
+assert(clientArgs(["nori"]) == nil)
+assert(clientArgs(["nori", updatedFlag]) == nil)
+assert(clientArgs(["nori", "query", "spaces"]) == ["query", "spaces"])
+
 print("loader: ok")
 
 // Restoring a strip (Restore.swift): the same title first, then the next of that app, each entry once.

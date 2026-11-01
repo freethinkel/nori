@@ -153,12 +153,12 @@ func team(_ app: URL) -> String? {
         .flatMap { $0 == "not set" ? nil : $0 }
 }
 
-// Opens the app again once this process is gone; --updated makes it load the new payload into Dock.
+// Opens the app again once this process is gone; updatedFlag makes it load the new payload into Dock.
 func relaunch() {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/bin/sh")
-    process.arguments = ["-c", "while kill -0 \"$1\" 2>/dev/null; do sleep 0.2; done; exec open \"$2\" --args --updated",
-                         "_", "\(getpid())", Bundle.main.bundleURL.path]
+    process.arguments = ["-c", "while kill -0 \"$1\" 2>/dev/null; do sleep 0.2; done; exec open \"$2\" --args \"$3\"",
+                         "_", "\(getpid())", Bundle.main.bundleURL.path, updatedFlag]
     try? process.run()
     resetOverview()
     restoreWindows()

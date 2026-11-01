@@ -10,6 +10,13 @@ let installFolder = "/usr/local/libexec/nori"
 let installedLoader = installFolder + "/loader"
 let installedPayload = installFolder + "/payload.dylib"
 let sudoersFile = "/etc/sudoers.d/nori-\(getuid())"  // one per user, so a second account doesn't replace the first's rule
+let updatedFlag = "--updated"  // the relaunch after an update (Update.swift): load the new payload into Dock
+
+// What `nori …` asks of the running nori; nil when this process is nori itself.
+func clientArgs(_ argv: [String]) -> [String]? {
+    let args = Array(argv.dropFirst())
+    return args.isEmpty || args == [updatedFlag] ? nil : args
+}
 
 func sudoersRule(uid: uid_t) -> String { "#\(uid) ALL=(root) NOPASSWD: \(installedLoader) \(installedPayload)" }
 
