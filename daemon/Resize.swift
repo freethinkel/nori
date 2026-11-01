@@ -21,6 +21,9 @@ func withPendingWidths(_ wins: [Win]) -> [Win] {
     }
 }
 
+// The window's own frame. CGWindowList's has the stretch in it.
+@_silgen_name("CGSGetWindowBounds") func CGSGetWindowBounds(_ cid: Int32, _ wid: UInt32, _ frame: UnsafeMutablePointer<CGRect>) -> Int32
+
 let axQueue = DispatchQueue(label: "nori.ax", qos: .userInteractive)
 // The payload says when the stretch has settled ("resize-settled", Control.swift), and the app is resized then.
 // The delay is a fallback for a payload that doesn't; a 300 pt stretch takes about 0.37 s at 60 Hz.
@@ -98,15 +101,12 @@ func resizeFocused(_ win: Win, at index: Int, to width: CGFloat) {
     layout(immediate: false)
     resizeWork?.cancel()  // repeated presses: the app relayouts once, after the last
     let work = DispatchWorkItem {
-        guard let element = axElement(win) else { return }
-        var size = CGSize(width: width, height: win.frame.height)
-        guard let value = AXValueCreate(.cgSize, &size) else { return }
-        AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, value)
+        // Where the window really is: settled, the payload has it at the left edge it lands on, so the app is told
+        // that and nothing moves. An AXSize alone stopped at the screen's right edge, going by the old place.
+        var real = win.frame
+        _ = CGSGetWindowBounds(cid, win.id, &real)
         // The app may clamp the width (min/max size): aim the animation and the layout at what it took.
-        var taken: CFTypeRef?
-        if AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &taken) == .success, let taken {
-            AXValueGetValue(taken as! AXValue, .cgSize, &size)
-        }
+        guard let size = setFrame(win, CGRect(x: real.minX, y: real.minY, width: width, height: win.frame.height)) else { return }
         // Straight from here: every hop before the payload hears "W" is a frame drawn stretched twice.
         if abs(size.width - width) < 1 { send(["W \(win.id) \(size.width)"]); return }
         DispatchQueue.main.async {

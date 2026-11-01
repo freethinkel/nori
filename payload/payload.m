@@ -258,7 +258,8 @@ static void place(CFTypeRef transaction, uint32_t wid, CGPoint p, double lo, dou
 }
 
 // Width animations ("R"). The window is stretched by a transform from its real width to the drawn one, which eases
-// to `goal`; the real window is kept centered on cx by a move in the same transaction.
+// to `goal`; the real window is kept centered on cx by a move in the same transaction. Once settled its left edge is
+// where it lands, the same picture: the daemon then sets AXPosition before AXSize (setFrame), and that moves nothing.
 // While the stretch eases, the real width is not read back: guessing it from SLSGetWindowBounds then made the stretch
 // run away and the window land off center. The app keeps its width until the stretch settles; then the daemon
 // resizes it and says so with "W", and the stretch is dropped. Once settled, the window's own width is watched too
@@ -785,9 +786,11 @@ static void tick(double frame)
             notify_daemon("payload\tresize-settled\t%u\t%.1f\n", r.wid, r.goal);
         }
         double s = done ? 1 : r.drawn / r.real;
-        SLSTransactionMoveWindowWithGroup(transaction, r.wid, CGPointMake(r.cx - r.real / 2, b.origin.y));
-        // Screen -> window matrix, origin at the window's top-left (docs/WINDOWSERVER.md): x scaled about the center.
-        double m[16] = { 1 / s, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  r.real / 2 * (1 - 1 / s), 0, 0, 1 };
+        bool landing = settled && !done;
+        SLSTransactionMoveWindowWithGroup(transaction, r.wid, CGPointMake(r.cx - (landing ? r.drawn : r.real) / 2, b.origin.y));
+        // Screen -> window matrix, origin at the window's top-left (docs/WINDOWSERVER.md): x scaled about the center,
+        // or about the left edge once landing.
+        double m[16] = { 1 / s, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  landing ? 0 : r.real / 2 * (1 - 1 / s), 0, 0, 1 };
         SLSTransactionSetWindowTransform3D(transaction, r.wid, m);
         border_t *border = border_for(r.wid);
         if (border) border_to(transaction, border, CGRectMake(r.cx - r.drawn / 2, b.origin.y, r.drawn, b.size.height));

@@ -115,8 +115,8 @@ func axID(_ element: AXUIElement) -> CGWindowID? {
 
 func axElement(_ win: Win) -> AXUIElement? { axWindows(win.pid)?.first { axID($0) == win.id } }
 
-// Position first: macOS stops a growing window at the bottom of the screen, going by where the app thinks the window
-// is, and the payload's moves don't tell it. Position again last: an app may keep a window on screen by moving it as it grows.
+// Position first: macOS stops a growing window at the right and bottom of the screen, going by where the app thinks the
+// window is, and the payload's moves don't tell it. Position again last: an app may keep a window on screen by moving it as it grows.
 // Returns the size the app took (it may clamp), or nil if it didn't answer.
 @discardableResult
 func setFrame(_ win: Win, _ frame: CGRect) -> CGSize? {
