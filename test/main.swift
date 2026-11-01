@@ -301,4 +301,28 @@ let script = installLoaderScript(loader: "'/a b/loader'", payload: "'/a b/payloa
 assert(script.contains("'/a b/loader' '/a b/payload.dylib' \(installFolder)/"))
 assert(script.range(of: "visudo")!.lowerBound < script.range(of: "mv -f")!.lowerBound)
 
+// The uninstall script is valid shell, and the rule goes before the folder is looked at.
+let removal = uninstallScript(bundleID: "com.example.nori")
+let check = Process()
+check.executableURL = URL(fileURLWithPath: "/bin/sh")
+check.arguments = ["-n", "-c", removal]
+try! check.run()
+check.waitUntilExit()
+assert(check.terminationStatus == 0)
+assert(removal.range(of: "rm -f \(sudoersFile)")!.lowerBound < removal.range(of: "rm -rf \(installFolder)")!.lowerBound)
+
 print("loader: ok")
+
+// Restoring a strip (Restore.swift): the same title first, then the next of that app, each entry once.
+var saved = [("a", "one"), ("b", "x"), ("a", "two")].map { RememberedWindow(app: $0.0, title: $0.1, width: 100) }
+assert(claimRemembered(app: "a", title: "two", in: &saved) == 2)
+assert(claimRemembered(app: "a", title: "renamed", in: &saved) == 0)
+assert(claimRemembered(app: "a", title: "one", in: &saved) == nil)
+assert(claimRemembered(app: "c", title: nil, in: &saved) == nil)
+assert(claimRemembered(app: "b", title: nil, in: &saved) == 1)
+assert(restoredIndex(rank: 2, ranks: []) == 0)
+assert(restoredIndex(rank: 2, ranks: [1, 3]) == 1)
+assert(restoredIndex(rank: 2, ranks: [nil, 1]) == 2)
+assert(restoredIndex(rank: 0, ranks: [nil, 1]) == 1)
+
+print("restore: ok")

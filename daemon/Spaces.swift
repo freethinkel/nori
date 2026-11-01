@@ -20,6 +20,16 @@ func isFullscreen(_ space: UInt64) -> Bool {
     return fullscreenSpaces[space] ?? false  // not listed (yet): asked again next time
 }
 
+// A Space's uuid outlasts its id: macOS keeps it in com.apple.spaces. Empty for a Space that has none.
+func spaceUUIDs() -> [UInt64: String] {
+    let displays = CGSCopyManagedDisplaySpaces(cid).takeRetainedValue() as? [[String: Any]] ?? []
+    var uuids: [UInt64: String] = [:]
+    for listed in displays.flatMap({ $0["Spaces"] as? [[String: Any]] ?? [] }) {
+        if let id = (listed["id64"] as? NSNumber)?.uint64Value, let uuid = listed["uuid"] as? String, !uuid.isEmpty { uuids[id] = uuid }
+    }
+    return uuids
+}
+
 // What a display shows. With "Displays have separate Spaces" off there is one entry, for the main display, whatever
 // is connected: macOS keeps one list of Spaces, and calls it "Main" (not verified, that takes a logout).
 struct Display {

@@ -2,7 +2,7 @@
 // Hotkeys and mouse-drag release come through the event tap here; the trackpad swipe is in Trackpad.swift.
 // Option+1…5 are the system "Switch to Desktop N" shortcuts (com.apple.symbolichotkeys 118–122); the tap catches them
 // (and any other press of them) to slide Spaces itself, see switchSpaceAnimated. Every other key is a [bindings] action, Actions.swift.
-// Window events come from Accessibility observers (Events.swift); a poll once a second catches what they miss.
+// Window events come from WindowServer and Accessibility observers (Events.swift); a poll once a second catches what they miss.
 
 import Cocoa
 

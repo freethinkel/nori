@@ -16,6 +16,7 @@ It's a prototype. WindowServer moves the windows, not Accessibility. A dylib loa
 - Three fingers up or down move through Spaces the same way. The Spaces follow your fingers, and on lift the nearest one slides to the center, or the next one if you flicked. nori swallows the three- and four-finger gesture events it can, and turns Mission Control and App Exposé off while it runs, putting them back when it quits, see [macOS settings](#3-macos-settings).
 - Drop a window you dragged with the mouse and it eases back into its column.
 - Every Space has its own strip. A fullscreen app's Space has none: nori leaves its window as macOS made it.
+- Strips outlast a reboot: a window that comes back on its Desktop takes its old place and width.
 - Fullscreen Spaces sit in the vertical stack where Mission Control has them, so Opt+J/K, the swipes and the overview reach them. nori switches to one with Dock's "Move left/right a space" shortcut, see [macOS settings](#3-macos-settings).
 - Spaces switch vertically, on the same curve as windows. nori catches every "Switch to Desktop N" press, from the keyboard, from Opt+J/K or from `nori focus space`. Dock still switches the Space and the payload draws the slide. If nori quits or crashes, Dock goes back to its usual horizontal animation, and an open overview closes by itself.
 - An overview like niri's shows all Spaces of the display stacked and scaled down, with live windows. Four fingers drive it. It follows the swipe, stretches past fully open or closed, and on lift springs open or shut depending on how fast you threw it.
@@ -119,7 +120,7 @@ A released app checks GitHub for a newer release at launch and every 6 hours, an
 
 ### Undo
 
-1. In a normal Terminal, run `sudo rm -rf /usr/local/libexec/nori "/etc/sudoers.d/nori-$(id -u)"`.
+1. In a normal Terminal, run `nori uninstall`, or `/Applications/Nori.app/Contents/MacOS/nori uninstall`. It asks for your password, quits nori, which puts windows back, turns Mission Control's swipes back on, removes `/usr/local/libexec/nori`, the sudoers rule, nori's Accessibility entry, its login item and `~/Library/Application Support/nori`, and restarts Dock so that the payload goes. `~/.config/nori` stays. Then delete the app.
 2. While NVRAM Protections are still off, take the boot argument out. Check `nvram boot-args` first: if `-arm64e_preview_abi` is all it shows, run `sudo nvram -d boot-args`; if there are others, set them alone with `sudo nvram boot-args="the others"`.
 3. Boot into Recovery as in step 1, run `csrutil enable` and restart.
 
@@ -339,7 +340,8 @@ nori sees the titles of windows on other Spaces only with Screen Recording permi
 ## Limitations
 
 - One window per column.
-- nori learns about new windows and focus changes from Accessibility and NSWorkspace notifications. If a window closes and focus doesn't move, nori notices on its next poll, up to a second later.
+- nori learns about new and closed windows from WindowServer, and about focus changes from Accessibility and NSWorkspace notifications. A focus change those miss waits for its next poll, up to a second later.
+- After a reboot a window takes back its place and width only if macOS or its app brings it up on the same Desktop, within two minutes of nori's start. nori moves no window between Desktops for this, and tells windows of one app apart by title, then by order.
 - One Space layout at a time. A Space switch or the overview on one display ends one still running on another where it is, with its Space shown.
 - With several displays a column past the edge of its display isn't really there: WindowServer would hand it to the next display, so it stays on its own and a window transform draws it the rest of the way. A sheet attached to such a column shows at the real place.
 - A display that comes back gets new Spaces from macOS, so its strips start over: the same windows, in the order they opened.

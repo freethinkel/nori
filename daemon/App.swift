@@ -203,6 +203,48 @@ func applyLaunchAtLogin() {
     }
 }
 
+let appBundleID = "dev.freethinkel.nori"  // app/Info.plist; the command may run from a link, or from build/nori
+
+// `nori uninstall`, in the terminal, so sudo asks there. Nothing changes unless the password is right. The running nori
+// quits first: it puts windows and gestures back. boot-args and SIP stay, as other tools may need them, and config.toml
+// stays as yours; the end of it says what is left.
+func runUninstall() -> Never {
+    func sudo(_ args: [String]) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
+        process.arguments = args
+        guard (try? process.run()) != nil else { return false }
+        process.waitUntilExit()
+        return process.terminationStatus == 0
+    }
+    print("Removing \(installFolder), \(sudoersFile), nori's Accessibility entry and its login item, then restarting Dock.")
+    guard sudo(["-v"]) else {
+        fputs("Nothing was changed.\n", stderr)
+        exit(1)
+    }
+    if alive(controlPath) {
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        if withAddress(controlPath, { connect(fd, $0, $1) }) == 0 { _ = Array("uninstall\n".utf8).withUnsafeBytes { write(fd, $0.baseAddress, $0.count) } }
+        close(fd)
+        for _ in 0..<50 where alive(controlPath) { usleep(100_000) }
+    }
+    _ = putBackSystemGestures()
+    guard sudo(["/bin/sh", "-c", uninstallScript(bundleID: appBundleID)]) else {
+        fputs("Removing failed, see above. It is safe to run again.\n", stderr)
+        exit(1)
+    }
+    try? FileManager.default.removeItem(atPath: (stripsPath as NSString).deletingLastPathComponent)
+    UserDefaults.standard.removePersistentDomain(forName: appBundleID)
+    _ = shell("/usr/bin/killall", ["Dock"])  // the payload goes with it
+    print("""
+        Done. Left for you:
+          - Nori.app, and the link to this command if you made one: delete them.
+          - ~/.config/nori: your config, delete it if you don't want it.
+          - -arm64e_preview_abi in boot-args and SIP: see "Undo" in nori's README. Other tools may need them.
+        """)
+    exit(0)
+}
+
 func payloadAlive() -> Bool { alive(socketPath) }
 
 // Stops at the first answer: the payload takes connections one by one, and more at once than it queues are refused,

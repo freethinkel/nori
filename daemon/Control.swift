@@ -5,6 +5,7 @@
 // The socket path and this format are public API (README, CLI): bars talk to the socket directly.
 
 import Cocoa
+import ServiceManagement
 
 let controlPath = "/tmp/nori-ctl_\(user).socket"
 var controlSource: DispatchSourceRead?
@@ -35,6 +36,7 @@ let usage = """
       nori toggle floating
       nori reload             read the config again
       nori problems           what is wrong right now, for a bug report
+      nori uninstall          quit, and remove what nori put on this Mac; your config stays
 
     """
 
@@ -44,6 +46,7 @@ func runClient(_ args: [String]) -> Never {
         print(usage.dropFirst("error: ".count), terminator: "")
         exit(0)
     }
+    if args == ["uninstall"] { runUninstall() }
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)
     guard fd >= 0, withAddress(controlPath, { connect(fd, $0, $1) }) == 0 else {
         fputs("nori is not running\n", stderr)
@@ -172,6 +175,10 @@ func handle(_ args: [String]) -> String {
         return ""
     case ("problems", "") where args.count == 1:
         return problemReport()
+    case ("uninstall", "") where args.count == 1:  // from runUninstall, the login item is the app's to remove
+        try? SMAppService.mainApp.unregister()
+        menuActions.quit()
+        return ""
     case ("query", "spaces"):
         guard let opts = options(args.dropFirst(2), values: [], flags: ["--current"]) else { break }
         return json(querySpaces(opts))

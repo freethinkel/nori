@@ -13,6 +13,15 @@ let sudoersFile = "/etc/sudoers.d/nori-\(getuid())"  // one per user, so a secon
 
 func sudoersRule(uid: uid_t) -> String { "#\(uid) ALL=(root) NOPASSWD: \(installedLoader) \(installedPayload)" }
 
+// Root's part of `nori uninstall`. The folder stays while another account's rule uses it. Accessibility's row can only go
+// with Filesystem Protections off, so a failure there is no failure.
+func uninstallScript(bundleID: String) -> String {
+    "/usr/bin/sqlite3 '/Library/Application Support/com.apple.TCC/TCC.db' "
+        + "\"DELETE FROM access WHERE service='kTCCServiceAccessibility' AND client='\(bundleID)'\" 2>/dev/null; "
+        + "rm -f \(sudoersFile); "
+        + "set -- /etc/sudoers.d/nori-*; [ -e \"$1\" ] || rm -rf \(installFolder)"
+}
+
 // Root's part of a first load; the paths come shell-quoted. visudo checks the rule before it goes in place, as a bad file
 // in /etc/sudoers.d stops sudo for the whole machine. sudo skips a file with a dot in its name until then.
 func installLoaderScript(loader: String, payload: String) -> String {

@@ -125,8 +125,17 @@ func syncColumns() -> (wins: [Win], inserted: Int?, front: UInt32?) {
     let live = placeByRules(windows(on: space), on: space).filter { !movedAway.contains($0.id) }
     let byId = Dictionary(live.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
     lastSeen.merge(byId) { _, new in new }
-    for win in live where originalFrames[win.id] == nil { originalFrames[win.id] = win.frame }
+    for win in live where originalFrames[win.id] == nil {
+        originalFrames[win.id] = win.frame
+        readTitle(win)
+    }
     columns.removeAll { byId[$0] == nil }
+    // After a reboot: what was here before goes back to its place, and takes no focus.
+    for id in byId.keys.sorted() where !columns.contains(id) {
+        if let rank = restoreRank(byId[id]!, on: space) {
+            columns.insert(id, at: restoredIndex(rank: rank, ranks: columns.map { restoreRanks[$0] }))
+        }
+    }
     var at = min(focusedIndex() + 1, columns.count)
     var inserted: Int?
     for id in byId.keys.sorted() where !columns.contains(id) {
@@ -210,9 +219,9 @@ func layout(immediate: Bool) {
         return "\(immediate || instantMoves ? "M" : "S") \(win.id) \(x) \(top)\(moveLimits(win.frame.width))"
     })
     guard !immediate else { return }
+    dimUnfocused(wins)
     saveStrips()
     publishSoon()
-    dimUnfocused(wins)
     var resized = false
     for win in wins where needsHeight(win, height) {
         let width = sizedTo[win.id] == nil ? ruleWidth(win) ?? win.frame.width : win.frame.width
@@ -242,20 +251,34 @@ func layout(immediate: Bool) {
 
 // inactive-opacity: the strip's unfocused windows are translucent, the focused one opaque, so the focus shows.
 // Alpha is set in WindowServer, the app never knows: the payload fades it ("E"), quitting sets it back at once ("A").
-// A window that left the strip gets its alpha back.
-// ponytail: a window the app itself made translucent is set back to 1 when focused.
-var alphaSet: [UInt32: Float] = [:]
+// A window that left the strip gets its alpha back. That is the app's own, read as the window is first dimmed: until then
+// it is the app's to change, a fade of its own included. Kept in strips.json, so a nori started after a crash doesn't
+// take a dimmed window's alpha for the app's.
+// ponytail: an app changing its alpha while dimmed is overwritten; read it back here if that shows.
+var dimmed: [UInt32: (own: Float, set: Float)] = [:]
+
+func windowAlpha(_ id: UInt32) -> Float {
+    let info = CGWindowListCopyWindowInfo(.optionIncludingWindow, id) as? [[String: Any]]
+    return (info?.first?[kCGWindowAlpha as String] as? NSNumber)?.floatValue ?? 1
+}
 
 func dimUnfocused(_ wins: [Win]) {
     let focused = wins.indices.contains(focusedIndex()) ? wins[focusedIndex()].id : nil
-    var wanted = Dictionary(wins.map { ($0.id, $0.id == focused ? 1 : inactiveOpacity) }, uniquingKeysWith: { a, _ in a })
-    let elsewhere = Set(savedStrips.values.flatMap(\.columns))
-    for (id, alpha) in alphaSet where alpha != 1 && wanted[id] == nil && !elsewhere.contains(id) { wanted[id] = 1 }
-    // While it is on, a window nori hasn't set yet gets its alpha once too: after a crash it may still be dimmed.
-    let changes = wanted.filter { alphaSet[$0.key] ?? (inactiveOpacity < 1 ? nil : 1) != $0.value }
-    guard !changes.isEmpty else { return }
-    send(changes.map { "E \($0.key) \(alphaSet[$0.key] ?? 1) \($0.value)" })  // the payload fades on vsync
-    alphaSet.merge(changes) { _, new in new }
+    let unfocused = inactiveOpacity < 1 ? wins.map(\.id).filter { $0 != focused } : []
+    let here = Set(wins.map(\.id))
+    let elsewhere = inactiveOpacity < 1 ? Set(savedStrips.values.flatMap(\.columns)).subtracting(here) : []
+    var fades: [String] = []
+    for id in unfocused {
+        let own = dimmed[id]?.own ?? windowAlpha(id), goal = own * inactiveOpacity
+        guard dimmed[id]?.set != goal else { continue }
+        fades.append("E \(id) \(dimmed[id]?.set ?? own) \(goal)")  // the payload fades on vsync
+        dimmed[id] = (own, goal)
+    }
+    for (id, state) in dimmed where !unfocused.contains(id) && !elsewhere.contains(id) {
+        fades.append("E \(id) \(state.set) \(state.own)")
+        dimmed[id] = nil
+    }
+    if !fades.isEmpty { send(fades) }
 }
 
 // offset: where the strip comes to rest, if not where center-focused-column puts column `index` (a gesture's snap).
@@ -267,6 +290,7 @@ func focusColumn(at index: Int, offset: CGFloat? = nil) {
     stripFocus[currentSpace] = wins[i].id
     layout(immediate: false)
     focus(wins[i])
+    readTitle(wins[i])
 }
 
 // Keyboard: one column left or right from the column the strip is closest to; past either end with wrap-around,
@@ -317,7 +341,7 @@ func restoreWindows() {
         // A frame saved mid-scroll can lie past every display, and macOS would hand the window to the main one.
         if let space = open[id] { back[id] = displays.count > 1 ? keptFrame(frame, on: display(of: space).frame) : frame }
     }
-    send(back.map { "M \($0.key) \($0.value.minX) \($0.value.minY)" } + alphaSet.filter { $0.value != 1 }.map { "A \($0.key) 1" })
+    send(back.map { "M \($0.key) \($0.value.minX) \($0.value.minY)" } + dimmed.map { "A \($0.key) \($0.value.own)" })
     for (id, frame) in back {
         if let win = lastSeen[id] { setFrame(win, frame) }
     }

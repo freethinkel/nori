@@ -157,10 +157,17 @@ func bringAppFront(_ win: Win) {
 enum SkyLight {
     typealias SetFront = @convention(c) (UnsafeMutablePointer<ProcessSerialNumber>, UInt32, UInt32) -> Int32
     typealias PostEvent = @convention(c) (UnsafeMutablePointer<ProcessSerialNumber>, UnsafeMutablePointer<UInt8>) -> Int32
+    typealias NotifyProc = @convention(c) (UInt32, UnsafeMutableRawPointer?, Int, UnsafeMutableRawPointer?) -> Void
+    typealias RegisterNotify = @convention(c) (Int32, NotifyProc, UInt32, UnsafeMutableRawPointer?) -> Int32
+    typealias WindowLevel = @convention(c) (Int32, UInt32, UnsafeMutablePointer<Int32>) -> Int32
     static let setFrontProcess = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "_SLPSSetFrontProcessWithOptions")
         .map { unsafeBitCast($0, to: SetFront.self) }  // -2: RTLD_DEFAULT
     static let postEventRecord = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "SLPSPostEventRecordTo")
         .map { unsafeBitCast($0, to: PostEvent.self) }
+    static let registerNotify = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "SLSRegisterConnectionNotifyProc")
+        .map { unsafeBitCast($0, to: RegisterNotify.self) }
+    static let windowLevel = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "SLSGetWindowLevel")
+        .map { unsafeBitCast($0, to: WindowLevel.self) }
 }
 
 // The event records that make a window its app's key window (as yabai and AltTab send them).
