@@ -28,6 +28,8 @@ center-focused-column = "always"     # "always": focused window in the center; "
                                      # "on-overflow": center it only when it doesn't fit beside the window focus came from
 always-center-single-column = false  # true: a lone window in the center whatever center-focused-column says
 wrap-around = false       # true: focus-left on the first column goes to the last, focus-space-up on the first Space to the last
+focus-follows-mouse = false  # true: the window the pointer stops on takes focus, and the strip scrolls to it
+mouse-follows-focus = false  # true: the pointer goes to the window that takes focus, unless it is on it already
 inactive-opacity = 1.0    # 0.1 to 1: the strip's unfocused windows are shown at this opacity, the focused one opaque; 1 turns it off
 mouse-modifier = "option" # modifiers held for a left drag (move a window) or right drag (resize it); e.g. "ctrl+option"
 
@@ -67,7 +69,7 @@ name = "Studio Display"
 padding-top = 16
 ```
 
-Top-level keys are only `gap`, `padding-top`, `padding-bottom`, `padding-left`, `padding-right`, `resize-step`, `inactive-opacity` (numbers), `padding-per-monitor`, `launch-at-login`, `always-center-single-column` and `wrap-around` (true/false, default false), `overview-background` ("none" or "blur", default "none"), `center-focused-column` ("always", "never" or "on-overflow", default "always") and `mouse-modifier` (modifiers joined by `+`, default "option"). A missing number is 0, except `resize-step`, which is 10, and `inactive-opacity`, which is 1.
+Top-level keys are only `gap`, `padding-top`, `padding-bottom`, `padding-left`, `padding-right`, `resize-step`, `inactive-opacity` (numbers), `padding-per-monitor`, `launch-at-login`, `always-center-single-column`, `wrap-around`, `focus-follows-mouse` and `mouse-follows-focus` (true/false, default false), `overview-background` ("none" or "blur", default "none"), `center-focused-column` ("always", "never" or "on-overflow", default "always") and `mouse-modifier` (modifiers joined by `+`, default "option"). A missing number is 0, except `resize-step`, which is 10, and `inactive-opacity`, which is 1.
 
 ## Bindings
 

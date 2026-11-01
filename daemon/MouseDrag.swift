@@ -5,6 +5,7 @@
 // (center-focused-column); the app resizes once the drag stops (Resize.swift).
 // The clicks themselves don't reach the app. The modifier is `mouse-modifier` in the config, Option by default.
 // ponytail: an own event tap, so main.swift's stays as it is.
+// Below them: focus-follows-mouse and mouse-follows-focus.
 
 import Cocoa
 
@@ -115,4 +116,59 @@ func resizeDragged(_ d: Drag, to p: CGPoint) {
 func dropDragged(_ d: Drag) {
     onStrip(d.space) { if let i = columns.firstIndex(of: d.id) { focusColumn(at: i) } }
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { settleDrop() }
+}
+
+// focus-follows-mouse: the window the pointer stops on takes focus, and the strip scrolls for it as for any focus. The
+// window that brings under the pointer takes focus only once the pointer has left it: a centered strip would bring the
+// next one under it, and the next, on the slightest move.
+// A monitor rather than the tap, and only while the setting is on: no tap has to see every move of the pointer.
+private var pointerMonitor: Any?
+private var pointerStopped: DispatchWorkItem?
+private var broughtUnder: CGRect?  // where that window rests
+
+func watchPointer() {
+    if focusFollowsMouse, pointerMonitor == nil {
+        pointerMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { _ in
+            pointerStopped?.cancel()
+            let work = DispatchWorkItem { focusWindowUnderPointer() }
+            pointerStopped = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: work)
+        }
+    } else if !focusFollowsMouse, let monitor = pointerMonitor {
+        NSEvent.removeMonitor(monitor)
+        pointerMonitor = nil
+    }
+}
+
+// What a click here would reach. CGWindowList can't tell: Dock keeps a window over the whole screen above every app's.
+func windowAt(_ point: CGPoint) -> UInt32? {
+    var at = point, inside = CGPoint.zero, id: UInt32 = 0, owner: Int32 = 0
+    return SkyLight.findWindow?(cid, 0, 1, 0, &at, &inside, &id, &owner) == 0 && id != 0 ? id : nil
+}
+
+func focusWindowUnderPointer() {
+    guard NSEvent.pressedMouseButtons == 0, !gestureActive, !spaceLayoutBusy, let point = CGEvent(source: nil)?.location else { return }
+    if broughtUnder?.contains(point) == true { return }
+    broughtUnder = nil
+    guard let id = windowAt(point), id != focusedWindowID() else { return }
+    let wins = syncColumns().wins
+    if let i = wins.firstIndex(where: { $0.id == id }) {
+        // Still under the pointer at rest: mid-ease the strip only carries a window past it.
+        guard restFrame(wins, i).contains(point) else { return }
+        focusColumn(at: i)
+        let pointer = CGEvent(source: nil)?.location ?? point  // mouse-follows-focus may have moved it
+        broughtUnder = wins.indices.map { restFrame(wins, $0) }.first { $0.contains(pointer) }
+    } else if let win = listWindows(.optionOnScreenOnly).first(where: { $0.win.id == id })?.win {
+        focus(win)
+    }
+}
+
+// mouse-follows-focus: the pointer goes to the middle of column i's window as it comes to rest. Left alone only on that
+// window now and where the window ends up: a strip that scrolls the window under the pointer doesn't count, or from the
+// keyboard a centered strip would never move it. Not while a button is down, that is a click or a drag going on.
+// No mouse event comes of the warp, so focus-follows-mouse stays quiet.
+func warpMouse(to wins: [Win], _ i: Int) {
+    guard mouseFollowsFocus, !overviewOpen, NSEvent.pressedMouseButtons == 0, let pointer = CGEvent(source: nil)?.location else { return }
+    let rest = restFrame(wins, i)
+    if windowAt(pointer) != wins[i].id || !rest.contains(pointer) { CGWarpMouseCursorPosition(CGPoint(x: rest.midX, y: rest.midY)) }
 }

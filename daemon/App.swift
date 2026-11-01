@@ -48,6 +48,7 @@ func statusIcon() -> NSImage? {
 func reloadSettings() {
     configFile = readConfig()
     tapConfigChanged()
+    watchPointer()
     settingsModel.refresh()
     showConfigProblems()
     applyLaunchAtLogin()

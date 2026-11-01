@@ -10,7 +10,7 @@ let numberKeys = ["gap"] + paddingKeys + ["resize-step", "inactive-opacity", "ov
                   "swipe-speed", "space-swipe-distance", "overview-swipe-distance"]
 let numberDefaults: [String: Double] = ["resize-step": 10, "inactive-opacity": 1, "overview-scale": 0.4,
                                          "swipe-speed": 1.3, "space-swipe-distance": 50, "overview-swipe-distance": 30]  // the rest: 0
-let flagKeys = ["padding-per-monitor", "launch-at-login", "always-center-single-column", "wrap-around", "analytics", "leave-system-gestures"]
+let flagKeys = ["padding-per-monitor", "launch-at-login", "always-center-single-column", "wrap-around", "focus-follows-mouse", "mouse-follows-focus", "analytics", "leave-system-gestures"]
 let flagsOn = ["analytics"]
 let choiceKeys = ["overview-background": ["none", "blur"], "center-focused-column": ["always", "never", "on-overflow"],
                   "gesture-strip": swipeChoices(["sideways"], fingers: 3), "gesture-spaces": swipeChoices(["vertical"], fingers: 3),
@@ -65,6 +65,8 @@ center-focused-column = "always"
 resize-step = 10          # how much grow-width and shrink-width change a window, in % of the screen width
 
 # wrap-around = true          # focus past the last window or Space goes round to the first one
+# focus-follows-mouse = true  # the window the pointer stops on takes focus, and the strip scrolls to it
+# mouse-follows-focus = true  # the pointer goes to the window that takes focus, unless it is on it already
 # inactive-opacity = 0.85     # windows without focus fade to this opacity, 0.1 to 1. Default 1: off
 # overview-background = "blur"  # the wallpaper, blurred, behind the overview's Spaces. Default "none": black
 # overview-scale = 0.5        # size of the Spaces in the overview, 0.2 to 0.8. Default 0.4
@@ -234,6 +236,8 @@ var resizeStep: CGFloat { number("resize-step") }  // percent of the usable widt
 var centerFocusedColumn: String { config["center-focused-column"] ?? "always" }  // see Scroll.swift
 var alwaysCenterSingleColumn: Bool { config["always-center-single-column"] == "true" }
 var wrapAround: Bool { config["wrap-around"] == "true" }
+var focusFollowsMouse: Bool { config["focus-follows-mouse"] == "true" }
+var mouseFollowsFocus: Bool { config["mouse-follows-focus"] == "true" }
 var inactiveOpacity: Float { Float(min(max(number("inactive-opacity"), 0.1), 1)) }  // 1: off
 var overviewScale: CGFloat { min(max(number("overview-scale"), 0.2), 0.8) }
 var analyticsOn: Bool { config["analytics"] != "false" }

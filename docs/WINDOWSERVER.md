@@ -182,6 +182,12 @@ nori adds and removes real Desktops through Dock's own code, `find_desktop_code`
 - Every key waits for each session tap it passes, so a tap's thread sets the system's typing latency. With both taps off the main thread (`daemon/Tap.swift`), a stalled main thread doesn't show. Measured with a probe: 200 F19 presses, 10 ms apart, from `CGEvent.post(tap: .cghidEventTap)` to a listen-only tap at `tailAppendEventTap`. Idle: p50 4.7 ms, p99 28 ms, max 45 ms. With the main thread stalled: p50 4.4 ms, p99 30 ms, max 38 ms. The stall: an app with an untitled window under `kill -STOP`, and `nori query windows --current` in a loop, which asks Accessibility for that title. Eleven such requests took 4.6 s in all, median 0.29 s, while the keys were posted. The old tap on the main thread wasn't measured this way.
 - Posted that way F15 (keycode 113) never reached the keyDown tap, F19 (80) always did. Likely F15 is brightness to macOS (inferred, not traced). Mind it when picking a harmless key to post.
 
+## What is under the pointer (macOS 27)
+
+`focus-follows-mouse` needs the window a click would reach, and CGWindowList can't say. Front to back it starts with Dock's window at layer 20, which covers the whole screen at alpha 1 above every app's, and with the cursor itself, a 28×40 window of Window Server at layer 2147483630. `SLSFindWindowAndOwner(cid, 0, 1, 0, &point, &inside, &wid, &owner)` is WindowServer's own hit test: over an app it gave that app's window, past Dock's, at the top of the screen the menu bar's `statusbar` window at layer 25, and over the Dock at the bottom edge Dock's window. Not seen yet: what it gives over an open menu. A status item's menu began tracking (`com.apple.HIToolbox.beginMenuTrackingNotification` came) with no new window at any layer in the on-screen list 0.4 s later.
+
+`NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved)` got a move posted at the HID tap, and nothing from `CGWarpMouseCursorPosition`. So `mouse-follows-focus` warping the pointer doesn't set off `focus-follows-mouse`.
+
 ## Ideas, not done yet
 
 - Our own effect for switching real Spaces: keep Dock's switch itself (its state: Mission Control, the menu bar), and replace the transform and shape of both Spaces in the hook; for a cube, zero out the Space transform and rotate the windows of both Spaces through `SetWindowTransform3D`, taking progress from Dock's `tx`.

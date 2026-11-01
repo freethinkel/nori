@@ -291,6 +291,13 @@ func focusColumn(at index: Int, offset: CGFloat? = nil) {
     layout(immediate: false)
     focus(wins[i])
     readTitle(wins[i])
+    warpMouse(to: wins, i)
+}
+
+// Where column i's window comes to rest.
+func restFrame(_ wins: [Win], _ i: Int) -> CGRect {
+    let area = stripArea(), size = wins[i].frame.size
+    return CGRect(origin: CGPoint(x: area.midX + scroll(wins).centers[i] - stripOffset - size.width / 2, y: area.minY), size: size)
 }
 
 // Keyboard: one column left or right from the column the strip is closest to; past either end with wrap-around,

@@ -200,6 +200,8 @@ leave-system-gestures = false  # keep Mission Control and App Exposé, from the 
 center-focused-column = "always"     # "always" (default), "never" or "on-overflow"
 always-center-single-column = false  # a lone window in the center whatever the above says, default false
 wrap-around = false       # focus past the last column or Space goes round to the first, default false
+focus-follows-mouse = false  # the window the pointer stops on takes focus, default false
+mouse-follows-focus = false  # the pointer goes to the window that takes focus, default false
 inactive-opacity = 1.0    # unfocused windows of the strip at this opacity, 0.1 to 1, default 1 (off)
 mouse-modifier = "option" # held for a drag that moves (left button) or resizes (right button) a window
 
@@ -242,6 +244,8 @@ A gesture is 3, 4 or 5 fingers and a way, or `"none"`. Each action takes only th
 The width presets count the gap in, so two windows at 1/2, or one at 1/3 and one at 2/3, fill the space between the paddings exactly. An app with a minimum or maximum width gets as close as it allows.
 
 `wrap-around` applies to `focus-left`, `focus-right`, `focus-space-up`, `focus-space-down`, `move-to-space-up` and `move-to-space-down`. `inactive-opacity` sets the alpha of the strip's unfocused windows in WindowServer, so the focused one stands out; floating windows and other apps' alpha are left alone. `mouse-modifier` is one or more modifiers joined by `+`, like `"ctrl+option"`.
+
+`focus-follows-mouse` gives focus to the window the pointer stops on, and the strip scrolls for it as for any focus, so with `center-focused-column = "always"` it comes to the center. The window that brings under the pointer takes focus only once the pointer has left it, or a centered strip would walk on with the slightest move. A floating window takes focus the same way. `mouse-follows-focus` moves the pointer to the middle of the window that takes focus, unless it is on that window already, from the keyboard, Cmd+Tab, a new window or a Space switch alike. A window the strip scrolls under the pointer doesn't count as being on it.
 
 `launch-at-login` adds Nori.app to System Settings → General → Login Items, or removes it, at launch and on "Reload Config". It only works for the app, not for `build/nori` in a terminal. The login item remembers where the bundle is, so move the app to /Applications first.
 

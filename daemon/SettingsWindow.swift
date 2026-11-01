@@ -74,7 +74,7 @@ let sidebar: [[Page]] = [[.general], [.layout, .focus], [.hotkeys, .gestures, .r
 let pageCards: [Page: [(title: String, keys: [String])]] = [
     .layout: [("Columns", ["gap", "resize-step"]), ("Screen padding", ["padding-per-monitor"] + paddingKeys)],
     .focus: [("Centering", ["center-focused-column", "always-center-single-column"]), ("Unfocused windows", ["inactive-opacity"]),
-             ("Navigation", ["wrap-around"])],
+             ("Navigation", ["wrap-around"]), ("Mouse", ["focus-follows-mouse", "mouse-follows-focus"])],
     .hotkeys: [("Mouse", ["mouse-modifier"]),
                ("Columns", ["focus-left", "focus-right", "focus-first", "focus-last", "center-column", "move-left", "move-right"]),
                ("Width", ["grow-width", "shrink-width", "cycle-width-forward", "cycle-width-backward", "toggle-full-width"]),
@@ -108,6 +108,8 @@ let descriptions: [String: (title: String, help: String)] = [
     "always-center-single-column": ("Center a single window", "A lone window sits in the center in any mode"),
     "inactive-opacity": ("Opacity", "1 turns it off"),
     "wrap-around": ("Wrap around", "Focus past the last column or Space goes round to the first"),
+    "focus-follows-mouse": ("Focus follows mouse", "The window the pointer stops on takes focus, and the strip scrolls to it"),
+    "mouse-follows-focus": ("Mouse follows focus", "The pointer goes to the window that takes focus, unless it is on it already"),
     "launch-at-login": ("Launch at login", "Adds Nori.app to Login Items. Move the app to Applications first"),
     "gesture-strip": ("Move the strip", "It settles on a column on lift"),
     "gesture-spaces": ("Switch Spaces", "The next one follows the fingers"),

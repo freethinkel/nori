@@ -128,6 +128,7 @@ let quitSources = [SIGINT, SIGTERM].map { sig in
 startControl()
 startMultitouch()
 startMouseDrag()
+watchPointer()
 startAnalytics()
 loadStrips()
 layoutAll()
@@ -141,6 +142,8 @@ func poll() {
     let before = columns
     let sync = syncColumns()
     defer { lastFront = sync.front }
+    // Focus that came without a focusColumn: the focused window of the Space just switched to, an app brought back.
+    if sync.front != lastFront, let index = sync.wins.firstIndex(where: { $0.id == sync.front }), index == focusedIndex() { warpMouse(to: sync.wins, index) }
     if let index = sync.inserted {
         focusColumn(at: index)
     } else if sync.front != lastFront, let front = sync.front,
