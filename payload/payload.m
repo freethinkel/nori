@@ -29,6 +29,7 @@
 //        "N display"           a new Desktop on that display, see find_desktop_code
 //        "C sid"               removes that Desktop; its windows go to the display's first one
 //        "V number"            switches to that Desktop, counted across displays: what "Switch to Desktop N" runs
+//        "H wid width r g b a" a border around that window, see border_t; width 0 removes it
 // Also turns the native Spaces slide vertical, see hook_space_transform.
 // Animation runs here on a user-interactive queue, so the daemon sends one line per window, not one per frame.
 // Frames come from CVDisplayLink (vsync), and each frame moves all windows in one SLS transaction.
@@ -36,6 +37,7 @@
 // ponytail: fixed table of 128 moving windows; display link runs while idle (empty tick), stop it if Dock CPU matters.
 
 #include <Foundation/Foundation.h>
+#import <QuartzCore/QuartzCore.h>
 #include <CoreGraphics/CoreGraphics.h>
 #include <CoreVideo/CoreVideo.h>
 #include <dispatch/dispatch.h>
@@ -45,6 +47,7 @@
 #include <ptrauth.h>
 #include <crt_externs.h>
 #include <objc/message.h>
+#include <objc/runtime.h>
 #include <mach-o/getsect.h>
 #include <math.h>
 #include <pthread.h>
@@ -82,6 +85,13 @@ extern uint64_t SLSManagedDisplayGetCurrentSpace(int cid, CFStringRef display);
 extern int SLSSpaceGetType(int cid, uint64_t sid);  // 0 desktop, 4 fullscreen (an app's own Space)
 extern CFArrayRef SLSCopySpacesForWindows(int cid, int mask, CFArrayRef wids);
 extern CGError SLSGetWindowTags(int cid, uint32_t wid, uint64_t *tags, int bits);
+extern CGError SLSGetWindowLevel(int cid, uint32_t wid, int *level);
+extern CGError SLSSetWindowLevel(int cid, uint32_t wid, int level);
+extern CGError SLSTransactionSetWindowShape(CFTypeRef transaction, uint32_t wid, CFTypeRef region);
+extern CFTypeRef SLSWindowQueryWindows(int cid, CFArrayRef wids, int options);
+extern CFTypeRef SLSWindowQueryResultCopyWindows(CFTypeRef query);
+extern int SLSWindowIteratorGetCount(CFTypeRef iterator);
+extern CFArrayRef SLSWindowIteratorGetCornerRadii(CFTypeRef iterator, long index);
 
 #define MAX_ANIMS 128
 
@@ -299,6 +309,212 @@ static void fade_drop(uint32_t wid)
 {
     for (int i = 0; i < fade_count; i++) {
         if (fades[i].wid == wid) { fades[i] = fades[--fade_count]; return; }
+    }
+}
+
+// Borders ("H"): a stroke around a window, in a window of Dock's, a WALayerKitWindow. That is how Dock gets a transparent
+// window out of layers; its init makes it click-through too (docs/WINDOWSERVER.md, "A border drawn by Dock"). It stands on
+// the target's one Space, so a slide or the overview carries it along. tick moves it in the transaction that moves the
+// target, so it isn't a frame late; what the app does by itself shows in border_poll, a frame late at most.
+// ponytail: made and released for each window that gains or loses one, keep a few around if a focus change ever shows it.
+// A window of Dock's stays above every window of its level, nothing orders it (docs), so a border stands one level below
+// its target: the stroke lies outside the target, in the strip's gap, and whatever is over there covers it.
+// ponytail: a window the target overlaps covers the stroke too; a gap narrower than the stroke hides that side of it.
+#define BORDER_GAP 1.5  // between the stroke and the window, as Mission Control's outline
+#define BORDER_TAGS 0x200  // as ShowFrontWindowsController's highlight window
+typedef struct {
+    uint32_t target, wid;  // wid 0: being made on Dock's main queue
+    id window;
+    CALayer *ring;
+    CGRect frame;          // the target's, as drawn
+    double width;
+    uint64_t sid;
+    int age;               // frames since its Space was checked
+    bool moved;            // this frame's transaction moves it: not for border_poll, whose read comes before the commit
+} border_t;
+static border_t borders[MAX_ANIMS];
+static int border_count;
+
+static border_t *border_for(uint32_t target)
+{
+    for (int i = 0; i < border_count; i++) if (borders[i].target == target) return &borders[i];
+    return NULL;
+}
+
+// WindowServer's radius of a window. Its getter gives one value four times over.
+static double corner_radius(int cid, uint32_t wid)
+{
+    double radius = 0;
+    CFNumberRef number = CFNumberCreate(NULL, kCFNumberSInt32Type, &wid);
+    CFArrayRef wids = CFArrayCreate(NULL, (const void **) &number, 1, &kCFTypeArrayCallBacks);
+    CFTypeRef query = SLSWindowQueryWindows(cid, wids, 0);
+    CFTypeRef iterator = query ? SLSWindowQueryResultCopyWindows(query) : NULL;
+    if (iterator && SLSWindowIteratorGetCount(iterator) > 0) {
+        CFArrayRef radii = SLSWindowIteratorGetCornerRadii(iterator, 0);
+        if (radii && CFArrayGetCount(radii) > 0) CFNumberGetValue(CFArrayGetValueAtIndex(radii, 0), kCFNumberDoubleType, &radius);
+        if (radii) CFRelease(radii);
+    }
+    if (iterator) CFRelease(iterator);
+    if (query) CFRelease(query);
+    CFRelease(wids);
+    CFRelease(number);
+    return radius;
+}
+
+// The border around a frame, into a transaction, inside a CATransaction. It keeps the target's shift (place), so it is
+// drawn where the target is and really is where the target really is. Only a new size touches the shape and the layer.
+static void border_to(CFTypeRef transaction, border_t *b, CGRect frame)
+{
+    if (!b->wid || CGRectEqualToRect(frame, b->frame)) return;
+    double outset = b->width + BORDER_GAP, shift = shift_of(b->target);
+    CGRect outer = CGRectInset(frame, -outset, -outset);
+    if (!CGSizeEqualToSize(frame.size, b->frame.size)) {
+        CFTypeRef region = CGRegionCreateWithRect(CGRectMake(0, 0, outer.size.width, outer.size.height));
+        SLSTransactionSetWindowShape(transaction, b->wid, region);
+        CFRelease(region);
+        b->ring.frame = CGRectMake(0, 0, outer.size.width, outer.size.height);
+    }
+    SLSTransactionMoveWindowWithGroup(transaction, b->wid, CGPointMake(outer.origin.x - shift, outer.origin.y));
+    if (shift != shift_of(b->wid)) {
+        double m[16] = { 1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  -shift, 0, 0, 1 };
+        SLSTransactionSetWindowTransform3D(transaction, b->wid, m);
+        shift_set(b->wid, shift);
+    }
+    b->frame = frame;
+    b->moved = true;
+}
+
+static void border_begin(void)
+{
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+}
+
+static void border_end(void)
+{
+    [CATransaction commit];
+    [CATransaction flush];
+}
+
+static void border_style(border_t *b, double width, CGColorRef color)
+{
+    b->ring.borderColor = color;
+    b->ring.borderWidth = width;
+    b->ring.cornerRadius = corner_radius(SLSMainConnectionID(), b->target) + width + BORDER_GAP;
+}
+
+// On the target's Space. The target may leave for another Space at any time.
+static void border_join_space(border_t *b)
+{
+    int cid = SLSMainConnectionID(), level = 0;
+    CFNumberRef number = CFNumberCreate(NULL, kCFNumberSInt32Type, &b->target);
+    CFArrayRef wids = CFArrayCreate(NULL, (const void **) &number, 1, &kCFTypeArrayCallBacks);
+    CFArrayRef spaces = SLSCopySpacesForWindows(cid, 7, wids);
+    uint64_t sid = 0;
+    if (spaces && CFArrayGetCount(spaces) > 0) CFNumberGetValue(CFArrayGetValueAtIndex(spaces, 0), kCFNumberSInt64Type, &sid);
+    if (spaces) CFRelease(spaces);
+    CFRelease(wids);
+    CFRelease(number);
+    if (!sid || sid == b->sid) return;
+    b->sid = sid;
+    number = CFNumberCreate(NULL, kCFNumberSInt32Type, &b->wid);
+    wids = CFArrayCreate(NULL, (const void **) &number, 1, &kCFTypeArrayCallBacks);
+    SLSMoveWindowsToManagedSpace(cid, wids, sid);
+    CFRelease(wids);
+    CFRelease(number);
+    SLSGetWindowLevel(cid, b->target, &level);
+    SLSSetWindowLevel(cid, b->wid, level - 1);
+    SLSOrderWindow(cid, b->wid, 1, 0);
+}
+
+static void border_drop(int i)
+{
+    border_t b = borders[i];
+    borders[i] = borders[--border_count];
+    if (!b.wid) return;  // border_add sees it is gone
+    SLSOrderWindow(SLSMainConnectionID(), b.wid, 0, 0);
+    shift_set(b.wid, 0);
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [b.ring removeFromSuperlayer];
+        [b.ring release];
+        [b.window release];
+        [CATransaction flush];
+    });
+}
+
+// Dock's windows are made on its main queue. The entry waits on the payload's queue with no wid until then.
+static void border_add(uint32_t target, double width, CGColorRef color)
+{
+    Class class = objc_getClass("WALayerKitWindow");
+    SEL init = sel_registerName("initWithFrame:connection:display:scaleFactor:tags:level:");
+    CGRect frame;
+    if (!class || !class_getInstanceMethod(class, init)) { NSLog(@"nori: no WALayerKitWindow, no borders"); return; }
+    if (border_count == MAX_ANIMS || SLSGetWindowBounds(SLSMainConnectionID(), target, &frame) != kCGErrorSuccess) return;
+    borders[border_count++] = (border_t){ .target = target, .width = width, .frame = CGRectNull };
+    CGColorRetain(color);
+    dispatch_async(dispatch_get_main_queue(), ^{
+        double outset = width + BORDER_GAP;
+        CGDirectDisplayID display = CGMainDisplayID();
+        uint32_t count = 0;
+        CGGetDisplaysWithRect(frame, 1, &display, &count);
+        CGDisplayModeRef mode = CGDisplayCopyDisplayMode(display);
+        float scale = mode ? (float) CGDisplayModeGetPixelWidth(mode) / (float) CGDisplayModeGetWidth(mode) : 2;
+        if (mode) CGDisplayModeRelease(mode);
+        id window = ((id (*)(id, SEL, CGRect, uint32_t, uint32_t, float, uint64_t, int)) objc_msgSend)(
+            ((id (*)(Class, SEL)) objc_msgSend)(class, sel_registerName("alloc")),
+            init, CGRectInset(frame, -outset, -outset), SLSMainConnectionID(), display, scale, BORDER_TAGS, 0);
+        CALayer *ring = [[CALayer alloc] init];
+        ring.cornerCurve = kCACornerCurveContinuous;
+        [((CALayer *(*)(id, SEL)) objc_msgSend)(window, sel_registerName("layer")) addSublayer:ring];
+        dispatch_async(queue, ^{
+            border_t *b = border_for(target);
+            if (!window || !b || b->wid) {
+                dispatch_async(dispatch_get_main_queue(), ^{ [ring release]; [window release]; });
+                CGColorRelease(color);
+                return;
+            }
+            b->window = window;
+            b->ring = ring;
+            b->wid = ((uint32_t (*)(id, SEL)) objc_msgSend)(window, sel_registerName("wid"));
+            b->frame = CGRectNull;
+            CFTypeRef transaction = SLSTransactionCreate(SLSMainConnectionID());
+            border_begin();
+            border_style(b, b->width, color);
+            CGRect now;
+            if (transaction && SLSGetWindowBounds(SLSMainConnectionID(), target, &now) == kCGErrorSuccess) {
+                now.origin.x += shift_of(target);
+                border_to(transaction, b, now);
+            }
+            if (transaction) { SLSTransactionCommit(transaction, 0); CFRelease(transaction); }
+            border_end();
+            border_join_space(b);
+            CGColorRelease(color);
+        });
+    });
+}
+
+// What moved without the payload moving it: the app, or the user. A window the payload is moving is done in tick.
+// ponytail: asks WindowServer once per border per frame; on a lot of windows, ask less often or take its window events.
+static void border_poll(CFTypeRef *transaction)
+{
+    int cid = SLSMainConnectionID();
+    for (int i = border_count - 1; i >= 0; i--) {
+        border_t *b = &borders[i];
+        bool moved = b->moved;
+        b->moved = false;
+        if (!b->wid || moved || anim_for(b->target, false) || resize_for(b->target)) continue;
+        CGRect frame;
+        if (SLSGetWindowBounds(cid, b->target, &frame) != kCGErrorSuccess) { border_drop(i); continue; }  // closed
+        frame.origin.x += shift_of(b->target);
+        if (!CGRectEqualToRect(frame, b->frame)) {
+            if (!*transaction) *transaction = SLSTransactionCreate(cid);
+            if (*transaction) border_to(*transaction, b, frame);
+            b->moved = false;
+        }
+        if (++b->age >= 30) {
+            b->age = 0;
+            border_join_space(b);
+        }
     }
 }
 
@@ -522,9 +738,12 @@ static void tick(double frame)
         SLSSetWindowAlpha(SLSMainConnectionID(), f.wid, f.cur);
     }
     fade_count = kept_fades;
-    if (!anim_count && !resize_count) return;
-    CFTypeRef transaction = SLSTransactionCreate(SLSMainConnectionID());
-    if (!transaction) return;
+    // A daemon's borders go with it: a new one sends its own.
+    if (daemon_pid && border_count && kill(daemon_pid, 0) != 0) while (border_count) border_drop(0);
+    if (!anim_count && !resize_count && !border_count) return;
+    CFTypeRef transaction = anim_count || resize_count ? SLSTransactionCreate(SLSMainConnectionID()) : NULL;
+    if (!transaction && (anim_count || resize_count)) return;
+    border_begin();
     int kept = 0;
     for (int i = 0; i < anim_count; i++) {
         anim_t a = anims[i];
@@ -537,6 +756,8 @@ static void tick(double frame)
             anims[kept++] = a;
         }
         place(transaction, a.wid, a.cur, a.lo, a.hi);
+        border_t *b = border_for(a.wid);
+        if (b) border_to(transaction, b, (CGRect){ a.cur, b->frame.size });
     }
     anim_count = kept;
     kept = 0;
@@ -567,18 +788,24 @@ static void tick(double frame)
         // Screen -> window matrix, origin at the window's top-left (docs/WINDOWSERVER.md): x scaled about the center.
         double m[16] = { 1 / s, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  r.real / 2 * (1 - 1 / s), 0, 0, 1 };
         SLSTransactionSetWindowTransform3D(transaction, r.wid, m);
+        border_t *border = border_for(r.wid);
+        if (border) border_to(transaction, border, CGRectMake(r.cx - r.drawn / 2, b.origin.y, r.drawn, b.size.height));
         if (!done) resizes[kept++] = r;
         if (!done && settled) start_resize_watch();
     }
     resize_count = kept;
-    SLSTransactionCommit(transaction, 0);
-    CFRelease(transaction);
+    border_poll(&transaction);
+    if (transaction) {
+        SLSTransactionCommit(transaction, 0);
+        CFRelease(transaction);
+    }
+    border_end();
 }
 
 static CVReturn on_frame(CVDisplayLinkRef link, const CVTimeStamp *now, const CVTimeStamp *out, CVOptionFlags in, CVOptionFlags *flags, void *ctx)
 {
     double frame = out->videoRefreshPeriod && out->videoTimeScale ? (double) out->videoRefreshPeriod / out->videoTimeScale : 1.0 / 60;
-    dispatch_sync(queue, ^{ tick(frame); });
+    dispatch_sync(queue, ^{ @autoreleasepool { tick(frame); } });
     return kCVReturnSuccess;
 }
 
@@ -729,8 +956,12 @@ static void handle_line(char *line)
             CFTypeRef transaction = SLSTransactionCreate(cid);
             if (!transaction) break;
             place(transaction, wid, p, lo, hi);
+            border_t *b = border_for(wid);
+            border_begin();
+            if (b) border_to(transaction, b, (CGRect){ p, b->frame.size });
             SLSTransactionCommit(transaction, 0);
             CFRelease(transaction);
+            border_end();
         }
         break;
     }
@@ -924,6 +1155,8 @@ static void handle_line(char *line)
         unsigned long long sid;
         if (sscanf(line + 1, "%u %llu", &wid, &sid) == 2) {
             anim_drop(wid);
+            border_t *b = border_for(wid);
+            if (b) b->age = 30;  // after the target, on the next frame
             CFNumberRef number = CFNumberCreate(NULL, kCFNumberSInt32Type, &wid);
             CFArrayRef list = CFArrayCreate(NULL, (const void **) &number, 1, &kCFTypeArrayCallBacks);
             SLSMoveWindowsToManagedSpace(cid, list, sid);
@@ -942,6 +1175,37 @@ static void handle_line(char *line)
             // the next frame: if the stretch has settled there, drop it and recenter now.
             finish_resize((int) (r - resizes), cid, false);
         }
+        break;
+    }
+    case 'H': {
+        double width = 0, r = 0, g = 0, b = 0, a = 1;
+        if (sscanf(line + 1, "%u %lf %lf %lf %lf %lf", &wid, &width, &r, &g, &b, &a) < 2) break;
+        border_t *border = border_for(wid);
+        if (width <= 0) {
+            if (border) border_drop((int) (border - borders));
+            break;
+        }
+        CGColorRef color = CGColorCreateSRGB(r, g, b, a);
+        if (!border) border_add(wid, width, color);
+        else if (border->wid) {
+            bool resized = width != border->width;
+            border->width = width;
+            border_begin();
+            border_style(border, width, color);
+            if (resized) {
+                // Through border_to's size check, with the new outset.
+                CGRect frame = border->frame;
+                border->frame = CGRectNull;
+                CFTypeRef transaction = SLSTransactionCreate(cid);
+                if (transaction) {
+                    border_to(transaction, border, frame);
+                    SLSTransactionCommit(transaction, 0);
+                    CFRelease(transaction);
+                }
+            }
+            border_end();
+        }
+        CGColorRelease(color);
         break;
     }
     case 'D': {

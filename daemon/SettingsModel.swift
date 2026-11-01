@@ -68,7 +68,7 @@ import SwiftUI
     func padding(_ key: String, on name: String) -> Double { monitors[name]?[key] ?? number(key) }
     func number(_ key: String) -> Double { values[key].flatMap(Double.init) ?? numberDefaults[key] ?? 0 }
     func flag(_ key: String) -> Bool { values[key].map { $0 == "true" } ?? flagsOn.contains(key) }
-    func text(_ key: String) -> String { values[key] ?? bindingDefaults[key] ?? choiceKeys[key]?.first ?? "" }
+    func text(_ key: String) -> String { values[key] ?? bindingDefaults[key] ?? choiceKeys[key]?.first ?? colorDefaults[key] ?? "" }
 
     // Other actions on the same keys, and a system "Switch to Desktop N" shortcut, which the event tap serves first.
     func conflicts(_ action: String) -> [String] {

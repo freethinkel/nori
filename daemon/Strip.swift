@@ -220,6 +220,7 @@ func layout(immediate: Bool) {
     })
     guard !immediate else { return }
     dimUnfocused(wins)
+    drawBorders(wins)
     saveStrips()
     publishSoon()
     var resized = false
@@ -279,6 +280,35 @@ func dimUnfocused(_ wins: [Win]) {
         dimmed[id] = nil
     }
     if !fades.isEmpty { send(fades) }
+}
+
+// border: the payload draws a border around the strip's focused window, and around the others with border-inactive
+// ("H"). Only what changed goes out. A window of another strip keeps its own, so it slides in as it was; one that left
+// the strip loses it.
+// ponytail: the strip's windows only, like inactive-opacity. A focused floating window would need AX on every layout.
+var bordersSent: [UInt32: String] = [:]  // window → its "H" line
+
+func drawBorders(_ wins: [Win]) {
+    let focused = wins.indices.contains(focusedIndex()) ? wins[focusedIndex()].id : nil
+    let here = Set(wins.map(\.id))
+    let elsewhere = Set(savedStrips.values.flatMap(\.columns)).subtracting(here)
+    var lines: [String] = []
+    for win in wins {
+        let key = win.id == focused ? "border-color" : "border-inactive-color"
+        let wanted = borderWidth > 0 && (win.id == focused || borderInactive)
+        let line = "H \(win.id) \(borderWidth) " + color(key).map { String($0) }.joined(separator: " ")
+        if wanted, bordersSent[win.id] != line {
+            lines.append(line)
+            bordersSent[win.id] = line
+        } else if !wanted, bordersSent.removeValue(forKey: win.id) != nil {
+            lines.append("H \(win.id) 0")
+        }
+    }
+    for id in bordersSent.keys where !here.contains(id) && (!elsewhere.contains(id) || borderWidth == 0) {
+        lines.append("H \(id) 0")
+        bordersSent[id] = nil
+    }
+    if !lines.isEmpty { send(lines) }
 }
 
 // offset: where the strip comes to rest, if not where center-focused-column puts column `index` (a gesture's snap).
@@ -348,7 +378,8 @@ func restoreWindows() {
         // A frame saved mid-scroll can lie past every display, and macOS would hand the window to the main one.
         if let space = open[id] { back[id] = displays.count > 1 ? keptFrame(frame, on: display(of: space).frame) : frame }
     }
-    send(back.map { "M \($0.key) \($0.value.minX) \($0.value.minY)" } + dimmed.map { "A \($0.key) \($0.value.own)" })
+    send(back.map { "M \($0.key) \($0.value.minX) \($0.value.minY)" } + dimmed.map { "A \($0.key) \($0.value.own)" }
+        + bordersSent.keys.map { "H \($0) 0" })
     for (id, frame) in back {
         if let win = lastSeen[id] { setFrame(win, frame) }
     }

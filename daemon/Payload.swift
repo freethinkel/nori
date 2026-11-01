@@ -60,6 +60,7 @@ func payloadBack() {
     payloadLost = false
     payloadMisses = 0
     clearProblem("payload")
+    bordersSent = [:]  // they went with the old payload
     send(["P \(getpid())"])  // vertical Spaces from now on, not from the next repeat
     layout(immediate: false)
 }

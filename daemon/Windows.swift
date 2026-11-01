@@ -47,6 +47,7 @@ func listWindows(_ options: CGWindowListOption) -> [Listed] {
               (info[kCGWindowAlpha as String] as? Double ?? 1) > 0,
               let id = info[kCGWindowNumber as String] as? UInt32,
               let pid = info[kCGWindowOwnerPID as String] as? pid_t, pid != getpid(),  // the Settings window
+              info[kCGWindowOwnerName as String] as? String != "Dock",  // the payload's borders are Dock's windows, at the target's level
               let bounds = info[kCGWindowBounds as String] as? [String: CGFloat],
               let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary),
               frame.width >= 50, frame.height >= 50,

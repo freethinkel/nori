@@ -20,10 +20,14 @@ $(BUILD)/nori: $(wildcard daemon/*.swift) | $(BUILD)
 	swiftc -O $^ -o $@.tmp && mv -f $@.tmp $@
 
 $(BUILD)/payload.dylib: payload/payload.m | $(BUILD)
-	clang -arch arm64e -O2 -dynamiclib -framework Foundation -framework CoreGraphics -framework CoreVideo $(SKYLIGHT) $< -o $@.tmp && mv -f $@.tmp $@
+	clang -arch arm64e -O2 -dynamiclib -framework Foundation -framework CoreGraphics -framework CoreVideo -framework QuartzCore $(SKYLIGHT) $< -o $@.tmp && mv -f $@.tmp $@
 
 $(BUILD)/loader: loader/loader.m | $(BUILD)
 	clang -arch arm64e -O2 -framework Cocoa $< -o $@.tmp && mv -f $@.tmp $@
+
+# POC, see probe/border.m. A new name each build: dlopen of a path already loaded returns the old image.
+border-probe: | $(BUILD)
+	@out=$(abspath $(BUILD))/border-$$(date +%s).dylib; clang -arch arm64e -O2 -dynamiclib -framework Foundation -framework CoreGraphics -framework QuartzCore $(SKYLIGHT) probe/border.m -o $$out && echo $$out
 
 $(BUILD):
 	mkdir -p $@
@@ -73,4 +77,4 @@ test: | $(BUILD)
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all run app dmg icon version test clean
+.PHONY: all run app dmg icon version test clean border-probe
