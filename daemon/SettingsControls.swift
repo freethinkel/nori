@@ -133,6 +133,8 @@ struct SettingRow: View {
             }
         } else if modifierKeys.contains(key) {
             ModifierRow(key: key)
+        } else if colorDefaults[key] != nil {
+            ColorRow(key: key)
         } else if bindingDefaults[key] != nil {
             let conflicts = model.conflicts(key)
             Row(title: title, help: conflicts.isEmpty ? help : "Same keys as \(conflicts.joined(separator: ", "))", helpColor: conflicts.isEmpty ? .secondary : .red) {
@@ -142,12 +144,35 @@ struct SettingRow: View {
     }
 }
 
+// A color setting. Writes "#RRGGBB", with alpha only when it isn't opaque.
+struct ColorRow: View {
+    let key: String
+
+    var body: some View {
+        let model = settingsModel
+        let (title, help) = describe(key)
+        Row(title: title, help: help) {
+            ColorPicker(title, selection: Binding(get: {
+                let parts = parseColor(model.text(key)) ?? [0, 0, 0, 1]
+                return Color(.sRGB, red: parts[0], green: parts[1], blue: parts[2], opacity: parts[3])
+            }, set: { model.set(key, to: .string(colorText(NSColor($0)))) })).labelsHidden()
+        }
+    }
+}
+
+func colorText(_ color: NSColor) -> String {
+    let c = color.usingColorSpace(.sRGB) ?? .black
+    let parts = [c.redComponent, c.greenComponent, c.blueComponent, c.alphaComponent].map { Int(($0 * 255).rounded()) }
+    return "#" + parts.dropLast(parts[3] == 255 ? 1 : 0).map { String(format: "%02X", $0) }.joined()
+}
+
 // Slider span, allowed values and step per number; the rest are points (padding). The field and stepper go past the
 // slider's end, up to the limit.
 let numberRanges: [String: (slider: ClosedRange<Double>, limits: ClosedRange<Double>, step: Double)] = [
     "gap": (0...64, 0...500, 1),
     "resize-step": (1...50, 1...100, 1),
     "inactive-opacity": (0.1...1, 0.1...1, 0.05),
+    "border-width": (1...16, 1...100, 1),
     "overview-scale": (0.2...0.8, 0.2...0.8, 0.05),
     "swipe-speed": (0.5...3, 0.25...5, 0.1),
     "space-swipe-distance": (20...100, 10...100, 5),

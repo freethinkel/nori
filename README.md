@@ -203,6 +203,11 @@ wrap-around = false       # focus past the last column or Space goes round to th
 focus-follows-mouse = false  # the window the pointer stops on takes focus, default false
 mouse-follows-focus = false  # the pointer goes to the window that takes focus, default false
 inactive-opacity = 1.0    # unfocused windows of the strip at this opacity, 0.1 to 1, default 1 (off)
+border = false            # a border around the strip's focused window, default false
+border-width = 4          # its width, in points, default 4
+border-color = "#3083FB"  # its color, "#RRGGBB" or "#RRGGBBAA"
+border-inactive = false   # a border around the strip's other windows too, default false
+border-inactive-color = "#808080"  # theirs
 mouse-modifier = "option" # held for a drag that moves (left button) or resizes (right button) a window
 
 [bindings]

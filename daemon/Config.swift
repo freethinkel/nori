@@ -6,16 +6,17 @@ import Cocoa
 // Top level: numbers (missing: numberDefaults, else 0), flags (missing: false, or true for flagsOn) and choices (missing: the first). [bindings]: key bindings (missing: the default below).
 // [[rule]]: app rules, see Rules.swift. [[monitor]]: one display's padding. Unknown keys and bad values are reported and skipped.
 let paddingKeys = ["padding-top", "padding-bottom", "padding-left", "padding-right"]
-let numberKeys = ["gap"] + paddingKeys + ["resize-step", "inactive-opacity", "overview-scale",
+let numberKeys = ["gap"] + paddingKeys + ["resize-step", "inactive-opacity", "border-width", "overview-scale",
                   "swipe-speed", "space-swipe-distance", "overview-swipe-distance"]
-let numberDefaults: [String: Double] = ["resize-step": 10, "inactive-opacity": 1, "overview-scale": 0.4,
+let numberDefaults: [String: Double] = ["resize-step": 10, "inactive-opacity": 1, "border-width": 4, "overview-scale": 0.4,
                                          "swipe-speed": 1.3, "space-swipe-distance": 50, "overview-swipe-distance": 30]  // the rest: 0
-let flagKeys = ["padding-per-monitor", "launch-at-login", "always-center-single-column", "wrap-around", "focus-follows-mouse", "mouse-follows-focus", "analytics", "leave-system-gestures"]
+let flagKeys = ["padding-per-monitor", "launch-at-login", "always-center-single-column", "wrap-around", "focus-follows-mouse", "mouse-follows-focus", "border", "border-inactive", "analytics", "leave-system-gestures"]
 let flagsOn = ["analytics"]
 let choiceKeys = ["overview-background": ["none", "blur"], "center-focused-column": ["always", "never", "on-overflow"],
                   "gesture-strip": swipeChoices(["sideways"], fingers: 3), "gesture-spaces": swipeChoices(["vertical"], fingers: 3),
                   "gesture-overview": swipeChoices(["vertical", "pinch"], fingers: 4)]
 let modifierKeys = ["mouse-modifier"]  // modifiers joined by "+", at least one
+let colorDefaults = ["border-color": "#3083FB", "border-inactive-color": "#808080"]  // "#RRGGBB", or "#RRGGBBAA" with alpha
 // The ways the display actions go, niri's. Which display that is: `neighbour` in Displays.swift.
 let monitorWays = ["left", "right", "up", "down", "next", "previous"]
 // Every action has a binding; "none" unbinds one. The actions themselves are in Actions.swift. The display actions have
@@ -68,6 +69,11 @@ resize-step = 10          # how much grow-width and shrink-width change a window
 # focus-follows-mouse = true  # the window the pointer stops on takes focus, and the strip scrolls to it
 # mouse-follows-focus = true  # the pointer goes to the window that takes focus, unless it is on it already
 # inactive-opacity = 0.85     # windows without focus fade to this opacity, 0.1 to 1. Default 1: off
+# border = true               # a border around the strip's focused window
+# border-width = 4            # its width, in points
+# border-color = "#3083FB"    # its color, "#RRGGBB" or "#RRGGBBAA"
+# border-inactive = true      # a border around the strip's other windows too
+# border-inactive-color = "#808080"  # theirs
 # overview-background = "blur"  # the wallpaper, blurred, behind the overview's Spaces. Default "none": black
 # overview-scale = 0.5        # size of the Spaces in the overview, 0.2 to 0.8. Default 0.4
 # mouse-modifier = "ctrl+option"  # held for a left drag (move a window) or a right drag (resize it). Default "option"
@@ -177,6 +183,7 @@ func parseConfig(_ text: String) -> (values: [String: String], rules: [Rule], mo
         case ("", .bool(let b)) where flagKeys.contains(entry.key): values[entry.key] = String(b)
         case ("", .string(let s)) where choiceKeys[entry.key]?.contains(s) == true: values[entry.key] = s
         case ("", .string(let s)) where modifierKeys.contains(entry.key) && modifiers(s) != nil: values[entry.key] = s
+        case ("", .string(let s)) where colorDefaults[entry.key] != nil && parseColor(s) != nil: values[entry.key] = s
         case ("bindings", .string(let s)) where bindingDefaults[entry.key] != nil && (s == "none" || chord(s) != nil): values[entry.key] = s
         case ("rule", _) where entry.index != nil: ruleTables[entry.index!, default: [:]][entry.key] = entry.value
         case ("monitor", .string) where entry.index != nil && entry.key == "name",
@@ -211,7 +218,7 @@ func readConfig() -> (values: [String: String], rules: [Rule], monitors: [String
     let parsed = parseConfig(text)
     for problem in parsed.problems { fputs("config.toml: \(problem)\n", stderr) }
     if !parsed.problems.isEmpty {
-        fputs("config.toml: top level: \((numberKeys + flagKeys + choiceKeys.keys + modifierKeys).joined(separator: ", ")); "
+        fputs("config.toml: top level: \((numberKeys + flagKeys + choiceKeys.keys + modifierKeys + colorDefaults.keys).joined(separator: ", ")); "
             + "[bindings]: \(bindingDefaults.keys.sorted().joined(separator: ", ")); [[rule]]: app, title, space, floating, ignore, width; "
             + "[[monitor]]: name, \(paddingKeys.joined(separator: ", "))\n", stderr)
     }
@@ -239,6 +246,17 @@ var wrapAround: Bool { config["wrap-around"] == "true" }
 var focusFollowsMouse: Bool { config["focus-follows-mouse"] == "true" }
 var mouseFollowsFocus: Bool { config["mouse-follows-focus"] == "true" }
 var inactiveOpacity: Float { Float(min(max(number("inactive-opacity"), 0.1), 1)) }  // 1: off
+var borderWidth: CGFloat { config["border"] == "true" ? min(max(number("border-width"), 1), 100) : 0 }  // 0: off
+var borderInactive: Bool { config["border-inactive"] == "true" }
+
+// "#RRGGBB" or "#RRGGBBAA", red, green, blue and alpha from 0 to 1.
+func parseColor(_ text: String) -> [Double]? {
+    guard text.hasPrefix("#"), text.count == 7 || text.count == 9, let value = UInt32(text.dropFirst(), radix: 16) else { return nil }
+    let full = text.count == 9 ? value : value << 8 | 0xff
+    return [24, 16, 8, 0].map { Double(full >> UInt32($0) & 0xff) / 255 }
+}
+
+func color(_ key: String) -> [Double] { parseColor(config[key] ?? colorDefaults[key]!)! }
 var overviewScale: CGFloat { min(max(number("overview-scale"), 0.2), 0.8) }
 var analyticsOn: Bool { config["analytics"] != "false" }
 var leaveSystemGestures: Bool { config["leave-system-gestures"] == "true" }

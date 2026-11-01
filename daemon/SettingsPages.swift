@@ -1,6 +1,12 @@
 import Cocoa
 import SwiftUI
 
+// Rows that mean nothing with a switch off, and those switches. A search still finds them.
+let rowSwitches = ["border-width": ["border"], "border-color": ["border"], "border-inactive": ["border"],
+                   "border-inactive-color": ["border", "border-inactive"]]
+
+func switchedOn(_ key: String) -> Bool { (rowSwitches[key] ?? []).allSatisfy(settingsModel.flag) }
+
 // The cards of one page; with a search, only the rows that match, or all when the page's name does.
 struct SettingsPage: View {
     let page: Page
@@ -13,7 +19,7 @@ struct SettingsPage: View {
             if page == .general && query.isEmpty && !settingsModel.problems.isEmpty { ConfigProblemsCard() }
             if page == .about && query.isEmpty { AboutCard() }
             ForEach(cards(page), id: \.title) { card in
-                let keys = card.keys.filter { matches($0, query) && !(perMonitor && paddingKeys.contains($0)) }
+                let keys = card.keys.filter { matches($0, query) && !(perMonitor && paddingKeys.contains($0)) && (!query.isEmpty || switchedOn($0)) }
                 if !keys.isEmpty {
                     Card(title: card.title) {
                         ForEach(keys, id: \.self) { SettingRow(key: $0) }

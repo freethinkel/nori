@@ -74,6 +74,7 @@ let sidebar: [[Page]] = [[.general], [.layout, .focus], [.hotkeys, .gestures, .r
 let pageCards: [Page: [(title: String, keys: [String])]] = [
     .layout: [("Columns", ["gap", "resize-step"]), ("Screen padding", ["padding-per-monitor"] + paddingKeys)],
     .focus: [("Centering", ["center-focused-column", "always-center-single-column"]), ("Unfocused windows", ["inactive-opacity"]),
+             ("Border", ["border", "border-width", "border-color", "border-inactive", "border-inactive-color"]),
              ("Navigation", ["wrap-around"]), ("Mouse", ["focus-follows-mouse", "mouse-follows-focus"])],
     .hotkeys: [("Mouse", ["mouse-modifier"]),
                ("Columns", ["focus-left", "focus-right", "focus-first", "focus-last", "center-column", "move-left", "move-right"]),
@@ -91,7 +92,7 @@ let pageCards: [Page: [(title: String, keys: [String])]] = [
 
 func cards(_ page: Page) -> [(title: String, keys: [String])] {
     let all = Set(pageCards.values.flatMap { $0.flatMap(\.keys) })
-    let other = (page == .hotkeys ? bindingDefaults.keys.sorted() : page == .general ? numberKeys + flagKeys + choiceKeys.keys.sorted() + modifierKeys : [])
+    let other = (page == .hotkeys ? bindingDefaults.keys.sorted() : page == .general ? numberKeys + flagKeys + choiceKeys.keys.sorted() + modifierKeys + colorDefaults.keys.sorted() : [])
         .filter { !all.contains($0) }
     return (pageCards[page] ?? []) + (other.isEmpty ? [] : [("Other", other)])
 }
@@ -107,6 +108,11 @@ let descriptions: [String: (title: String, help: String)] = [
     "center-focused-column": ("Center the focused window", ""),
     "always-center-single-column": ("Center a single window", "A lone window sits in the center in any mode"),
     "inactive-opacity": ("Opacity", "1 turns it off"),
+    "border": ("Border", "Around the focused window"),
+    "border-width": ("Width", ""),
+    "border-color": ("Color", ""),
+    "border-inactive": ("Unfocused windows too", ""),
+    "border-inactive-color": ("Color of unfocused windows", ""),
     "wrap-around": ("Wrap around", "Focus past the last column or Space goes round to the first"),
     "focus-follows-mouse": ("Focus follows mouse", "The window the pointer stops on takes focus, and the strip scrolls to it"),
     "mouse-follows-focus": ("Mouse follows focus", "The pointer goes to the window that takes focus, unless it is on it already"),
