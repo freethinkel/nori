@@ -1,7 +1,9 @@
 // Every ease in the payload (windows, fades, stretches, Space switches) is a critically damped spring, niri's default for
 // window movement (stiffness 800, damping ratio 1), solved exactly over each frame's dt: the same curve at 60 and 120 Hz,
 // no jump on the first frame, and a new goal mid-way keeps the speed. From rest, 90% of the way in 0.14 s, within half a
-// point of 1000 in 0.35 s. Stiffer is snappier: 1600 makes those 0.10 s and 0.25 s. Checked by test/payload.c.
+// point of 1000 in 0.35 s. Stiffer is snappier: 1600 makes those 0.10 s and 0.25 s. Space switches don't go stiffer:
+// at 1600 the slide ended before Dock's own switch (about 270 ms) and windows blinked at the handoff (docs/WINDOWSERVER.md).
+// Checked by test/payload.c.
 
 #include <math.h>
 
