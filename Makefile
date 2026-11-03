@@ -19,7 +19,7 @@ $(BUILD)/status.png: assets/status.png | $(BUILD)
 $(BUILD)/nori: $(wildcard daemon/*.swift) | $(BUILD)
 	swiftc -O $^ -o $@.tmp && mv -f $@.tmp $@
 
-$(BUILD)/payload.dylib: payload/payload.m payload/lines.h | $(BUILD)
+$(BUILD)/payload.dylib: payload/payload.m payload/lines.h payload/glide.h | $(BUILD)
 	clang -arch arm64e -O2 -dynamiclib -framework Foundation -framework CoreGraphics -framework CoreVideo -framework QuartzCore $(SKYLIGHT) $< -o $@.tmp && mv -f $@.tmp $@
 
 $(BUILD)/loader: loader/loader.m | $(BUILD)
@@ -73,7 +73,7 @@ version:  # app/Info.plist's version, which a push to main releases (.github/wor
 
 test: | $(BUILD)
 	swiftc daemon/TOML.swift daemon/Scroll.swift daemon/Displays.swift daemon/Rules.swift daemon/Config.swift daemon/Loader.swift daemon/Restore.swift test/main.swift -o $(BUILD)/test && $(BUILD)/test
-	clang test/lines.c -o $(BUILD)/test-lines && $(BUILD)/test-lines
+	clang test/payload.c -o $(BUILD)/test-payload && $(BUILD)/test-payload
 
 clean:
 	rm -rf $(BUILD)

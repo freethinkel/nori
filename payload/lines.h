@@ -1,6 +1,6 @@
 // Lines out of a stream socket (serve in payload.m): a read can end mid-line, and that line waits for its rest.
 // Hands each complete line of buf[0..len) to handle, skips empty ones, moves the unfinished rest to the front of buf
-// and returns its length. Checked by test/lines.c.
+// and returns its length. Checked by test/payload.c.
 
 #include <string.h>
 

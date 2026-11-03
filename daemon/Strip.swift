@@ -115,13 +115,14 @@ var originalFrames: [UInt32: CGRect] = [:]
 // Drops closed windows and inserts new ones right of the focused column.
 // Returns live windows in column order, where the last new window went, and the frontmost window.
 // While the overview or a Space slide is on, CGWindowList reports frames after the Space transform (scaled,
-// moved, other Spaces' windows on screen), so the strip keeps the frames it saw last and changes nothing.
+// moved, other Spaces' windows on screen), so the strip keeps the frames it saw last and changes nothing. A swipe
+// does the same after its first frame (Trackpad.swift): listing the windows and their Spaces cost 2–3 ms a frame.
 func syncColumns() -> (wins: [Win], inserted: Int?, front: UInt32?) {
     // The Space id is right even mid-slide, so the strip follows it first: keeping the old Space's strip there made
     // Option+H/L focus a window of the old Space, and macOS switched back to it.
     let space = stripSpace ?? CGSGetActiveSpace(cid)
     swapStrip(to: space)
-    guard !spaceLayoutBusy else { return (withPendingWidths(columns.compactMap { lastSeen[$0] }), nil, nil) }
+    guard !spaceLayoutBusy, !gestureActive else { return (withPendingWidths(columns.compactMap { lastSeen[$0] }), nil, nil) }
     let live = placeByRules(windows(on: space), on: space).filter { !movedAway.contains($0.id) }
     let byId = Dictionary(live.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
     lastSeen.merge(byId) { _, new in new }

@@ -138,9 +138,10 @@ func touchFrame(count: Int32, center: CGPoint?, spread: CGFloat = 0, time: CFTim
             followSpaceSwipe(focus: spaceSwipeFocus, velocity: 0)
             return
         case "gesture-strip":
-            gestureActive = true
             let under = pointerDisplay()
             swipeSpace = under.current
+            onStrip(swipeSpace) { _ = syncColumns() }  // one real look; the swipe's frames go by it
+            gestureActive = true
             swipeScale = under.frame.width * swipeSpeed
             onStrip(swipeSpace) { stripOffset -= (swipeTravel.x - dx) * swipeScale }  // the travel before this frame counts too
         default:

@@ -30,6 +30,8 @@
 //        "C sid"               removes that Desktop; its windows go to the display's first one
 //        "V number"            switches to that Desktop, counted across displays: what "Switch to Desktop N" runs
 //        "H wid width r g b a" a border around that window, see border_t; width 0 removes it
+//        "K n"                 Mission Control's advisory while Spaces are scaled, an opening held n − 1 frames
+//                              after it; 0 neither. 2 by default. See step_layout
 // Also turns the native Spaces slide vertical, see hook_space_transform.
 // Animation runs here on a user-interactive queue, so the daemon sends one line per window, not one per frame.
 // Frames come from CVDisplayLink (vsync), and each frame moves all windows in one SLS transaction.
@@ -60,6 +62,7 @@
 #include <sys/un.h>
 #include <signal.h>
 #include <unistd.h>
+#include "glide.h"
 #include "lines.h"
 
 extern int SLSMainConnectionID(void);
@@ -69,6 +72,8 @@ extern CGError SLSSetWindowTransform(int cid, uint32_t wid, CGAffineTransform t)
 extern CFTypeRef SLSTransactionCreate(int cid);
 extern CGError SLSTransactionMoveWindowWithGroup(CFTypeRef transaction, uint32_t wid, CGPoint point);
 extern CGError SLSTransactionCommit(CFTypeRef transaction, int synchronous);
+// What Mission Control tells WindowServer: 1 Expose animating, 2 shown and still, 4 off (docs/WINDOWSERVER.md).
+extern void SLSTransactionSetClientAdvisory(CFTypeRef transaction, uint64_t advisory);
 extern CGError SLSSetWindowAlpha(int cid, uint32_t wid, float alpha);
 extern CGError SLSOrderWindow(int cid, uint32_t wid, int order, uint32_t rel_wid);
 // Works only from Dock's connection on macOS 27; the daemon's own connection gets the window left where it is.
@@ -99,7 +104,7 @@ extern CFArrayRef SLSWindowIteratorGetCornerRadii(CFTypeRef iterator, long index
 
 typedef struct {
     uint32_t wid;
-    CGPoint cur;
+    CGPoint cur, v;  // v in points per second
     CGPoint goal;
     double lo, hi;
 } anim_t;
@@ -125,6 +130,9 @@ static uint64_t dock_current;         // the Space Dock is making current (nori_
 static uint64_t dock_from;            // the current Space when Dock's switch began (dock_switch_began)
 static CFTypeRef dock_first;          // Dock's transaction in which its switch began, until step_layout's next frame
 static bool instant;                  // "I 1": Dock's switch gets identity transforms, so the new Space just appears
+static bool advisory_on = true;       // "K n": Mission Control's advisory while Spaces are scaled, see step_layout,
+static int warm_frames = 1;           // and an opening held n − 1 frames after it; "K 0" neither. Default "K 2"
+static uint64_t advisory = 4;         // the advisory last sent
 
 // Space layout: the overview and Space switches, animated here on vsync like windows.
 // focus is the (fractional) index at the screen center; progress 0 is plain Spaces, 1 the overview.
@@ -272,6 +280,7 @@ typedef struct {
     double cx, cx_goal;        // screen x of the center
     uint64_t started;
     bool notified;             // "resize-settled" sent for this goal
+    double drawn_v, cx_v;      // per second
 } resize_t;
 static resize_t resizes[MAX_ANIMS];
 static int resize_count;
@@ -301,10 +310,52 @@ static void anim_drop(uint32_t wid)
     }
 }
 
+// The speed a window had under "M" (a swipe, a mouse drag), for the "S" that follows to start at: from rest the strip
+// stopped dead as the fingers lifted, then set off again. Measured over 30 ms or more, as lines come in bunches.
+typedef struct {
+    uint32_t wid;
+    CGPoint from, v;
+    uint64_t from_at, at;  // ns
+} throw_t;
+static throw_t throws[MAX_ANIMS];
+#define THROW_STALE 100000000ull  // ns without an "M": a new drag next time
+#define THROW_MAX 10000.0         // points per second, against a bunch of lines measured over too short a time
+
+static void throw_note(uint32_t wid, CGPoint p)
+{
+    uint64_t now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+    throw_t *t = NULL;
+    for (int i = 0; i < MAX_ANIMS && !t; i++) if (throws[i].wid == wid) t = &throws[i];
+    for (int i = 0; i < MAX_ANIMS && !t; i++) if (now - throws[i].at > THROW_STALE) t = &throws[i];
+    if (!t) return;
+    if (t->wid != wid || now - t->at > THROW_STALE) {
+        *t = (throw_t){ wid, p, CGPointZero, now, now };
+        return;
+    }
+    t->at = now;
+    double dt = (now - t->from_at) / 1e9;
+    if (dt < 0.03) return;
+    t->v = CGPointMake(fmax(-THROW_MAX, fmin(THROW_MAX, (p.x - t->from.x) / dt)), fmax(-THROW_MAX, fmin(THROW_MAX, (p.y - t->from.y) / dt)));
+    t->from = p;
+    t->from_at = now;
+}
+
+static CGPoint throw_take(uint32_t wid)
+{
+    uint64_t now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+    for (int i = 0; i < MAX_ANIMS; i++) {
+        if (throws[i].wid != wid) continue;
+        throws[i].wid = 0;
+        return now - throws[i].at < 60000000 ? throws[i].v : CGPointZero;
+    }
+    return CGPointZero;
+}
+
 // Alpha fades ("E"). The start comes from the daemon: it set the alpha it is fading from, so nothing is read back.
 typedef struct {
     uint32_t wid;
     float cur, goal;
+    double v;
 } fade_t;
 static fade_t fades[MAX_ANIMS];
 static int fade_count;
@@ -584,16 +635,22 @@ static void step_layout(double dt)
     dock_first = NULL;  // Dock's first switch frame is behind us; its transaction's address may be reused
     if (layout_follow) chase(&layout_progress, finger_progress, progress_velocity, finger_progress_at, now);
     if (focus_follow) chase(&layout_focus, finger_focus, focus_velocity, finger_focus_at, now);
-    if (layout_spring) {
+    // An opening waits warm_frames after the advisory goes out, for WindowServer to flatten the windows before the scale
+    // first changes (the first scaled frame came 50 ms late). Not under a finger: it would lag.
+    static int warmed;
+    if (advisory == 4) warmed = 0;
+    bool hold = advisory_on && layout_goal > 0 && !layout_follow && warmed < warm_frames;
+    if (hold) warmed++;
+    if (hold) {
+        // progress stays at 0 this frame; the transaction below still carries the advisory
+    } else if (layout_spring) {
         for (; dt > 0; dt -= 1.0 / 240) {  // small substeps keep the spring stable
             if (!layout_follow) spring(&layout_progress, &progress_velocity, layout_goal, fmin(dt, 1.0 / 240));
             if (!focus_follow) spring(&layout_focus, &focus_velocity, layout_target, fmin(dt, 1.0 / 240));
         }
-    } else {
-        if (!layout_follow) layout_progress += (layout_goal - layout_progress) * 0.25;
-        if (!focus_follow) layout_focus += (layout_target - layout_focus) * 0.25;
-        if (!layout_follow) progress_velocity = 0;
-        if (!focus_follow) focus_velocity = 0;
+    } else {  // a Space switch: like windows, a swipe's speed carried on
+        if (!layout_follow) glide(&layout_progress, &progress_velocity, layout_goal, dt);
+        if (!focus_follow) glide(&layout_focus, &focus_velocity, layout_target, dt);
     }
     bool settled = !layout_follow && !focus_follow && fabs(layout_goal - layout_progress) < 0.001 && fabs(layout_target - layout_focus) < 0.001
         && fabs(progress_velocity) < 0.01 && fabs(focus_velocity) < 0.01;
@@ -614,16 +671,45 @@ static void step_layout(double dt)
     // to another. With the old Space a screen away they left the screen for 2–4 frames at that change (recorded).
     bool old_home = settled && layout_goal == 0 && dock_switching && current != layout_spaces[layout_target];
 
+    // Their own frames every frame: one may move meanwhile (a PiP dragged), and the hook undoes from these.
+    bool sticky_moved = false;
+    for (int i = 0; i < sticky_count; i++) {
+        CGRect frame;
+        if (SLSGetWindowBounds(SLSMainConnectionID(), sticky[i].wid, &frame) != kCGErrorSuccess) continue;
+        sticky_moved |= !CGPointEqualToPoint(frame.origin, sticky[i].origin);
+        sticky[i].origin = frame.origin;
+    }
+    // While Spaces are scaled, WindowServer is told what Mission Control tells it, and then keeps each window flattened
+    // (its layer tree drawn once into one texture) instead of drawing every app's layers again at each new scale. Bound
+    // to Dock's connection: a Dock that goes takes it along. "K 0" leaves it out, to compare.
+    uint64_t want = !advisory_on || done || (layout_goal == 0 && layout_progress == 0) ? 4 : settled ? 2 : 1;
+    // An overview open and still: the same transforms again only made WindowServer redraw the whole screen every frame
+    // (docs/WINDOWSERVER.md). Once nothing has changed for half a second, a commit a second will do.
+    // ponytail: the commit a second is for a change of Dock's this misses; drop it once none shows.
+    static struct { double progress, focus, scale; int count, target; uint64_t spaces[MAX_SPACES]; CGRect screen; } last;
+    static int still_frames;
+    bool same = settled && !done && !dock_switching && !old_home && !sticky_moved && want == advisory && last.progress == layout_progress
+        && last.focus == layout_focus && last.scale == overview_scale && last.count == layout_count && last.target == layout_target
+        && !memcmp(last.spaces, layout_spaces, sizeof(uint64_t) * layout_count) && CGRectEqualToRect(last.screen, layout_screen);
+    still_frames = same ? still_frames + 1 : 0;
+    last.progress = layout_progress;
+    last.focus = layout_focus;
+    last.scale = overview_scale;
+    last.count = layout_count;
+    last.target = layout_target;
+    memcpy(last.spaces, layout_spaces, sizeof(uint64_t) * layout_count);
+    last.screen = layout_screen;
+    if (still_frames > 30 && still_frames % 60) return;
+
     CFTypeRef transaction = SLSTransactionCreate(SLSMainConnectionID());
     if (!transaction) return;
     CGRect screen = layout_screen;
     CFTypeRef region = CGRegionCreateWithRect(screen);
     double scale = 1 - (1 - overview_scale) * layout_progress;
     overview_count = layout_count;  // before the transforms: the hook looks each one up, the first frame's too
-    // Their own frames every frame: one may move meanwhile (a PiP dragged), and the hook undoes from these.
-    for (int i = 0; i < sticky_count; i++) {
-        CGRect frame;
-        if (SLSGetWindowBounds(SLSMainConnectionID(), sticky[i].wid, &frame) == kCGErrorSuccess) sticky[i].origin = frame.origin;
+    if (want != advisory) {
+        SLSTransactionSetClientAdvisory(transaction, want);
+        advisory = want;
     }
     in_step_layout = true;
     for (int k = 1; k <= layout_count; k++) {  // the target last
@@ -737,8 +823,10 @@ static void tick(double frame)
     int kept_fades = 0;
     for (int i = 0; i < fade_count; i++) {
         fade_t f = fades[i];
-        f.cur += (f.goal - f.cur) * 0.25f;
-        if (fabsf(f.goal - f.cur) < 0.005f) f.cur = f.goal; else fades[kept_fades++] = f;
+        double cur = f.cur;
+        glide(&cur, &f.v, f.goal, frame);
+        f.cur = cur;
+        if (fabs(f.goal - cur) < 0.005 && fabs(f.v * frame) < 0.005) f.cur = f.goal; else fades[kept_fades++] = f;
         SLSSetWindowAlpha(SLSMainConnectionID(), f.wid, f.cur);
     }
     fade_count = kept_fades;
@@ -751,12 +839,11 @@ static void tick(double frame)
     int kept = 0;
     for (int i = 0; i < anim_count; i++) {
         anim_t a = anims[i];
-        CGFloat dx = a.goal.x - a.cur.x, dy = a.goal.y - a.cur.y;
-        if (fabs(dx) < 0.5 && fabs(dy) < 0.5) {
+        glide(&a.cur.x, &a.v.x, a.goal.x, frame);
+        glide(&a.cur.y, &a.v.y, a.goal.y, frame);
+        if (fabs(a.goal.x - a.cur.x) < 0.5 && fabs(a.goal.y - a.cur.y) < 0.5 && fabs(a.v.x * frame) < 0.5 && fabs(a.v.y * frame) < 0.5) {
             a.cur = a.goal;
         } else {
-            a.cur.x += dx * 0.25;
-            a.cur.y += dy * 0.25;
             anims[kept++] = a;
         }
         place(transaction, a.wid, a.cur, a.lo, a.hi);
@@ -770,12 +857,13 @@ static void tick(double frame)
         resize_t r = resizes[i];
         CGRect b;
         if (SLSGetWindowBounds(SLSMainConnectionID(), r.wid, &b) != kCGErrorSuccess) continue;  // closed
-        r.drawn += (r.goal - r.drawn) * 0.25;
-        r.cx += (r.cx_goal - r.cx) * 0.25;
-        bool settled = fabs(r.goal - r.drawn) < 0.5 && fabs(r.cx_goal - r.cx) < 0.5;
+        glide(&r.drawn, &r.drawn_v, r.goal, frame);
+        glide(&r.cx, &r.cx_v, r.cx_goal, frame);
+        bool settled = fabs(r.goal - r.drawn) < 0.5 && fabs(r.cx_goal - r.cx) < 0.5 && fabs(r.drawn_v * frame) < 0.5 && fabs(r.cx_v * frame) < 0.5;
         if (settled) {
             r.drawn = r.goal;
             r.cx = r.cx_goal;
+            r.drawn_v = r.cx_v = 0;
             // The app's resize shows in its bounds the frame it lands (SLSGetWindowBounds leaves window transforms out:
             // 600 under a 1.5x stretch, 900 within ~12 ms of the app's setFrame, measured). "W" comes an AX round trip
             // later, and each frame until then was drawn stretched twice: wider than the goal for a frame or more.
@@ -938,6 +1026,7 @@ static void handle_line(char *line)
                 CGRect frame;
                 a->wid = wid;
                 a->cur = SLSGetWindowBounds(cid, wid, &frame) == kCGErrorSuccess ? CGPointMake(frame.origin.x + shift_of(wid), frame.origin.y) : goal;
+                a->v = throw_take(wid);
             }
             a->goal = goal;
             a->lo = lo;
@@ -957,8 +1046,9 @@ static void handle_line(char *line)
         double lo = -INFINITY, hi = INFINITY;
         if (sscanf(line + 1, "%u %lf %lf %lf %lf", &wid, &p.x, &p.y, &lo, &hi) >= 3) {
             resize_t *r = resize_for(wid);
-            if (r) { r->cx = r->cx_goal = p.x + r->goal / 2; break; }
+            if (r) { r->cx = r->cx_goal = p.x + r->goal / 2; r->cx_v = 0; break; }
             anim_drop(wid);  // a running ease would pull the window back every frame
+            throw_note(wid, p);
             CFTypeRef transaction = SLSTransactionCreate(cid);
             if (!transaction) break;
             place(transaction, wid, p, lo, hi);
@@ -1129,6 +1219,12 @@ static void handle_line(char *line)
     case 'I':
         instant = atoi(line + 1);
         break;
+    case 'K': {
+        int n = atoi(line + 1);
+        advisory_on = n > 0;
+        warm_frames = n > 1 ? n - 1 : 0;
+        break;
+    }
     case 'Q':
         layout_seq = atol(line + 1);
         break;
