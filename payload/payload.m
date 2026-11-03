@@ -56,9 +56,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 #include <signal.h>
 #include <unistd.h>
+#include "lines.h"
 
 extern int SLSMainConnectionID(void);
 extern CGError SLSGetWindowBounds(int cid, uint32_t wid, CGRect *frame);
@@ -1228,6 +1230,14 @@ static void handle_line(char *line)
     }
 }
 
+static void queue_line(char *line)
+{
+    char *copy = strdup(line);
+    dispatch_async(queue, ^{ handle_line(copy); free(copy); });
+}
+
+// Owner only, like the daemon's control socket: these lines move windows from inside Dock. chmod rather than umask,
+// which is Dock's whole process's.
 static void *serve(void *arg)
 {
     const char *path = (const char *) arg;
@@ -1235,21 +1245,24 @@ static void *serve(void *arg)
     struct sockaddr_un addr = { .sun_family = AF_UNIX };
     snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", path);
     unlink(path);
-    if (bind(server, (struct sockaddr *) &addr, sizeof(addr)) != 0 || listen(server, 4) != 0) {
+    if (bind(server, (struct sockaddr *) &addr, sizeof(addr)) != 0 || chmod(path, 0600) != 0 || listen(server, 4) != 0) {
         return NULL;
     }
     for (;;) {
         int client = accept(server, NULL, NULL);
         if (client < 0) continue;
+        uid_t uid;
+        gid_t gid;
+        if (getpeereid(client, &uid, &gid) != 0 || uid != getuid()) {
+            close(client);
+            continue;
+        }
         char buf[4096];
+        size_t have = 0;
         ssize_t n;
-        while ((n = read(client, buf, sizeof(buf) - 1)) > 0) {
-            buf[n] = '\0';
-            char *saveptr;
-            for (char *line = strtok_r(buf, "\n", &saveptr); line; line = strtok_r(NULL, "\n", &saveptr)) {
-                char *copy = strdup(line);
-                dispatch_async(queue, ^{ handle_line(copy); free(copy); });
-            }
+        while ((n = read(client, buf + have, sizeof(buf) - have)) > 0) {
+            have = take_lines(buf, have + n, queue_line);
+            if (have == sizeof(buf)) have = 0;  // a line longer than the buffer is dropped; none of ours comes near
         }
         close(client);
     }
