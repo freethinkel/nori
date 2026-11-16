@@ -25,6 +25,7 @@
 //        "I 1|0"               instant: Dock's switch frames get identity transforms (no slide) until "I 0"
 //        "B"                   empties the table of displays, see displays[]
 //        "B x y w h uuid sid0 sid1 …"  adds a display to it: its frame, its id for macOS and its Spaces
+//        "U x y w h sid0 sid1 …"  clips those Spaces to that frame: a display changed, see 'U'
 //        "L display"           the display animations are timed to
 //        "N display"           a new Desktop on that display, see find_desktop_code
 //        "C sid"               removes that Desktop; its windows go to the display's first one
@@ -1179,6 +1180,28 @@ static void handle_line(char *line)
             d->spaces[d->count++] = sid;
         }
         display_count++;
+        break;
+    }
+    case 'U': {
+        // A Space keeps the last shape it was given. step_layout gives each its display's frame, and after the display
+        // changes (another monitor, another resolution) the Space stayed clipped to the old frame: the top-left part
+        // of the screen shown, the rest black. A running layout shapes its Spaces itself every frame.
+        CGRect frame;
+        int used = 0;
+        if (overview_active || sscanf(line + 1, "%lf %lf %lf %lf %n", &frame.origin.x, &frame.origin.y,
+                                      &frame.size.width, &frame.size.height, &used) != 4) break;
+        CFTypeRef transaction = SLSTransactionCreate(SLSMainConnectionID());
+        if (!transaction) break;
+        CFTypeRef region = CGRegionCreateWithRect(frame);
+        char *rest = line + 1 + used;
+        for (char *end;; rest = end) {
+            uint64_t sid = strtoull(rest, &end, 10);
+            if (end == rest) break;
+            SLSTransactionSetSpaceShape(transaction, sid, region);
+        }
+        SLSTransactionCommit(transaction, 0);
+        CFRelease(transaction);
+        CFRelease(region);
         break;
     }
     case 'L': {

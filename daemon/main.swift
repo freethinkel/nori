@@ -32,6 +32,8 @@ let tap = CGEvent.tapCreate(
         }
         let state = tapState
         if type.rawValue == 29 || type.rawValue == 30 || type.rawValue == 31 {
+            // nori's own: Dock's swipe driven from a Spaces swipe (DockSwipe.swift).
+            if event.getIntegerValueField(.eventSourceUnixProcessID) == Int64(getpid()) { return Unmanaged.passUnretained(event) }
             // Three and four fingers are ours (strip, Spaces, overview): keep Mission Control and friends from seeing them.
             // A swipe arrives after the fingers lift, when the raw count is already 0, so the latch counts too.
             return swallowSystemGesture(state.swipeFingers) ? nil : Unmanaged.passUnretained(event)

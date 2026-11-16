@@ -81,7 +81,8 @@ resize-step = 10          # how much grow-width and shrink-width change a window
 # analytics = false           # no anonymous `active` event a day, see the README. Default true
 # gesture-strip = "3 sideways"    # the swipe that moves the strip: 3 to 5 fingers and "sideways", or "none"
 # gesture-spaces = "3 vertical"   # the swipe that switches Spaces: 3 to 5 fingers and "vertical", or "none"
-# gesture-overview = "4 vertical" # the one that opens the overview: 3 to 5 fingers and "vertical" or "pinch", or "none"
+# gesture-overview = "4 vertical" # the one that opens the overview: 3 to 5 fingers and "vertical" or "pinch", or "none".
+#                                  # Vertical takes a pinch of the same fingers too
 # swipe-speed = 1.3           # strip points per point of finger travel, 0.25 to 5
 # space-swipe-distance = 50   # swipe per Space, % of the trackpad, 10 to 100
 # overview-swipe-distance = 30  # swipe from closed to open, % of the trackpad, 10 to 100
@@ -285,9 +286,11 @@ func gesture(_ key: String) -> Gesture? {
     return parts.count == 2 ? Gesture(fingers: Int32(parts[0])!, kind: String(parts[1])) : nil
 }
 
-// The first action wins where a file edited by hand gives two the same swipe.
+// The first action wins where a file edited by hand gives two the same swipe. The overview also takes a pinch of its
+// fingers when it swipes vertically, as it zooms: closing in opens it.
 func swipeAction(fingers: Int32, kind: String) -> String? {
     gestureKeys.first { gesture($0) == Gesture(fingers: fingers, kind: kind) }
+        ?? (kind == "pinch" && gesture("gesture-overview") == Gesture(fingers: fingers, kind: "vertical") ? "gesture-overview" : nil)
 }
 
 func ourGesture(_ fingers: Int32) -> Bool {

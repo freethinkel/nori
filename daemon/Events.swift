@@ -81,6 +81,9 @@ func displaysChanged() {
     let work = DispatchWorkItem {
         layoutAll()
         tellPayload()
+        refreshDisplays()
+        // Each Space clipped to its display's new frame (payload's "U"); the old one stays on otherwise.
+        _ = send(displays.map { d in "U \(d.frame.minX) \(d.frame.minY) \(d.frame.width) \(d.frame.height) " + stack(on: d).ids.map(String.init).joined(separator: " ") })
         settingsModel.refresh()  // its cards of displays
     }
     displaysSettling = work

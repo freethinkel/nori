@@ -63,6 +63,7 @@ A layout (the overview, a slide) never ends by itself at goal 1, so a crash used
 Signatures (disassembler; the arguments are visible in lldb during a switch):
 - `SLSTransactionShowSpace(transaction, sid)`, `SLSTransactionHideSpace(transaction, sid)` — 2 arguments each.
 - `SLSTransactionSetSpaceShape(transaction, sid, CGRegionRef)`. Dock gives a hidden Space `kCGRegionEmptyRegion`.
+  A Space keeps the last shape it got (inferred from one bug, not tested on its own): after a monitor switch a Space last shaped by the overview to the laptop's 1728×1117 stayed clipped to it on a larger display (top-left part shown, the rest black); the daemon now reshapes every Space when displays settle (payload "U"). Not verified yet that this clears it.
 - `SLSTransactionSetSpaceOrderingWeight(transaction, sid, int)` — Dock sets 1 on the new one and 0 on the old one.
 - Regions: `CGRegionCreateWithRect(CGRect)`, `CGRegionIsEmpty`, `CGSGetRegionBounds(region, CGRect *)` are exported by CoreGraphics.
 - `CGSCopyManagedDisplaySpaces(cid)` (links from Swift without SkyLight): an array of displays, each with `"Spaces"` (`id64`, `ManagedSpaceID`, `type`: 0 desktop, 4 fullscreen) and `"Current Space"`. Verified.
@@ -74,6 +75,16 @@ Signatures (disassembler; the arguments are visible in lldb during a switch):
 Turning them on without the UI: `defaults write com.apple.symbolichotkeys AppleSymbolicHotKeys -dict-add 118 '<dict>…</dict>'`, then `/System/Library/PrivateFrameworks/SystemAdministration.framework/Resources/activateSettings -u`.
 Verified on macOS 27 (Darwin 27.0.0), on keys of a Desktop that doesn't exist: the preferences change at once, and a running process sees that within 50 ms; `CGSIsSymbolicHotKeyEnabled` stays false until `activateSettings -u`, which takes about 0.5 s and has applied it when it returns. Several pairs in one `-dict-add` work, and going back to the old value left `defaults export` identical. Not tried: a real press of a shortcut turned on this way.
 What WindowServer has is what counts, and it differs from the preferences in two ways. A preference alone does nothing until applied. And a key missing from the preferences still has keys: `CGSGetSymbolicHotKeyValue(id, &character, &keycode, &flags)` gives macOS's default, disabled, for one never set (127 Ctrl+0; 128–133 Ctrl+Option+1…6, flags 786432). That is the normal case: the new-account template (`/System/Library/Templates/Data/Library/User Template/English.lproj/Library/Preferences/com.apple.symbolichotkeys.plist`) has none of 79–82 or 118–133. So nori reads both calls, from CoreGraphics, and writes the keys it read when it turns one on. "Move left/right a space" (79, 81) defaults to on in macOS (from memory, a new account wasn't tried), so going by the preferences would have called them off. 80 and 82 are the same two with Shift, and nori doesn't use them.
+
+## Driving Dock's own Space swipe (macOS 27, build 26A5416b)
+
+Synthetic DockSwipe events run Dock's interactive swipe from a plain process: a `CGEvent` with field 55 = 30 (DockControl), 110 = 23 (DockSwipe), phase in 132 and 134, 123 = 1 (horizontal), progress in 124, then a companion event with 55 = 29, both posted at `kCGSessionEventTap`. Field numbers and the payload are from InstantSpaceSwitcher (MIT, jurplel), `Sources/ISS/ISS.c` and `event_serialize.c`.
+
+- **Without the IOHID payload nothing happens on 27**: the same fields alone left the active Space as it was. With the event's `CGEventCreateData` bytes followed by a tag (payload size, field 4205, big-endian) and an IOHID queue element (header, a fluid touch gesture of type 23 with flavor 3, a velocity event of type 9 for Ended), it works. `probe/dock-swipe.m`.
+- **Progress is in Spaces and is drawn as it comes**: Changed from 0 to −0.4 left the screen part way to the next Space, vertical through the payload's hook like any slide of Dock's (screenshot mid-gesture).
+- **Ended commits whatever the progress**: −0.1 with no velocity still switched. **Cancelled (8) slides back.**
+- With natural scrolling on, a negative progress goes to the next Space (5 → 6). InstantSpaceSwitcher says the sign flips with natural scrolling off; not tried here.
+- nori's 3-finger Spaces swipe uses this outside the overview (`daemon/DockSwipe.swift`), one Space per swipe like macOS. The event tap passes events whose source pid is nori's own.
 
 ## Windows
 
