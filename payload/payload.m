@@ -724,7 +724,12 @@ static void step_layout(double dt)
         // pixels each its own way, and the windows shook by a pixel.
         if (scale == 1) t.ty = round(t.ty);
         if (done || (old_home && sid == current)) t = CGAffineTransformIdentity;
-        if (!done || i == layout_target) {
+        // A Space wholly off screen is hidden, so WindowServer has nothing of it to draw; the target and the current
+        // one stay shown (the sticky windows go with them).
+        double half = screen.size.height * scale / 2;
+        bool off = !done && i != layout_target && sid != current
+            && (center_y + half <= CGRectGetMinY(screen) || center_y - half >= CGRectGetMaxY(screen));
+        if ((!done || i == layout_target) && !off) {
             // Sticky windows go with the Space that last became shown; showing a shown one again doesn't count.
             // So the target is hidden and shown again, in the same transaction, after the others, which also keeps
             // it on top. During Dock's switch they go with the current Space whatever was shown, and are drawn
