@@ -394,4 +394,5 @@ func restoreWindows() {
     for (id, frame) in back {
         if let win = lastSeen[id] { setFrame(win, frame) }
     }
+    putBackEnhancedUI()
 }

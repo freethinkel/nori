@@ -26,9 +26,11 @@ It's a prototype. WindowServer moves the windows, not Accessibility. A dylib loa
 
 nori runs on Apple Silicon, and it is tested on macOS 27 only. The app says it needs macOS 14 or newer, but nothing older than 27 has been tried. On another macOS build parts of it may not go into Dock: nori then keeps running without them and tells you which, see [When something is wrong](#when-something-is-wrong). Dock only loads a third-party dylib with part of SIP off, and that weakens the security of the whole machine. Do it on your own Mac, and see [Undo](#undo) for the way back. The steps match [yabai's](https://github.com/koekeishiya/yabai/wiki/Disabling-System-Integrity-Protection).
 
+With SIP on, nori still runs, in a basic mode: windows tile, scroll, resize and move between Desktops, through Accessibility, and get their borders. They still ease, but each app moves its own window, so a slow app lags behind its neighbours. A column scrolled off the main display waits in its bottom corner, a point of it on screen; on another display it stays a sliver at the edge. The overview, inactive-opacity and the vertical Space switch are off. nori's menu shows this as a problem, and choosing it shows the steps below.
+
 ### 1. Turn off part of SIP, once, from Recovery
 
-The app can't do this step for you. If SIP is still on, the app shows these steps and copies the command for you.
+The app can't do this step for you. If SIP is still on, choose the problem in nori's menu: it shows these steps and copies the command for you.
 
 1. Shut the Mac down. Hold the power button until "Loading startup options" appears, then click Options → Continue and log in.
 2. In the menu bar choose Utilities → Terminal and run
@@ -102,6 +104,8 @@ make run    # stops a running nori, restarts Dock, loads the payload with sudo, 
 Ctrl+C stops it. If you only changed the daemon, Dock needs no restart. Press Ctrl+C and run `build/nori` again.
 
 `NORI_CONFIG=/path/to/config.toml build/nori` reads and writes that file instead of `~/.config/nori/config.toml`, to try settings out without touching yours.
+
+`NORI_BASIC=1 build/nori` doesn't load the payload, so it runs in the basic mode a Mac with SIP on gets. Run `killall Dock` first if the payload is in Dock already.
 
 ### Releases
 

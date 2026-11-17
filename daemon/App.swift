@@ -20,12 +20,19 @@ func startApp() {
     statusItem.button?.imagePosition = .imageLeading  // the "!" of Problems.swift beside it
     statusItem.menu = menu()
     showConfigProblems()
-    guard bootSetupDone() else { exit(1) }
+    let canLoad = ProcessInfo.processInfo.environment["NORI_BASIC"] == nil && bootSetupDone(ask: false)  // NORI_BASIC=1: basic mode on any Mac
     waitForAccessibility()
     let gesturesChanged = leaveSystemGestures ? putBackSystemGestures() : disableSystemGestures()
-    // After an update Dock still runs the old payload.
-    if gesturesChanged || !payloadAlive() || CommandLine.arguments.contains(updatedFlag) { loadPayload() }
-    quitIfLoadFails = false
+    if !canLoad {
+        if gesturesChanged { _ = shell("/usr/bin/killall", ["Dock"]) }  // Dock reads the swipes at launch
+        if !payloadAlive() {
+            runWithoutPayload(Problem(key: "payload", title: "nori runs without Dock: SIP is on",
+                                      help: "Windows tile, scroll and ease through Accessibility. The overview, inactive-opacity and vertical Spaces need nori in Dock, which needs part of SIP off. Choose this to see how.",
+                                      fix: #selector(MenuActions.setUpDock)))
+        }
+    } else if gesturesChanged || !payloadAlive() || CommandLine.arguments.contains(updatedFlag) {
+        loadPayload()  // after an update Dock still runs the old payload
+    }
     applyLaunchAtLogin()
     startUpdates()
     Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in
@@ -64,6 +71,8 @@ final class MenuActions: NSObject, NSMenuDelegate {
     }
 
     @objc func reloadPayload() { reloadDockPayload() }
+    // Every way out of the setup's alerts ends in a restart, or a reboot after Recovery.
+    @objc func setUpDock() { bootSetupDone(ask: true) ? reloadDockPayload() : quit() }
 
     // Whether the payload answers in Dock, under the item that reloads it; a socket connect, so read on each open.
     // A new release shows up the same way: the check runs behind the open menu and renames its item.
@@ -105,12 +114,14 @@ func menu() -> NSMenu {
 
 // The loader needs task_for_pid on Dock (Debugging Restrictions off), and Dock loads a third-party arm64e dylib
 // only with -arm64e_preview_abi in boot-args. SIP can only change from Recovery; the boot-arg is set here when it can be.
-func bootSetupDone() -> Bool {
+// ask false: only whether it is done, no alerts. nori runs without the payload then (runWithoutPayload).
+func bootSetupDone(ask: Bool) -> Bool {
     let sip = shell("/usr/bin/csrutil", ["status"])
     let debugOff = sip.contains("status: disabled") || sip.contains("Debugging Restrictions: disabled")
     let nvramOff = sip.contains("status: disabled") || sip.contains("NVRAM Protections: disabled")
     let bootArgs = shell("/usr/sbin/nvram", ["boot-args"])  // "boot-args\t<value>", or an error when unset
     if debugOff && bootArgs.contains("-arm64e_preview_abi") { return true }
+    guard ask else { return false }
 
     if debugOff && nvramOff {
         let current = bootArgs.hasPrefix("boot-args\t") ? bootArgs.dropFirst(10).trimmingCharacters(in: .whitespacesAndNewlines) : ""
@@ -294,14 +305,12 @@ func loadPayload() {
     layout(immediate: false)
 }
 
-// At launch nori is no use without the payload, so it quits. Once running it stays, and the problem stays listed.
-var quitIfLoadFails = true
-
+// Canceled or failed, nori goes on without the payload, and the menu offers another try.
 func loadFailed(_ error: String?) {
-    if let error { alert("Could not load nori into Dock", error, [quitIfLoadFails ? "Quit" : "OK"]) }
-    guard quitIfLoadFails else { return }
-    restoreSystemGestures()
-    exit(error == nil ? 0 : 1)
+    if let error { alert("Could not load nori into Dock", error, ["OK"]) }
+    runWithoutPayload(Problem(key: "payload", title: "nori runs without Dock",
+                              help: "Windows tile, scroll and ease through Accessibility, without the overview or inactive-opacity. Choose this to restart Dock and load nori into it again.",
+                              fix: #selector(MenuActions.reloadPayload)))
 }
 
 // Output and errors of a command, for checks like csrutil and nvram.

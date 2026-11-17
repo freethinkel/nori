@@ -21,7 +21,10 @@ func send(_ lines: [String]) -> Bool {
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)
     guard fd >= 0 else { return false }
     defer { close(fd) }
-    guard withAddress(socketPath, { connect(fd, $0, $1) }) == 0 else { return false }
+    guard withAddress(socketPath, { connect(fd, $0, $1) }) == 0 else {
+        withoutPayload(lines)
+        return false
+    }
     _ = (lines.joined(separator: "\n") + "\n").withCString { write(fd, $0, strlen($0)) }
     return true
 }
@@ -39,7 +42,7 @@ func watchPayload() {
         return
     }
     payloadMisses += 1
-    guard payloadMisses == 2 else { return }
+    guard payloadMisses == 2, !payloadLost else { return }  // lost already: running without it, see runWithoutPayload
     payloadLost = true
     resetOverview()             // nothing would close it, and an open overview keeps every click
     spaceLayoutDone(layoutSeq)  // nothing would report the end of a running layout
@@ -63,6 +66,7 @@ func payloadBack() {
     payloadMisses = 0
     clearProblem("payload")
     bordersSent = [:]  // they went with the old payload
+    dropBasicBorders()
     send(["P \(getpid())"])  // vertical Spaces from now on, not from the next repeat
     layout(immediate: false)
 }

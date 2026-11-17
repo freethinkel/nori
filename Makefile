@@ -29,6 +29,10 @@ $(BUILD)/loader: loader/loader.m | $(BUILD)
 border-probe: | $(BUILD)
 	@out=$(abspath $(BUILD))/border-$$(date +%s).dylib; clang -arch arm64e -O2 -dynamiclib -framework Foundation -framework CoreGraphics -framework QuartzCore $(SKYLIGHT) probe/border.m -o $$out && echo $$out
 
+# POC, see probe/space-transform.m: a real Space's transform from a plain process, no payload.
+space-transform-probe: | $(BUILD)
+	clang -arch arm64e -O2 -framework AppKit -framework CoreGraphics $(SKYLIGHT) probe/space-transform.m -o $(BUILD)/space-transform
+
 $(BUILD):
 	mkdir -p $@
 
@@ -78,4 +82,4 @@ test: | $(BUILD)
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all run app dmg icon version test clean border-probe
+.PHONY: all run app dmg icon version test clean border-probe space-transform-probe
