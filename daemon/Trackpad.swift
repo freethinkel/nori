@@ -39,7 +39,10 @@ var lastCenter: CGPoint?
 var lastSpread: CGFloat = 0
 var swipeTravel = CGPoint.zero
 var swipePinch: CGFloat = 0  // before the swipe starts, fingers closing in counting up
-var swipeVelocity: CGFloat = 0  // points per frame, smoothed
+var swipeVelocity: CGFloat = 0  // points per second, smoothed: per frame made the throw depend on the trackpad's rate
+var swipeTime: CFTimeInterval = 0
+let swipeThrow: CGFloat = 0.08  // seconds of the lift speed the strip keeps going
+let stripFlickSpeed: CGFloat = 0.5  // trackpad widths per second; a quick swipe measured 0.1-0.3 of the width in 100-240 ms
 
 // The overview follows a swipe like niri's, up opens and down closes, or a pinch, closing in opens and spreading closes.
 // On lift it springs open or closed, thrown by the finger speed. macOS's own gestures (Mission Control, App Exposé,
@@ -62,8 +65,15 @@ func endSwipe() {
         gestureActive = false
         // ponytail: fixed throw; real momentum would decay over frames
         onStrip(swipeSpace) {
-            let rest = scroll(syncColumns().wins).snap(stripOffset - swipeVelocity * 8, focused: focusedIndex())
-            focusColumn(at: rest.index, offset: rest.offset)
+            let focused = focusedIndex()
+            let rest = scroll(syncColumns().wins).snap(stripOffset - swipeVelocity * swipeThrow, focused: focused)
+            // A flick that the throw left on the same window goes on to the next one, as a flick does for Spaces.
+            // Fingers right bring the column on the left. In trackpad widths, so the display's width doesn't count.
+            if rest.index == focused, abs(swipeVelocity / swipeScale) > stripFlickSpeed {
+                focusColumn(at: focused + (swipeVelocity > 0 ? -1 : 1))
+            } else {
+                focusColumn(at: rest.index, offset: rest.offset)
+            }
         }
     }
     if spaceSwiping {
@@ -142,6 +152,7 @@ func touchFrame(count: Int32, center: CGPoint?, spread: CGFloat = 0, time: CFTim
             swipeSpace = under.current
             onStrip(swipeSpace) { _ = syncColumns() }  // one real look; the swipe's frames go by it
             gestureActive = true
+            swipeTime = time
             swipeScale = under.frame.width * swipeSpeed
             onStrip(swipeSpace) { stripOffset -= (swipeTravel.x - dx) * swipeScale }  // the travel before this frame counts too
         default:
@@ -151,7 +162,8 @@ func touchFrame(count: Int32, center: CGPoint?, spread: CGFloat = 0, time: CFTim
     }
     // Fingers right: strip right, so content follows the fingers like natural scrolling.
     let delta = dx * swipeScale
-    swipeVelocity = swipeVelocity * 0.5 + delta * 0.5
+    swipeVelocity = swipeVelocity * 0.5 + delta / CGFloat(max(time - swipeTime, 1.0 / 240)) * 0.5
+    swipeTime = time
     onStrip(swipeSpace) {
         stripOffset -= delta
         layout(immediate: true)
