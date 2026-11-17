@@ -90,9 +90,23 @@ func isStandard(_ win: Win) -> Bool {
     guard let element = axWindows.first(where: { axID($0) == win.id }) else { return false }  // asked again while it lasts
     var subrole: CFTypeRef?
     guard AXUIElementCopyAttributeValue(element, kAXSubroleAttribute as CFString, &subrole) == .success else { return true }
-    let standard = [kAXStandardWindowSubrole, "AXFullScreenWindow"].contains(subrole as? String)
+    let standard = [kAXStandardWindowSubrole, "AXFullScreenWindow"].contains(subrole as? String) && canGrow(element)
     standardWindows[win.id] = standard
     return standard
+}
+
+// Settings, About and other fixed-size windows call themselves standard too, but their zoom button is off and they
+// have no working fullscreen one (as AeroSpace tells dialogs). A window without a zoom button at all (custom chrome,
+// frameless Electron) stays in.
+private func canGrow(_ window: AXUIElement) -> Bool {
+    func button(_ name: String) -> Bool? {
+        var value: CFTypeRef?, enabled: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(window, name as CFString, &value) == .success, let value,
+              CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+        return AXUIElementCopyAttributeValue(value as! AXUIElement, kAXEnabledAttribute as CFString, &enabled) == .success && enabled as? Bool == true
+    }
+    guard let zoom = button(kAXZoomButtonAttribute) else { return true }
+    return zoom || button(kAXFullScreenButtonAttribute) == true
 }
 
 // Resize goes through Accessibility: SLS in Dock can move a window, but an app only relayouts when it resizes itself.
