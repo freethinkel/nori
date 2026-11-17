@@ -84,7 +84,7 @@ Synthetic DockSwipe events run Dock's interactive swipe from a plain process: a 
 - **Progress is in Spaces and is drawn as it comes**: Changed from 0 to −0.4 left the screen part way to the next Space, vertical through the payload's hook like any slide of Dock's (screenshot mid-gesture).
 - **Ended commits whatever the progress**: −0.1 with no velocity still switched. **Cancelled (8) slides back.**
 - With natural scrolling on, a negative progress goes to the next Space (5 → 6). InstantSpaceSwitcher says the sign flips with natural scrolling off; not tried here.
-- nori's 3-finger Spaces swipe uses this outside the overview (`daemon/DockSwipe.swift`), one Space per swipe like macOS. The event tap passes events whose source pid is nori's own.
+- nori's 3-finger Spaces swipe used this outside the overview from 2026-11-16 to 2026-11-17 (`daemon/DockSwipe.swift`, in git history). Dropped: after the lift Dock finishes the slide on its own slow curve. A velocity on Ended (field 129 and the type 9 event's x) of 4 changed nothing that was seen, 9999 switches at once. Sliding the progress on nori's spring with Changed events and then Ended at full progress jerked at the end, focused the wrong windows, and an empty Space handed focus back to the one before. The swipe is nori's own layout again, as in the overview.
 
 ## Windows
 

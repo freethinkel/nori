@@ -181,29 +181,20 @@ func endOverviewSwipe(open: Bool) {
     if open { sendLayout(open: true, spring: true) } else { closeOverview(at: overviewTarget) }
 }
 
-// 3-finger vertical swipe (Trackpad.swift): the Spaces follow the fingers. In the overview they are nori's layout;
-// otherwise it is Dock's own swipe (DockSwipe.swift), so it moves like Control+arrow. Returns the index it starts from.
-var dockSwipeFrom: CGFloat?  // the index Dock's swipe started at, nil while the overview's runs
-
+// 3-finger vertical swipe (Trackpad.swift): the Spaces follow the fingers on nori's layout, in the overview or not,
+// on the spring windows glide on. Dock's own swipe (docs/WINDOWSERVER.md) was tried and finished too slowly.
+// Returns the index the swipe starts from.
 func beginSpaceSwipe() -> CGFloat {
-    if overviewOpen {
-        dockSwipeFrom = nil
-        return CGFloat(overviewTarget)
+    if !overviewOpen {
+        useStack(on: pointerDisplay())
+        sendLayout(open: false, spring: false)  // starts the layout if it isn't running
     }
-    useStack(on: pointerDisplay())
-    dockSwipeFrom = CGFloat(overviewTarget)
-    spaceLayoutUntil = CACurrentMediaTime() + spaceLayoutFallback  // the strip keeps off the sliding windows
-    postDockSwipe(.began, progress: 0)
     return CGFloat(overviewTarget)
 }
 
 // focus: index of the Space at the center; past the first or last Space it stretches like rubber.
 func followSpaceSwipe(focus: CGFloat, velocity: CGFloat) {
     spaceLayoutUntil = CACurrentMediaTime() + spaceLayoutFallback
-    if let from = dockSwipeFrom {
-        // One Space at most, as Dock goes; past the first or last one Dock stretches it itself.
-        return postDockSwipe(.changed, progress: dockSwipeSign * Double(min(max(focus - from, -1), 1)))
-    }
     let clamped = min(max(focus, 0), CGFloat(overviewSpaces.count - 1))
     send(["F \(clamped + rubberBand(focus - clamped, 0.5)) \(velocity)"])
 }
@@ -214,22 +205,6 @@ let spaceFlickSpeed: CGFloat = 0.75
 
 func endSpaceSwipe(focus: CGFloat, velocity: CGFloat) {
     let index = abs(velocity) > spaceFlickSpeed ? Int(focus.rounded(velocity > 0 ? .up : .down)) : Int(focus.rounded())
-    if let from = dockSwipeFrom {
-        dockSwipeFrom = nil
-        let start = Int(from), target = min(max(index, start - 1, 0), start + 1, overviewSpaces.count - 1)
-        // Ended finishes Dock's switch on toward the Space the progress points at; Cancelled slides back.
-        let toward = focus - from
-        if target == start || (toward > 0) != (target > start) {
-            postDockSwipe(.cancelled, progress: dockSwipeSign * Double(toward))
-        } else {
-            overviewTarget = target
-            postDockSwipe(.ended, progress: dockSwipeSign * Double(min(max(toward, -1), 1)))
-        }
-        // No "layout-done" comes for Dock's slide: the strip looks again once it is over.
-        spaceLayoutUntil = CACurrentMediaTime() + 0.5
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) { pollSoon() }
-        return
-    }
     overviewTarget = min(max(index, 0), overviewSpaces.count - 1)
     sendLayout(open: overviewOpen, spring: overviewOpen)
     pressSpace(overviewSpaces[overviewTarget])
