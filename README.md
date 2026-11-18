@@ -132,7 +132,7 @@ A repair at Apple or an authorized service provider may turn SIP back on too. Th
 
 ## Keys
 
-Every row with a config name can be rebound in `[bindings]`, or unbound with `"none"`.
+Every row with a config name can be rebound in `[bindings]`, or unbound with `"none"`. A binding can be a mouse button too: `mouse3` is the middle one, `mouse4` and `mouse5` the side ones on most mice, up to `mouse32`, with modifiers or without, like `overview = "mouse5"`. Several bindings apart by spaces all work: `overview = "option+o mouse5"`. In Settings a recorded key replaces the action's key and a recorded button its button, so one of each can live there side by side. The app sees neither the press nor the release of a bound button.
 
 | Keys | Action |
 |---|---|

@@ -72,26 +72,34 @@ import SwiftUI
 
     // Other actions on the same keys, and a system "Switch to Desktop N" shortcut, which the event tap serves first.
     func conflicts(_ action: String) -> [String] {
-        guard let mine = chord(text(action)) else { return [] }
-        let same = { (other: Chord?) in other.map { $0.key == mine.key && $0.flags == mine.flags } ?? false }
-        return bindingDefaults.keys.sorted().filter { $0 != action && same(chord(text($0))) }.map { describe($0).title }
+        let mine = chords(text(action)) ?? []
+        let same = { (other: Chord) in mine.contains { $0.key == other.key && $0.flags == other.flags } }
+        return bindingDefaults.keys.sorted().filter { $0 != action && (chords(text($0)) ?? []).contains(where: same) }.map { describe($0).title }
             + desktopHotkeys.filter { same($0.chord) && action != "focus-space-\($0.number)" }.map { "Switch to Desktop \($0.number)" }
     }
 
-    // A key press while a recorder waits; the event tap hands it over instead of acting on it (main.swift).
-    // Escape cancels, Delete unbinds. A binding needs Control, Option or Command, or it would eat that key everywhere.
+    // A key or mouse button press while a recorder waits; the event tap hands it over instead of acting on it (main.swift).
+    // Escape cancels, Delete unbinds. A key needs Control, Option or Command, or it would eat that key everywhere; a
+    // mouse button doesn't. A key takes the place of the action's keys and a button of its buttons, so an action can
+    // have one of each here; the config takes any number.
     func record(_ event: CGEvent) {
         guard let action = recording, event.getIntegerValueField(.keyboardEventAutorepeat) == 0 else { return }
-        let code = event.getIntegerValueField(.keyboardEventKeycode)
+        let code = pressedKey(event)
         let flags = event.flags.intersection(chordModifiers)
         switch code {
         case 53: recording = nil
         case 51, 117: recording = nil; set(action, to: .string("none"))
         default:
-            guard let key = keycodes.first(where: { $0.value == code })?.key,
-                  !flags.isDisjoint(with: [.maskControl, .maskAlternate, .maskCommand]) else { return NSSound.beep() }
+            guard let key = keyName(code),
+                  code > mouseKeyBase || !flags.isDisjoint(with: [.maskControl, .maskAlternate, .maskCommand]) else { return NSSound.beep() }
             recording = nil
-            set(action, to: .string(chordText(flags, key)))
+            let mouse = code > mouseKeyBase
+            let kept: [String] = text(action).split(separator: " ").map(String.init).filter { part in
+                guard let other = chord(part) else { return false }  // "none"
+                return (other.key > mouseKeyBase) != mouse
+            }
+            let all = mouse ? kept + [chordText(flags, key)] : [chordText(flags, key)] + kept  // keys first
+            set(action, to: .string(all.joined(separator: " ")))
         }
     }
 }
@@ -106,11 +114,13 @@ func chordText(_ flags: CGEventFlags, _ key: String?) -> String {
     (modifierNames.filter { flags.contains($0.flag) }.map(\.name) + [key].compactMap { $0 }).joined(separator: "+")
 }
 
-// "ctrl+option+h" as "⌃⌥H", in the order macOS menus use.
+// "ctrl+option+h" as "⌃⌥H", in the order macOS menus use; several apart by spaces.
 func chordGlyphs(_ text: String) -> String {
+    let parts = text.split(separator: " ")
+    if parts.count > 1 { return parts.map { chordGlyphs(String($0)) }.joined(separator: "  ") }
     guard let chord = chord(text) else { return text }
-    let key = keycodes.first { $0.value == chord.key }!.key
+    let key = keyName(chord.key)!
     let arrows = ["left": "←", "right": "→", "up": "↑", "down": "↓"]
     return [("⌃", CGEventFlags.maskControl), ("⌥", .maskAlternate), ("⇧", .maskShift), ("⌘", .maskCommand)]
-        .filter { chord.flags.contains($0.1) }.map(\.0).joined() + (arrows[key] ?? key.uppercased())
+        .filter { chord.flags.contains($0.1) }.map(\.0).joined() + (arrows[key] ?? (key.hasPrefix("mouse") ? "Mouse \(key.dropFirst(5))" : key.uppercased()))
 }

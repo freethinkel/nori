@@ -338,3 +338,17 @@ assert(restoredIndex(rank: 2, ranks: [nil, 1]) == 2)
 assert(restoredIndex(rank: 0, ranks: [nil, 1]) == 1)
 
 print("restore: ok")
+
+// Mouse buttons in bindings: mouse3 and up, with or without modifiers; left and right stay the apps'.
+assert(chord("mouse5")! == (mouseKeyBase + 5, []))
+assert(chord("ctrl+mouse4")!.flags == .maskControl)
+assert(chord("mouse1") == nil && chord("mouse2") == nil && chord("mouse33") == nil)
+assert(keyName(chord("option+mouse3")!.key) == "mouse3" && keyName(chord("option+h")!.key) == "h")
+
+print("mouse bindings: ok")
+
+// Several chords to one action, apart by spaces.
+assert(chords("option+o mouse5")!.map(\.key) == [31, mouseKeyBase + 5])
+assert(chords("none")!.isEmpty && chords("option+o mouse99") == nil)
+
+print("several bindings: ok")

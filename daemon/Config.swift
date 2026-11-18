@@ -90,7 +90,9 @@ resize-step = 10          # how much grow-width and shrink-width change a window
 
 # Key bindings: modifiers and one key joined by "+". Modifiers: option, ctrl, cmd, shift. Keys: a to z, 0 to 9,
 # - = , . and left, right, up, down. Keys are physical keys on the US layout, so a binding stays put in any
-# keyboard layout. "none" turns a binding off. Each action is also a command, see `nori help`.
+# keyboard layout. Mouse buttons too: mouse3 (middle) to mouse32, mouse4 and mouse5 being the side buttons on most
+# mice, with modifiers or without. Several apart by spaces all work: overview = "option+o mouse5". "none" turns a
+# binding off. Each action is also a command, see `nori help`.
 # Desktop numbers run across displays, like macOS's own shortcuts: with two Desktops on the first display, the second
 # one's start at 3. The focus-space-slot and move-to-space-slot actions count on the display that has focus instead.
 [bindings]
@@ -185,7 +187,7 @@ func parseConfig(_ text: String) -> (values: [String: String], rules: [Rule], mo
         case ("", .string(let s)) where choiceKeys[entry.key]?.contains(s) == true: values[entry.key] = s
         case ("", .string(let s)) where modifierKeys.contains(entry.key) && modifiers(s) != nil: values[entry.key] = s
         case ("", .string(let s)) where colorDefaults[entry.key] != nil && parseColor(s) != nil: values[entry.key] = s
-        case ("bindings", .string(let s)) where bindingDefaults[entry.key] != nil && (s == "none" || chord(s) != nil): values[entry.key] = s
+        case ("bindings", .string(let s)) where bindingDefaults[entry.key] != nil && chords(s) != nil: values[entry.key] = s
         case ("rule", _) where entry.index != nil: ruleTables[entry.index!, default: [:]][entry.key] = entry.value
         case ("monitor", .string) where entry.index != nil && entry.key == "name",
              ("monitor", .number) where entry.index != nil && paddingKeys.contains(entry.key):
@@ -333,8 +335,9 @@ func enabledPlist(_ hotkey: SymbolicHotkey) -> String {
         + "<key>type</key><string>standard</string></dict></dict>"
 }
 
-// Bindings: modifiers and one key joined by "+", e.g. "option+o", "ctrl+shift+1". Keys are letters, digits, "-", "=", ",", "."
-// and the arrows. Keycodes are from the US layout, so a binding means the same physical key in any layout.
+// Bindings: modifiers and one key joined by "+", e.g. "option+o", "ctrl+shift+1". Keys are letters, digits, "-", "=", ",", ".",
+// the arrows, and mouse buttons "mouse3" (middle) to "mouse32", counted from 1 like X11: mouse4 and mouse5 are the side
+// buttons on most mice. Left and right stay the apps'. Keycodes are from the US layout, so a binding means the same physical key in any layout.
 typealias Chord = (key: Int64, flags: CGEventFlags)
 let chordModifiers: CGEventFlags = [.maskAlternate, .maskControl, .maskCommand, .maskShift]
 let keycodes: [String: Int64] = [
@@ -343,6 +346,25 @@ let keycodes: [String: Int64] = [
     "8": 28, "0": 29, "o": 31, "u": 32, "i": 34, "p": 35, "l": 37, "j": 38, "k": 40, "n": 45, "m": 46,
     "-": 27, "=": 24, ",": 43, ".": 47, "left": 123, "right": 124, "down": 125, "up": 126,
 ]
+
+// Mouse button n (1-based) is key mouseKeyBase + n, clear of the keycodes.
+let mouseKeyBase: Int64 = 1000
+
+func keyCode(_ name: String) -> Int64? {
+    if let code = keycodes[name] { return code }
+    guard name.hasPrefix("mouse"), let n = Int64(name.dropFirst(5)), (3...32).contains(n) else { return nil }
+    return mouseKeyBase + n
+}
+
+func keyName(_ code: Int64) -> String? {
+    code > mouseKeyBase ? "mouse\(code - mouseKeyBase)" : keycodes.first { $0.value == code }?.key
+}
+
+// The key of a key press, or of a press of a mouse button other than left and right.
+func pressedKey(_ event: CGEvent) -> Int64 {
+    event.type == .otherMouseDown ? mouseKeyBase + event.getIntegerValueField(.mouseEventButtonNumber) + 1
+        : event.getIntegerValueField(.keyboardEventKeycode)
+}
 
 // A modifier's flag, nil for anything else.
 func modifier(_ part: Substring) -> CGEventFlags? {
@@ -366,22 +388,29 @@ func chord(_ text: String) -> Chord? {
     var key: Int64?
     for part in text.lowercased().split(separator: "+") {
         if let flag = modifier(part) { flags.insert(flag); continue }
-        guard key == nil, let code = keycodes[String(part)] else { return nil }
+        guard key == nil, let code = keyCode(String(part)) else { return nil }
         key = code
     }
     return key.map { ($0, flags) }
 }
 
-func binding(_ name: String) -> Chord? { chord(config[name] ?? bindingDefaults[name]!) }  // nil: "none"
+// A binding's value: "none", or one or more chords apart by spaces, "option+o mouse5". Nil when one doesn't parse.
+func chords(_ text: String) -> [Chord]? {
+    if text == "none" { return [] }
+    let all = text.split(separator: " ").map { chord(String($0)) }
+    return all.contains { $0 == nil } ? nil : all.compactMap { $0 }
+}
+
+func binding(_ name: String) -> [Chord] { chords(config[name] ?? bindingDefaults[name]!) ?? [] }
 
 func matches(_ event: CGEvent, _ chord: Chord?) -> Bool {
     guard let chord else { return false }
-    return event.getIntegerValueField(.keyboardEventKeycode) == chord.key && event.flags.intersection(chordModifiers) == chord.flags
+    return pressedKey(event) == chord.key && event.flags.intersection(chordModifiers) == chord.flags
 }
 
 // Every binding with its keys. The event taps keep this list: the config is the main thread's, see Tap.swift.
 func boundChords() -> [(chord: Chord, action: String)] {
-    bindingDefaults.keys.compactMap { name in binding(name).map { ($0, name) } }
+    bindingDefaults.keys.flatMap { name in binding(name).map { ($0, name) } }
 }
 
 // The action a key press is bound to, if any.

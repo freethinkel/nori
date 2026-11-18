@@ -358,7 +358,7 @@ struct Recorder: View {
                 } else if text == "none" {
                     Text("Record Shortcut").foregroundStyle(.tertiary)
                 } else {
-                    Text(chordGlyphs(text)).tracking(1.5)
+                    chordLabel(text).tracking(1.5)
                 }
             }
             .frame(width: 130, height: 24)
@@ -378,6 +378,16 @@ struct Recorder: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
     }
+}
+
+// An action's bindings with a dim dot between them; a mouse button as the mouse symbol and its number: "⌥O · 🖱4".
+func chordLabel(_ text: String) -> Text {
+    let labels = text.split(separator: " ").map { part -> Text in
+        let glyphs = chordGlyphs(String(part))
+        guard let mouse = glyphs.range(of: "Mouse ") else { return Text(glyphs) }
+        return Text("\(String(glyphs[..<mouse.lowerBound]))\(Image(systemName: "computermouse"))\(String(glyphs[mouse.upperBound...]))")
+    }
+    return labels.dropFirst().reduce(labels.first ?? Text("")) { Text("\($0) \(Text("·").foregroundStyle(.secondary)) \($1)") }
 }
 
 // Apps for the app pickers: the running ones in the Dock, nori itself left out. Agents and helpers have no windows

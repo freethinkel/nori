@@ -13,7 +13,10 @@ startApp()  // menu bar item, SIP check, Accessibility, payload: see App.swift
 var swallowMouseUp = false  // a press that began in the overview: its drag and release are the overview's too
 var mainTap: CFMachPort?
 
-// Key bindings. 3-finger scroll events are swallowed: the swipe is handled from raw touches.
+// Mouse buttons whose press went to a binding, so their release is swallowed too. The tap's thread only.
+var swallowedButtons = Set<Int64>()
+
+// Key and mouse button bindings. A bound button's press and release don't reach the app. 3-finger scroll events are swallowed: the swipe is handled from raw touches.
 // While the overview is open, clicks pick a Space and Escape closes it; the clicks don't reach apps. Keys: see below.
 // The callback runs on the tap's own thread, Tap.swift: it decides from tapState and leaves the work to the main thread.
 let tap = CGEvent.tapCreate(
@@ -23,6 +26,7 @@ let tap = CGEvent.tapCreate(
     eventsOfInterest: 1 << CGEventType.keyDown.rawValue | 1 << CGEventType.scrollWheel.rawValue
         | 1 << CGEventType.leftMouseDown.rawValue | 1 << CGEventType.leftMouseUp.rawValue
         | 1 << CGEventType.leftMouseDragged.rawValue
+        | 1 << CGEventType.otherMouseDown.rawValue | 1 << CGEventType.otherMouseUp.rawValue
         | 1 << 29 | 1 << 30 | 1 << 31,  // gesture, magnify and swipe (NSEventTypeGesture, Magnify, Swipe)
     callback: { _, type, event, _ in
         // macOS turns a tap off when a callback runs late (or for secure input); off, macOS gestures fight ours.
@@ -52,8 +56,12 @@ let tap = CGEvent.tapCreate(
             onMain { overviewMouseUp(at: point) }
             return nil
         }
-        if type == .keyDown && state.recording {  // the Settings window's shortcut recorder takes the press
+        if type == .otherMouseUp {  // the release of a press that went to a binding goes nowhere either
+            return swallowedButtons.remove(event.getIntegerValueField(.mouseEventButtonNumber)) == nil ? Unmanaged.passUnretained(event) : nil
+        }
+        if type == .keyDown && state.recording || type == .otherMouseDown && state.recording {  // the Settings window's shortcut recorder takes the press
             if let press = event.copy() { onMain { settingsModel.record(press) } }
+            if type == .otherMouseDown { swallowedButtons.insert(event.getIntegerValueField(.mouseEventButtonNumber)) }
             return nil
         }
         if type == .keyDown, let number = desktopNumber(for: event) {
@@ -61,7 +69,8 @@ let tap = CGEvent.tapCreate(
             if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 { onMain { switchSpaceAnimated(toDesktop: number) } }
             return nil
         }
-        if type == .keyDown, let name = boundAction(event, in: state.chords) {  // [bindings] → Actions.swift
+        if type == .keyDown || type == .otherMouseDown, let name = boundAction(event, in: state.chords) {  // [bindings] → Actions.swift
+            if type == .otherMouseDown { swallowedButtons.insert(event.getIntegerValueField(.mouseEventButtonNumber)) }
             if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 || !noRepeat.contains(name) { onMain { actions[name]?() } }
             return nil
         }
