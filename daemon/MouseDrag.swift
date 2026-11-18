@@ -1,8 +1,8 @@
 // Option + left drag moves a window, Option + right drag resizes it, like niri's Mod+LMB / Mod+RMB.
 // Move: the window follows the pointer and trades places with a neighbour once it passes that neighbour's center;
 // on release it eases into its column and takes focus. Resize: the window under the pointer takes focus and its width
-// follows the pointer: both edges at once when it is centered, else the right one, as its left edge stays put
-// (center-focused-column); the app resizes once the drag stops (Resize.swift).
+// follows the pointer: both edges at once when it is centered (and it stays so), else the right one, as its left edge
+// stays put; the app resizes once the drag stops (Resize.swift).
 // The clicks themselves don't reach the app. The modifier is `mouse-modifier` in the config, Option by default.
 // ponytail: an own event tap, so main.swift's stays as it is.
 // Below them: focus-follows-mouse and mouse-follows-focus.
@@ -108,7 +108,7 @@ func resizeDragged(_ d: Drag, to p: CGPoint) {
     onStrip(d.space) {
         let wins = syncColumns().wins
         if let i = wins.firstIndex(where: { $0.id == d.id }) {
-            resizeFocused(wins[i], at: i, to: d.width + (scroll(wins).centering ? 2 : 1) * (p.x - d.grab.x))
+            resizeFocused(wins[i], at: i, to: d.width + (isCentered(i, in: wins) ? 2 : 1) * (p.x - d.grab.x))
         }
     }
 }

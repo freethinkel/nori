@@ -90,13 +90,21 @@ func toggleFullWidth() {
     if before == nil, abs(win.frame.width - usableWidth) >= 1 { widthBeforeFull[win.id] = win.frame.width }
 }
 
+func isCentered(_ index: Int, in wins: [Win]) -> Bool {
+    let centers = scroll(wins).centers
+    return centers.indices.contains(index) && abs(stripOffset - centers[index]) < 1
+}
+
 // The focused window (column `index`) eases to `width`; also driven by Option + right drag, see MouseDrag.swift.
 func resizeFocused(_ win: Win, at index: Int, to width: CGFloat) {
     widthBeforeFull[win.id] = nil  // toggleFullWidth sets it again after this
     let width = min(max(width, 100), usableWidth)
     guard abs(width - win.frame.width) >= 1 else { return }
+    // A window that sat in the center stays there, whatever center-focused-column says.
+    let centered = isCentered(index, in: syncColumns().wins)
     pendingWidths[win.id] = width
-    stripOffset = scroll(syncColumns().wins).rest(index, from: stripOffset, previous: nil)
+    let strip = scroll(syncColumns().wins)
+    stripOffset = centered ? strip.centers[index] : strip.rest(index, from: stripOffset, previous: nil)
     send(["R \(win.id) \(width)"])  // before the layout, so its S for this window moves the resize's center
     layout(immediate: false)
     resizeWork?.cancel()  // repeated presses: the app relayouts once, after the last
